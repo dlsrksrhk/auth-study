@@ -1,0 +1,102 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { Role } from "@/features/auth/auth-api";
+import { departmentApi, type Department } from "@/features/departments/department-api";
+import { positionApi, type Position } from "@/features/positions/position-api";
+import { isApiProblemError } from "@/lib/api/problem";
+import { resourceCode } from "@/lib/resource-code";
+import { MembershipEditor } from "./membership-editor";
+import { userApi, type Membership, type User, type UserStatus } from "./user-api";
+import { UserForm } from "./user-form";
+
+type Props = { companyCode: string; userCode: string; actorRoles: Role[] };
+
+export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
+  const [user, setUser] = useState<User | null>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [traceId, setTraceId] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [editing, setEditing] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [confirmStatus, setConfirmStatus] = useState<UserStatus | null>(null);
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [copyMessage, setCopyMessage] = useState("");
+  const requestId = useRef(0);
+  let canonicalCompany = "", canonicalUser = "";
+  try { canonicalCompany = decodeURIComponent(resourceCode(companyCode, "회사 코드")); canonicalUser = decodeURIComponent(resourceCode(userCode, "사용자 코드")); } catch { /* rendered below */ }
+
+  useEffect(() => {
+    if (!canonicalCompany || !canonicalUser) return;
+    const id = ++requestId.current; const controller = new AbortController();
+    queueMicrotask(() => { if (id === requestId.current) { setLoading(true); setError(null); setTraceId(null); } });
+    Promise.all([
+      userApi.find(canonicalCompany, canonicalUser, controller.signal),
+      positionApi.list(canonicalCompany, { page: 0, size: 100, sort: "displayOrder" }, controller.signal),
+      departmentApi.listAll(canonicalCompany, controller.signal),
+      userApi.memberships(canonicalCompany, canonicalUser, controller.signal),
+    ]).then(([nextUser, nextPositions, nextDepartments, nextMemberships]) => {
+      if (id !== requestId.current) return;
+      setUser(nextUser); setPositions(nextPositions.content); setDepartments(nextDepartments); setMemberships(nextMemberships.content);
+    }).catch((cause) => {
+      if (id !== requestId.current || (cause instanceof DOMException && cause.name === "AbortError")) return;
+      if (isApiProblemError(cause)) { setError(cause.detail ?? cause.title); setTraceId(cause.traceId); } else setError(cause instanceof Error ? cause.message : "사용자 상세를 불러오지 못했습니다.");
+    }).finally(() => { if (id === requestId.current) setLoading(false); });
+    return () => { controller.abort(); if (requestId.current === id) requestId.current += 1; };
+  }, [canonicalCompany, canonicalUser, reload]);
+
+  function showMutationError(cause: unknown) {
+    if (isApiProblemError(cause)) { setError(cause.status === 409 && cause.code === "OPTIMISTIC_LOCK_CONFLICT" ? "다른 관리자가 수정했습니다. 최신 정보를 다시 불러왔습니다." : cause.detail ?? cause.title); setTraceId(cause.traceId); if (cause.status === 409) setReload((value) => value + 1); }
+    else setError(cause instanceof Error ? cause.message : "요청을 처리하지 못했습니다.");
+  }
+  async function roleAction(action: "grant" | "revoke") {
+    setPending(true); setError(null); setTraceId(null);
+    try { if (action === "grant") await userApi.grantAdmin(canonicalCompany, canonicalUser); else await userApi.revokeAdmin(canonicalCompany, canonicalUser); setReload((value) => value + 1); }
+    catch (cause) { showMutationError(cause); } finally { setPending(false); }
+  }
+  async function resetPassword() {
+    setPending(true); setError(null); setTraceId(null);
+    try { const result = await userApi.resetPassword(canonicalCompany, canonicalUser); setTemporaryPassword(result.temporaryPassword); }
+    catch (cause) { showMutationError(cause); } finally { setPending(false); }
+  }
+  async function changeStatus() {
+    if (!user || !confirmStatus) return; setPending(true); setError(null); setTraceId(null);
+    try { await userApi.changeStatus(canonicalCompany, canonicalUser, confirmStatus, user.version); setConfirmStatus(null); setReload((value) => value + 1); }
+    catch (cause) { showMutationError(cause); } finally { setPending(false); }
+  }
+  function clearSecret() { setTemporaryPassword((secret) => secret ? "".padEnd(secret.length, "\0") : ""); queueMicrotask(() => setTemporaryPassword("")); setCopyMessage(""); }
+  async function copySecret() { try { await navigator.clipboard.writeText(temporaryPassword); setCopyMessage("임시 비밀번호를 복사했습니다."); } catch { setCopyMessage("직접 선택해 복사해 주세요."); } }
+
+  if (!canonicalCompany || !canonicalUser) return <section><h1 className="text-3xl font-semibold">사용자 상세</h1><p aria-live="assertive" className="mt-6 rounded-xl border bg-white p-8 text-red-700">회사 또는 사용자 코드가 올바르지 않습니다.</p></section>;
+  if (loading) return <div aria-busy="true"><span className="sr-only">사용자 상세를 불러오는 중입니다.</span><Skeleton className="h-96 w-full" /></div>;
+  if (!user) return <div className="rounded-xl border bg-white p-8"><p aria-live="assertive" className="text-red-700">{error ?? "사용자를 찾을 수 없습니다."} {traceId ? `(추적 ID: ${traceId})` : ""}</p><Button className="mt-3" variant="outline" onClick={() => setReload((value) => value + 1)}>다시 시도</Button></div>;
+  const position = positions.find((item) => item.id === user.positionId);
+  const systemAdmin = actorRoles.includes("SYSTEM_ADMIN");
+  return <section aria-labelledby="user-detail-title" className="mx-auto max-w-7xl">
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="font-mono text-xs font-semibold text-teal-700">{canonicalCompany} / {canonicalUser}</p><h1 className="mt-2 text-3xl font-semibold" id="user-detail-title">{user.name}</h1><p className="mt-2 text-sm text-slate-600">프로필, 계정, 상태와 복수 소속을 관리합니다.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditing(true)}>프로필 수정</Button><Button disabled={pending} variant="outline" onClick={() => void resetPassword()}>임시 비밀번호 재발급</Button>{systemAdmin ? <><Button disabled={pending} onClick={() => void roleAction("grant")}>회사 관리자 지정</Button><Button disabled={pending} variant="outline" onClick={() => void roleAction("revoke")}>회사 관리자 회수</Button></> : null}</div></div>
+    {error ? <Alert className="mt-5" aria-live="assertive" variant="destructive"><AlertTitle>{error}</AlertTitle><AlertDescription>{traceId ? `추적 ID: ${traceId}` : null}</AlertDescription></Alert> : null}
+    <div className="mt-6 grid gap-4 lg:grid-cols-2">
+      <Card title="프로필"><Details values={[["이름", user.name], ["사번", user.employeeNumber], ["전화번호", user.phone], ["입사일", user.hiredAt], ["근무지", user.workplace], ["프로필 이미지 URL", user.profileImageUrl || "없음"]]} /></Card>
+      <Card title="상태"><div className="flex items-center gap-3"><Badge>{user.status}</Badge>{user.status === "ACTIVE" ? <><Button size="sm" variant="outline" onClick={() => setConfirmStatus("LOCKED")}>계정 잠금</Button><Button size="sm" variant="destructive" onClick={() => setConfirmStatus("RESIGNED")}>퇴사 처리</Button></> : null}</div></Card>
+      <Card title="직위"><p>{position ? `${position.name} (${position.code})` : `ID ${user.positionId}`}</p><Badge variant={position?.active ? "default" : "secondary"}>{position?.active ? "활성" : "비활성"}</Badge></Card>
+      <Card title="계정"><Details values={[["로그인 이메일", user.loginEmail], ["사용자 코드", user.code]]} /></Card>
+      <div className="rounded-xl border bg-white p-5 shadow-sm lg:col-span-2"><h2 className="mb-4 text-lg font-semibold">부서 소속</h2><MembershipEditor companyCode={canonicalCompany} departments={departments} memberships={memberships} onRefresh={() => setReload((value) => value + 1)} positionActive={Boolean(position?.active)} user={user} /></div>
+    </div>
+    {editing ? <UserForm companyCode={canonicalCompany} onOpenChange={setEditing} onRefresh={() => setReload((value) => value + 1)} open positions={positions} user={user} /> : null}
+    <Dialog open={Boolean(confirmStatus)} onOpenChange={(next) => !pending && !next && setConfirmStatus(null)}><DialogContent showCloseButton={!pending}><DialogHeader><DialogTitle>사용자 상태를 {confirmStatus === "LOCKED" ? "잠금" : "퇴사"}으로 변경할까요?</DialogTitle><DialogDescription>로그인과 활성 Refresh Token에 즉시 영향을 줍니다. 서버가 현재 버전을 다시 확인합니다.</DialogDescription></DialogHeader><DialogFooter><Button disabled={pending} variant="outline" onClick={() => setConfirmStatus(null)}>취소</Button><Button disabled={pending} variant="destructive" onClick={() => void changeStatus()}>{pending ? "처리 중" : "상태 변경"}</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={Boolean(temporaryPassword)} onOpenChange={(next) => { if (!next) clearSecret(); }}><DialogContent showCloseButton={false}><DialogHeader><DialogTitle>일회성 임시 비밀번호</DialogTitle><DialogDescription>닫는 즉시 메모리에서 지워지며 다시 열 수 없습니다.</DialogDescription></DialogHeader><code className="select-all rounded bg-slate-950 p-3 text-center text-white">{temporaryPassword}</code><p aria-live="polite">{copyMessage}</p><DialogFooter><Button variant="outline" onClick={() => void copySecret()}>복사</Button><Button onClick={clearSecret}>비밀번호 확인 완료</Button></DialogFooter></DialogContent></Dialog>
+  </section>;
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) { return <section className="rounded-xl border bg-white p-5 shadow-sm"><h2 className="mb-3 text-lg font-semibold">{title}</h2>{children}</section>; }
+function Details({ values }: { values: [string, string][] }) { return <dl className="grid gap-2">{values.map(([label, value]) => <div className="grid grid-cols-[8rem_1fr]" key={label}><dt className="text-sm text-slate-500">{label}</dt><dd className="break-all text-sm">{value}</dd></div>)}</dl>; }
