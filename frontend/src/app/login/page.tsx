@@ -34,7 +34,7 @@ export default function LoginPage() {
     const data = new FormData(event.currentTarget);
     try {
       const result = await auth.login(String(data.get("email")), String(data.get("password")));
-      router.push(result.mustChangePassword ? "/change-password" : "/");
+      router.replace(result.mustChangePassword ? "/change-password" : "/");
     } catch (error) {
       if (isApiProblemError(error)) {
         setFieldErrors(

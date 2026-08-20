@@ -42,7 +42,7 @@ export default function ChangePasswordPage() {
     setSubmitting(true);
     try {
       await auth.changePassword(currentPassword, newPassword);
-      router.push("/login");
+      router.replace("/login");
     } catch (error) {
       setServerError(
         isApiProblemError(error)

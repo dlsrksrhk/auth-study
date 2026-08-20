@@ -1,0 +1,161 @@
+import { HttpResponse, http } from "msw";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import CompanyPage from "@/app/(admin)/companies/page";
+import { server } from "@/test/setup";
+
+const replace = vi.fn();
+let currentQuery = "";
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/companies",
+  useRouter: () => ({ replace }),
+  useSearchParams: () => new URLSearchParams(currentQuery),
+}));
+
+const emptyPage = {
+  content: [],
+  page: 0,
+  size: 20,
+  totalElements: 0,
+  totalPages: 0,
+};
+
+const company = {
+  id: 8,
+  code: "ACME",
+  name: "Acme",
+  emailDomain: "acme.example",
+  status: "ACTIVE",
+  version: 0,
+  createdAt: "2026-08-20T01:00:00Z",
+  updatedAt: "2026-08-20T01:00:00Z",
+};
+
+const defaultPositions = [
+  ["EMPLOYEE", "사원", 10],
+  ["ASSISTANT_MANAGER", "대리", 20],
+  ["MANAGER", "과장", 30],
+  ["DEPUTY_GENERAL_MANAGER", "차장", 40],
+  ["GENERAL_MANAGER", "부장", 50],
+].map(([code, name, level], index) => ({
+  id: index + 1,
+  companyId: 8,
+  code,
+  name,
+  level,
+  displayOrder: level,
+  active: true,
+  version: 0,
+  createdAt: "2026-08-20T01:00:00Z",
+  updatedAt: "2026-08-20T01:00:00Z",
+}));
+
+describe("CompanyPage", () => {
+  beforeEach(() => {
+    replace.mockReset();
+    currentQuery = "";
+  });
+
+  it("creates a normalized company, refreshes the list, and shows five default positions", async () => {
+    const user = userEvent.setup();
+    let created = false;
+    server.use(
+      http.get("/api/v1/admin/companies", ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        expect(Object.fromEntries(params)).toEqual({ page: "0", size: "20", sort: "code" });
+        return HttpResponse.json(created ? { ...emptyPage, content: [company], totalElements: 1, totalPages: 1 } : emptyPage);
+      }),
+      http.post("/api/v1/admin/companies", async ({ request }) => {
+        expect(await request.json()).toEqual({
+          code: "ACME",
+          name: "Acme",
+          emailDomain: "acme.example",
+        });
+        created = true;
+        return HttpResponse.json(company, {
+          status: 201,
+          headers: { Location: "/api/v1/admin/companies/ACME" },
+        });
+      }),
+      http.get("/api/v1/admin/companies/ACME/positions", ({ request }) => {
+        expect(Object.fromEntries(new URL(request.url).searchParams)).toEqual({
+          page: "0",
+          size: "20",
+          sort: "displayOrder",
+        });
+        return HttpResponse.json({
+          content: defaultPositions,
+          page: 0,
+          size: 20,
+          totalElements: 5,
+          totalPages: 1,
+        });
+      }),
+    );
+
+    render(<CompanyPage />);
+    expect(await screen.findByText("등록된 회사가 없습니다.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "회사 생성" }));
+    await user.type(screen.getByLabelText("코드"), " acme ");
+    await user.type(screen.getByLabelText("회사명"), "Acme");
+    await user.type(screen.getByLabelText("이메일 도메인"), "ACME.EXAMPLE");
+    await user.click(screen.getByRole("button", { name: "저장" }));
+
+    expect(await screen.findByRole("cell", { name: "ACME" })).toBeVisible();
+    expect(await screen.findByText("기본 직위 5개가 준비되었습니다.")).toBeVisible();
+    defaultPositions.forEach(({ name }) => expect(screen.getByText(name)).toBeVisible());
+    expect(screen.getByRole("link", { name: "직위 관리" })).toHaveAttribute(
+      "href",
+      "/companies/ACME/positions",
+    );
+  });
+
+  it("synchronizes debounced search with the URL", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("/api/v1/admin/companies", () => HttpResponse.json(emptyPage)),
+    );
+    render(<CompanyPage />);
+    await screen.findByText("등록된 회사가 없습니다.");
+
+    await user.type(screen.getByLabelText("회사 검색"), "acme");
+    expect(replace).not.toHaveBeenCalled();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies?search=acme", { scroll: false }));
+  });
+
+  it("focuses a 409 field error and exposes its trace id", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("/api/v1/admin/companies", () => HttpResponse.json(emptyPage)),
+      http.post("/api/v1/admin/companies", () =>
+        HttpResponse.json(
+          {
+            type: "https://auth-study.local/problems/conflict",
+            title: "Conflict",
+            status: 409,
+            detail: "Company code already exists.",
+            code: "DUPLICATE_COMPANY_CODE",
+            traceId: "trace-company-409",
+            fieldErrors: [{ field: "code", message: "이미 사용 중인 코드입니다." }],
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    render(<CompanyPage />);
+    await screen.findByText("등록된 회사가 없습니다.");
+    await user.click(screen.getByRole("button", { name: "회사 생성" }));
+    await user.type(screen.getByLabelText("코드"), "ACME");
+    await user.type(screen.getByLabelText("회사명"), "Acme");
+    await user.type(screen.getByLabelText("이메일 도메인"), "acme.example");
+    await user.click(screen.getByRole("button", { name: "저장" }));
+
+    expect(await screen.findByText("이미 사용 중인 코드입니다.")).toBeVisible();
+    expect(screen.getByText(/trace-company-409/)).toBeVisible();
+    await waitFor(() => expect(screen.getByLabelText("코드")).toHaveFocus());
+  });
+});

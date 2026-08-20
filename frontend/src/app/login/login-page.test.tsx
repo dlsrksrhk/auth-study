@@ -8,16 +8,16 @@ import { authSession } from "@/features/auth/auth-session";
 import { server } from "@/test/setup";
 import LoginPage from "./page";
 
-const push = vi.fn();
+const replace = vi.fn();
 const origin = "http://localhost:3000";
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push }),
+  useRouter: () => ({ replace }),
 }));
 
 describe("LoginPage", () => {
   beforeEach(() => {
-    push.mockReset();
+    replace.mockReset();
     authSession.clear();
     localStorage.clear();
     sessionStorage.clear();
@@ -51,7 +51,7 @@ describe("LoginPage", () => {
     await user.type(screen.getByLabelText("비밀번호"), "Temporary1234!");
     await user.click(screen.getByRole("button", { name: "로그인" }));
 
-    expect(push).toHaveBeenCalledWith("/change-password");
+    expect(replace).toHaveBeenCalledWith("/change-password");
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
   });
