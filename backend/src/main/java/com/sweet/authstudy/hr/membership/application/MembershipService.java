@@ -53,8 +53,7 @@ public class MembershipService {
         if (command == null || command.role() == null || command.startedAt() == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Membership data is required.");
         }
-        Company company = findActiveCompany(command.companyCode());
-        departmentRepository.lockCompanyOrganization(company.id());
+        Company company = findActiveLockedCompany(command.companyCode());
         HrUser user = findUser(company.id(), command.userCode());
         Department department = findDepartment(company.id(), command.departmentCode());
         requireAssignable(user, department);
@@ -70,8 +69,7 @@ public class MembershipService {
         if (command == null || command.role() == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Membership update data is required.");
         }
-        Company company = findActiveCompany(command.companyCode());
-        departmentRepository.lockCompanyOrganization(company.id());
+        Company company = findActiveLockedCompany(command.companyCode());
         HrUser user = findUser(company.id(), command.userCode());
         DepartmentMembership membership = findMembership(command.membershipId());
         requireOwnership(membership, company, user);
@@ -86,8 +84,7 @@ public class MembershipService {
 
     @Transactional
     public MembershipView end(String companyCode, String userCode, long membershipId, long version) {
-        Company company = findCompany(companyCode);
-        departmentRepository.lockCompanyOrganization(company.id());
+        Company company = findLockedCompany(companyCode);
         HrUser user = findUser(company.id(), userCode);
         DepartmentMembership membership = findMembership(membershipId);
         requireOwnership(membership, company, user);
@@ -204,12 +201,18 @@ public class MembershipService {
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Membership was not found."));
     }
 
-    private Company findActiveCompany(String code) {
-        Company company = findCompany(code);
+    private Company findActiveLockedCompany(String code) {
+        Company company = findLockedCompany(code);
         if (company.status() != CompanyStatus.ACTIVE) {
             throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
         }
         return company;
+    }
+
+    private Company findLockedCompany(String code) {
+        Company identified = findCompany(code);
+        return companyRepository.findLockedById(identified.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
     }
 
     private Company findCompany(String code) {

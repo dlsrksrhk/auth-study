@@ -5,8 +5,6 @@ import java.util.Optional;
 
 public interface DepartmentRepository {
 
-    void lockCompanyOrganization(long companyId);
-
     Department save(Department department);
 
     Optional<Department> findById(long id);

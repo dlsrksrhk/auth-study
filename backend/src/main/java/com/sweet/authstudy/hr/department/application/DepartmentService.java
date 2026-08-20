@@ -46,8 +46,7 @@ public class DepartmentService {
         if (command == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department data is required.");
         }
-        Company company = findActiveCompany(command.companyCode());
-        departmentRepository.lockCompanyOrganization(company.id());
+        Company company = findActiveLockedCompany(command.companyCode());
         String code = normalizeCode(command.code());
         if (departmentRepository.findByCompanyIdAndCode(company.id(), code).isPresent()) {
             throw new ApiException(ErrorCode.DUPLICATE_CODE, "Department code already exists.");
@@ -63,8 +62,7 @@ public class DepartmentService {
         if (command == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department move data is required.");
         }
-        Company company = findCompany(command.companyCode());
-        departmentRepository.lockCompanyOrganization(company.id());
+        Company company = findActiveLockedCompany(command.companyCode());
         Department department = findDepartment(company.id(), command.code());
         requireVersion(department, command.version());
         Long parentId = resolveActiveParent(company.id(), command.newParentCode());
@@ -78,8 +76,7 @@ public class DepartmentService {
         if (command == null || command.status() == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department status data is required.");
         }
-        Company company = findCompany(command.companyCode());
-        departmentRepository.lockCompanyOrganization(company.id());
+        Company company = findLockedCompany(command.companyCode());
         Department department = findDepartment(company.id(), command.code());
         requireVersion(department, command.version());
         if (command.status() == DepartmentStatus.ACTIVE && company.status() != CompanyStatus.ACTIVE) {
@@ -148,12 +145,18 @@ public class DepartmentService {
         return parent.id();
     }
 
-    private Company findActiveCompany(String code) {
-        Company company = findCompany(code);
+    private Company findActiveLockedCompany(String code) {
+        Company company = findLockedCompany(code);
         if (company.status() != CompanyStatus.ACTIVE) {
             throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
         }
         return company;
+    }
+
+    private Company findLockedCompany(String code) {
+        Company identified = findCompany(code);
+        return companyRepository.findLockedById(identified.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
     }
 
     private Company findCompany(String code) {

@@ -4,15 +4,19 @@ import java.util.Optional;
 
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public class CompanyRepositoryAdapter implements CompanyRepository {
 
     private final CompanyJpaRepository repository;
+    private final EntityManager entityManager;
 
-    public CompanyRepositoryAdapter(CompanyJpaRepository repository) {
+    public CompanyRepositoryAdapter(CompanyJpaRepository repository, EntityManager entityManager) {
         this.repository = repository;
+        this.entityManager = entityManager;
     }
 
     @Override
@@ -40,5 +44,13 @@ public class CompanyRepositoryAdapter implements CompanyRepository {
     @Override
     public Optional<Company> findById(long id) {
         return repository.findById(id).map(CompanyJpaEntity::toDomain);
+    }
+
+    @Override
+    public Optional<Company> findLockedById(long id) {
+        return repository.findById(id).map(entity -> {
+            entityManager.refresh(entity, LockModeType.PESSIMISTIC_WRITE);
+            return entity.toDomain();
+        });
     }
 }

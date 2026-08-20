@@ -6,25 +6,15 @@ import java.util.Optional;
 import com.sweet.authstudy.hr.department.domain.Department;
 import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
 import com.sweet.authstudy.hr.department.domain.DepartmentStatus;
-import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public class DepartmentRepositoryAdapter implements DepartmentRepository {
 
     private final DepartmentJpaRepository repository;
-    private final EntityManager entityManager;
 
-    public DepartmentRepositoryAdapter(DepartmentJpaRepository repository, EntityManager entityManager) {
+    public DepartmentRepositoryAdapter(DepartmentJpaRepository repository) {
         this.repository = repository;
-        this.entityManager = entityManager;
-    }
-
-    @Override
-    public void lockCompanyOrganization(long companyId) {
-        entityManager.createNativeQuery("SELECT id FROM companies WHERE id = :companyId FOR UPDATE")
-                .setParameter("companyId", companyId)
-                .getSingleResult();
     }
 
     @Override

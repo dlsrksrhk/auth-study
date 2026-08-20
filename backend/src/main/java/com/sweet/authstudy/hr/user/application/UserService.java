@@ -10,7 +10,6 @@ import java.util.Locale;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
-import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
 import com.sweet.authstudy.hr.position.domain.Position;
 import com.sweet.authstudy.hr.position.domain.PositionRepository;
 import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
@@ -33,7 +32,6 @@ public class UserService {
     private final PositionRepository positionRepository;
     private final UserRepository userRepository;
     private final MembershipRepository membershipRepository;
-    private final DepartmentRepository departmentRepository;
     private final AccountRepository accountRepository;
     private final PasswordGenerator passwordGenerator;
     private final PasswordEncoder passwordEncoder;
@@ -44,7 +42,6 @@ public class UserService {
             PositionRepository positionRepository,
             UserRepository userRepository,
             MembershipRepository membershipRepository,
-            DepartmentRepository departmentRepository,
             AccountRepository accountRepository,
             PasswordGenerator passwordGenerator,
             PasswordEncoder passwordEncoder,
@@ -53,7 +50,6 @@ public class UserService {
         this.positionRepository = positionRepository;
         this.userRepository = userRepository;
         this.membershipRepository = membershipRepository;
-        this.departmentRepository = departmentRepository;
         this.accountRepository = accountRepository;
         this.passwordGenerator = passwordGenerator;
         this.passwordEncoder = passwordEncoder;
@@ -65,11 +61,7 @@ public class UserService {
         if (command == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "User data is required.");
         }
-        Company company = companyRepository.findByCode(normalizeCode(command.companyCode()))
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
-        if (company.status() != CompanyStatus.ACTIVE) {
-            throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
-        }
+        Company company = findActiveLockedCompany(command.companyCode());
         String code = normalizeCode(command.code());
         String employeeNumber = normalizeRequired(command.employeeNumber());
         String loginEmail = normalizeEmail(command.loginEmail());
@@ -114,9 +106,7 @@ public class UserService {
         if (status == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "User status is required.");
         }
-        Company company = companyRepository.findByCode(normalizeCode(companyCode))
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
-        departmentRepository.lockCompanyOrganization(company.id());
+        Company company = findLockedCompany(companyCode);
         HrUser user = userRepository.findByCompanyIdAndCode(company.id(), normalizeCode(userCode))
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User was not found."));
         if (user.version() != version) {
@@ -146,6 +136,21 @@ public class UserService {
         if (!membershipRepository.existsActivePrimaryByUserId(user.id())) {
             throw new ApiException(ErrorCode.INVALID_STATE, "Active primary membership is required.");
         }
+    }
+
+    private Company findActiveLockedCompany(String code) {
+        Company company = findLockedCompany(code);
+        if (company.status() != CompanyStatus.ACTIVE) {
+            throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
+        }
+        return company;
+    }
+
+    private Company findLockedCompany(String code) {
+        Company identified = companyRepository.findByCode(normalizeCode(code))
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
+        return companyRepository.findLockedById(identified.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
     }
 
     private void rejectDuplicates(long companyId, String code, String employeeNumber, String loginEmail) {

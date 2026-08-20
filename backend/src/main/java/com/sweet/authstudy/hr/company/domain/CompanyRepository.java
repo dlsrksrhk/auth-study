@@ -11,4 +11,6 @@ public interface CompanyRepository {
     Optional<Company> findByEmailDomain(String emailDomain);
 
     Optional<Company> findById(long id);
+
+    Optional<Company> findLockedById(long id);
 }
