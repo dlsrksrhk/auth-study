@@ -2,6 +2,7 @@ package com.sweet.authstudy.hr.user.application;
 
 import static com.sweet.authstudy.hr.user.application.UserCommands.CreateUserCommand;
 import static com.sweet.authstudy.hr.user.application.UserViews.CreatedUserView;
+import static com.sweet.authstudy.hr.user.application.UserViews.UserView;
 
 import java.time.Clock;
 import java.util.Locale;
@@ -9,10 +10,13 @@ import java.util.Locale;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
 import com.sweet.authstudy.hr.position.domain.Position;
 import com.sweet.authstudy.hr.position.domain.PositionRepository;
+import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
+import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.identity.application.PasswordGenerator;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
@@ -28,6 +32,8 @@ public class UserService {
     private final CompanyRepository companyRepository;
     private final PositionRepository positionRepository;
     private final UserRepository userRepository;
+    private final MembershipRepository membershipRepository;
+    private final DepartmentRepository departmentRepository;
     private final AccountRepository accountRepository;
     private final PasswordGenerator passwordGenerator;
     private final PasswordEncoder passwordEncoder;
@@ -37,6 +43,8 @@ public class UserService {
             CompanyRepository companyRepository,
             PositionRepository positionRepository,
             UserRepository userRepository,
+            MembershipRepository membershipRepository,
+            DepartmentRepository departmentRepository,
             AccountRepository accountRepository,
             PasswordGenerator passwordGenerator,
             PasswordEncoder passwordEncoder,
@@ -44,6 +52,8 @@ public class UserService {
         this.companyRepository = companyRepository;
         this.positionRepository = positionRepository;
         this.userRepository = userRepository;
+        this.membershipRepository = membershipRepository;
+        this.departmentRepository = departmentRepository;
         this.accountRepository = accountRepository;
         this.passwordGenerator = passwordGenerator;
         this.passwordEncoder = passwordEncoder;
@@ -96,6 +106,46 @@ public class UserService {
                 passwordEncoder.encode(temporaryPassword),
                 clock.instant()));
         return new CreatedUserView(UserViews.UserView.from(savedUser, loginEmail), temporaryPassword);
+    }
+
+    @Transactional
+    public UserView changeStatus(
+            String companyCode, String userCode, UserStatus status, long version) {
+        if (status == null) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED, "User status is required.");
+        }
+        Company company = companyRepository.findByCode(normalizeCode(companyCode))
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
+        departmentRepository.lockCompanyOrganization(company.id());
+        HrUser user = userRepository.findByCompanyIdAndCode(company.id(), normalizeCode(userCode))
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User was not found."));
+        if (user.version() != version) {
+            throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "User version does not match.");
+        }
+        if (status == UserStatus.ACTIVE) {
+            requireActivationReady(company, user);
+        }
+        user.changeStatus(status, clock.instant());
+        HrUser saved = userRepository.save(user);
+        Account account = accountRepository.findByUserId(saved.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+        return UserView.from(saved, account.loginEmail());
+    }
+
+    private void requireActivationReady(Company company, HrUser user) {
+        if (company.status() != CompanyStatus.ACTIVE) {
+            throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
+        }
+        Position position = positionRepository.findAllByCompanyId(company.id()).stream()
+                .filter(candidate -> candidate.id() == user.positionId())
+                .findFirst()
+                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_STATE, "Position belongs to another company."));
+        if (!position.active()) {
+            throw new ApiException(ErrorCode.INVALID_STATE, "Position is inactive.");
+        }
+        if (!membershipRepository.existsActivePrimaryByUserId(user.id())) {
+            throw new ApiException(ErrorCode.INVALID_STATE, "Active primary membership is required.");
+        }
     }
 
     private void rejectDuplicates(long companyId, String code, String employeeNumber, String loginEmail) {
