@@ -11,6 +11,7 @@ import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.shared.application.PageResult;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.security.TenantGuard;
+import com.sweet.authstudy.shared.trace.TraceIdProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;

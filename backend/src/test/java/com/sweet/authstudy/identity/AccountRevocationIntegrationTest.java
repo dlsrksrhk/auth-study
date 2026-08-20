@@ -7,7 +7,9 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
+import javax.sql.DataSource;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
@@ -51,6 +53,7 @@ class AccountRevocationIntegrationTest {
     @Autowired AuthenticationService authenticationService;
     @Autowired PasswordEncoder passwordEncoder;
     @Autowired JdbcTemplate jdbc;
+    @Autowired DataSource dataSource;
     @Autowired Clock clock;
 
     @Test
@@ -122,6 +125,51 @@ class AccountRevocationIntegrationTest {
         }
     }
 
+    @Test
+    void login_waiting_behind_committed_company_inactivation_issues_no_tokens() throws Exception {
+        Fixture fixture = fixture("U005");
+        var account = accountRepository.findById(fixture.accountId()).orElseThrow();
+        account.changePassword(passwordEncoder.encode("ChangedPassword1234!"), clock.instant());
+        accountRepository.save(account);
+        long refreshBefore = jdbc.queryForObject(
+                "select count(*) from refresh_tokens where account_id = ?", Long.class, account.id());
+
+        try (var blocker = dataSource.getConnection();
+                var executor = Executors.newFixedThreadPool(2)) {
+            blocker.setAutoCommit(false);
+            try (var statement = blocker.prepareStatement("select id from accounts where id = ? for update")) {
+                statement.setLong(1, account.id());
+                statement.executeQuery();
+            }
+
+            var company = companyService.find(SYSTEM_ADMIN, fixture.companyCode());
+            var inactivation = executor.submit(() -> companyService.update(SYSTEM_ADMIN,
+                    fixture.companyCode(), new UpdateCompanyCommand(
+                            company.name(), CompanyStatus.INACTIVE, company.version())));
+            awaitAccountLockWaiters(1);
+
+            var login = executor.submit(() -> {
+                try {
+                    return authenticationService.login(new LoginCommand(
+                            account.loginEmail(), "ChangedPassword1234!", "127.0.0.1"));
+                } catch (Throwable failure) {
+                    return failure;
+                }
+            });
+            awaitAccountLockWaiters(2);
+            blocker.commit();
+
+            inactivation.get(10, TimeUnit.SECONDS);
+            assertThat(login.get(10, TimeUnit.SECONDS)).isInstanceOfSatisfying(
+                    ApiException.class,
+                    failure -> assertThat(failure.errorCode())
+                            .isEqualTo(com.sweet.authstudy.shared.error.ErrorCode.UNAUTHENTICATED));
+        }
+        long refreshAfter = jdbc.queryForObject(
+                "select count(*) from refresh_tokens where account_id = ?", Long.class, account.id());
+        assertThat(refreshAfter).isEqualTo(refreshBefore);
+    }
+
     private Fixture fixture(String userCode) {
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         String companyCode = "R" + suffix.toUpperCase();
@@ -180,6 +228,19 @@ class AccountRevocationIntegrationTest {
             Thread.sleep(50);
         }
         throw new AssertionError("Refresh insert did not reach the delay trigger.");
+    }
+
+    private void awaitAccountLockWaiters(int expected) throws InterruptedException {
+        for (int attempt = 0; attempt < 200; attempt++) {
+            Integer waiters = jdbc.queryForObject(
+                    "select count(*) from pg_stat_activity "
+                            + "where pid <> pg_backend_pid() and wait_event_type = 'Lock' "
+                            + "and lower(query) like '%accounts%'",
+                    Integer.class);
+            if (waiters != null && waiters >= expected) return;
+            Thread.sleep(25);
+        }
+        throw new AssertionError("Expected " + expected + " account lock waiters.");
     }
 
     private record Fixture(

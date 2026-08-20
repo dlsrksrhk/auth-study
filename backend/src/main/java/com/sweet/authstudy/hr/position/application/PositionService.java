@@ -9,6 +9,8 @@ import java.util.Map;
 
 import com.sweet.authstudy.audit.application.AuditActions;
 import com.sweet.authstudy.audit.application.AuditService;
+import com.sweet.authstudy.audit.application.AuditFailurePlan;
+import com.sweet.authstudy.audit.application.AuditedTransactionExecutor;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
@@ -30,14 +32,17 @@ public class PositionService {
     private final Clock clock;
     private final TenantGuard tenantGuard;
     private final AuditService auditService;
+    private final AuditedTransactionExecutor auditedTransactions;
 
     public PositionService(
             PositionRepository positionRepository, CompanyRepository companyRepository,
-            TenantGuard tenantGuard, AuditService auditService, Clock clock) {
+            TenantGuard tenantGuard, AuditService auditService,
+            AuditedTransactionExecutor auditedTransactions, Clock clock) {
         this.positionRepository = positionRepository;
         this.companyRepository = companyRepository;
         this.tenantGuard = tenantGuard;
         this.auditService = auditService;
+        this.auditedTransactions = auditedTransactions;
         this.clock = clock;
     }
 
@@ -63,16 +68,18 @@ public class PositionService {
         return PositionView.from(saved);
     }
 
-    @Transactional
     public PositionView update(
             AuthenticatedAccount actor, String companyCode, String code, UpdatePositionCommand command) {
-        Company company = findCompany(normalizeCode(companyCode));
-        tenantGuard.requireCompanyAccess(actor, company.id());
-        Position position = findPosition(company.id(), normalizeCode(code));
-        boolean previousActive = position.active();
-        String action = previousActive == command.active()
-                ? AuditActions.POSITION_UPDATE : AuditActions.POSITION_STATUS_CHANGE;
-        try {
+        AuditFailurePlan failurePlan = new AuditFailurePlan();
+        return auditedTransactions.execute(failurePlan, () -> {
+            Company company = findCompany(normalizeCode(companyCode));
+            tenantGuard.requireCompanyAccess(actor, company.id());
+            Position position = findPosition(company.id(), normalizeCode(code));
+            boolean previousActive = position.active();
+            String action = previousActive == command.active()
+                    ? AuditActions.POSITION_UPDATE : AuditActions.POSITION_STATUS_CHANGE;
+            failurePlan.identify(actor, action, "POSITION", position.id(), company.id(),
+                    Map.of("code", position.code(), "previousActive", previousActive));
             if (position.version() != command.version()) {
                 throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "Position version does not match.");
             }
@@ -87,11 +94,7 @@ public class PositionService {
                     Map.of("code", saved.code(), "active", saved.active(),
                             "previousActive", previousActive));
             return PositionView.from(saved);
-        } catch (ApiException failure) {
-            auditService.recordFailure(actor, action, "POSITION", position.id(), company.id(),
-                    Map.of("code", position.code(), "previousActive", previousActive), failure);
-            throw failure;
-        }
+        });
     }
 
     @Transactional(readOnly = true)

@@ -214,6 +214,8 @@ public class AuthenticationService {
 
     private boolean loginStateAllowed(Account account, HrUser user) {
         if (account.companyId() == null) return true;
+        Company company = companyRepository.findById(account.companyId()).orElse(null);
+        if (company == null || company.status() != CompanyStatus.ACTIVE) return false;
         if (user == null) return false;
         return account.mustChangePassword() ? user.status() == UserStatus.PENDING || user.status() == UserStatus.ACTIVE
                 : user.status() == UserStatus.ACTIVE;

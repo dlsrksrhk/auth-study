@@ -11,6 +11,8 @@ import java.util.Map;
 
 import com.sweet.authstudy.audit.application.AuditActions;
 import com.sweet.authstudy.audit.application.AuditService;
+import com.sweet.authstudy.audit.application.AuditFailurePlan;
+import com.sweet.authstudy.audit.application.AuditedTransactionExecutor;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
@@ -38,17 +40,19 @@ public class DepartmentService {
     private final Clock clock;
     private final TenantGuard tenantGuard;
     private final AuditService auditService;
+    private final AuditedTransactionExecutor auditedTransactions;
 
     public DepartmentService(
             DepartmentRepository departmentRepository,
             CompanyRepository companyRepository,
             MembershipRepository membershipRepository, TenantGuard tenantGuard,
-            AuditService auditService, Clock clock) {
+            AuditService auditService, AuditedTransactionExecutor auditedTransactions, Clock clock) {
         this.departmentRepository = departmentRepository;
         this.companyRepository = companyRepository;
         this.membershipRepository = membershipRepository;
         this.tenantGuard = tenantGuard;
         this.auditService = auditService;
+        this.auditedTransactions = auditedTransactions;
         this.clock = clock;
     }
 
@@ -73,16 +77,18 @@ public class DepartmentService {
         return DepartmentView.from(saved);
     }
 
-    @Transactional
     public DepartmentView move(AuthenticatedAccount actor, MoveDepartmentCommand command) {
-        if (command == null) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department move data is required.");
-        }
-        Company company = findLockedCompany(command.companyCode());
-        tenantGuard.requireCompanyAccess(actor, company.id());
-        requireActive(company);
-        Department department = findDepartment(company.id(), command.code());
-        try {
+        AuditFailurePlan failurePlan = new AuditFailurePlan();
+        return auditedTransactions.execute(failurePlan, () -> {
+            if (command == null) {
+                throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department move data is required.");
+            }
+            Company company = findLockedCompany(command.companyCode());
+            tenantGuard.requireCompanyAccess(actor, company.id());
+            requireActive(company);
+            Department department = findDepartment(company.id(), command.code());
+            failurePlan.identify(actor, AuditActions.DEPARTMENT_MOVE, "DEPARTMENT",
+                    department.id(), company.id(), Map.of("code", department.code()));
             requireVersion(department, command.version());
             Long parentId = resolveActiveParent(company.id(), command.newParentCode());
             rejectCycle(department, parentId);
@@ -91,24 +97,23 @@ public class DepartmentService {
             auditService.record(actor, AuditActions.DEPARTMENT_MOVE, "DEPARTMENT",
                     saved.id(), company.id(), Map.of("code", saved.code()));
             return DepartmentView.from(saved);
-        } catch (ApiException failure) {
-            auditService.recordFailure(actor, AuditActions.DEPARTMENT_MOVE, "DEPARTMENT",
-                    department.id(), company.id(), Map.of("code", department.code()), failure);
-            throw failure;
-        }
+        });
     }
 
-    @Transactional
     public DepartmentView changeStatus(
             AuthenticatedAccount actor, ChangeDepartmentStatusCommand command) {
-        if (command == null || command.status() == null) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department status data is required.");
-        }
-        Company company = findLockedCompany(command.companyCode());
-        tenantGuard.requireCompanyAccess(actor, company.id());
-        Department department = findDepartment(company.id(), command.code());
-        DepartmentStatus previousStatus = department.status();
-        try {
+        AuditFailurePlan failurePlan = new AuditFailurePlan();
+        return auditedTransactions.execute(failurePlan, () -> {
+            if (command == null || command.status() == null) {
+                throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department status data is required.");
+            }
+            Company company = findLockedCompany(command.companyCode());
+            tenantGuard.requireCompanyAccess(actor, company.id());
+            Department department = findDepartment(company.id(), command.code());
+            DepartmentStatus previousStatus = department.status();
+            failurePlan.identify(actor, AuditActions.DEPARTMENT_STATUS_CHANGE, "DEPARTMENT",
+                    department.id(), company.id(), Map.of("code", department.code(),
+                            "previousStatus", previousStatus.name()));
             requireVersion(department, command.version());
             if (command.status() == DepartmentStatus.ACTIVE && company.status() != CompanyStatus.ACTIVE) {
                 throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
@@ -135,26 +140,23 @@ public class DepartmentService {
                     saved.id(), company.id(), Map.of("code", saved.code(),
                             "status", saved.status().name(), "previousStatus", previousStatus.name()));
             return DepartmentView.from(saved);
-        } catch (ApiException failure) {
-            auditService.recordFailure(actor, AuditActions.DEPARTMENT_STATUS_CHANGE, "DEPARTMENT",
-                    department.id(), company.id(), Map.of("code", department.code(),
-                            "previousStatus", previousStatus.name()), failure);
-            throw failure;
-        }
+        });
     }
 
-    @Transactional
     public DepartmentView update(AuthenticatedAccount actor, UpdateDepartmentCommand command) {
-        if (command == null || command.status() == null) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department data is required.");
-        }
-        Company company = findLockedCompany(command.companyCode());
-        tenantGuard.requireCompanyAccess(actor, company.id());
-        Department department = findDepartment(company.id(), command.code());
-        DepartmentStatus previousStatus = department.status();
-        String action = previousStatus == command.status()
-                ? AuditActions.DEPARTMENT_UPDATE : AuditActions.DEPARTMENT_STATUS_CHANGE;
-        try {
+        AuditFailurePlan failurePlan = new AuditFailurePlan();
+        return auditedTransactions.execute(failurePlan, () -> {
+            if (command == null || command.status() == null) {
+                throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department data is required.");
+            }
+            Company company = findLockedCompany(command.companyCode());
+            tenantGuard.requireCompanyAccess(actor, company.id());
+            Department department = findDepartment(company.id(), command.code());
+            DepartmentStatus previousStatus = department.status();
+            String action = previousStatus == command.status()
+                    ? AuditActions.DEPARTMENT_UPDATE : AuditActions.DEPARTMENT_STATUS_CHANGE;
+            failurePlan.identify(actor, action, "DEPARTMENT", department.id(), company.id(),
+                    Map.of("code", department.code(), "previousStatus", previousStatus.name()));
             requireVersion(department, command.version());
             Long parentId = resolveActiveParent(company.id(), command.parentCode());
             rejectCycle(department, parentId);
@@ -175,11 +177,7 @@ public class DepartmentService {
                     Map.of("code", saved.code(), "status", saved.status().name(),
                             "previousStatus", previousStatus.name()));
             return DepartmentView.from(saved);
-        } catch (ApiException failure) {
-            auditService.recordFailure(actor, action, "DEPARTMENT", department.id(), company.id(),
-                    Map.of("code", department.code(), "previousStatus", previousStatus.name()), failure);
-            throw failure;
-        }
+        });
     }
 
     @Transactional(readOnly = true)

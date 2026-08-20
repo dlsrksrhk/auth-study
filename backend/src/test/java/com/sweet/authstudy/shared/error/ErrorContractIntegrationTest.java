@@ -22,9 +22,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.test.web.servlet.MockMvc;
+import com.sweet.authstudy.shared.trace.TraceIdProvider;
 
 @WebMvcTest(controllers = ErrorContractIntegrationTest.ProbeController.class)
-@Import({ApiProblemFactory.class, GlobalExceptionHandler.class, ErrorContractIntegrationTest.ProbeController.class})
+@Import({ApiProblemFactory.class, GlobalExceptionHandler.class, TraceIdProvider.class,
+        ErrorContractIntegrationTest.ProbeController.class})
 @AutoConfigureMockMvc(addFilters = false)
 class ErrorContractIntegrationTest {
 

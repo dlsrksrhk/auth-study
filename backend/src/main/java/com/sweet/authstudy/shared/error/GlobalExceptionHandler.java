@@ -2,13 +2,11 @@ package com.sweet.authstudy.shared.error;
 
 import java.sql.SQLException;
 import java.util.List;
-import java.util.UUID;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -24,19 +22,20 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import com.sweet.authstudy.shared.trace.TraceIdProvider;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
-    private static final String TRACE_ID_HEADER = "X-Trace-Id";
-    private static final String TRACE_ID_MDC_KEY = "traceId";
     private static final String INVALID_FIELD_MESSAGE = "Invalid request value.";
     private static final String INTERNAL_ERROR_DETAIL = "The request could not be completed.";
     private final ApiProblemFactory problemFactory;
+    private final TraceIdProvider traceIdProvider;
 
-    public GlobalExceptionHandler(ApiProblemFactory problemFactory) {
+    public GlobalExceptionHandler(ApiProblemFactory problemFactory, TraceIdProvider traceIdProvider) {
         this.problemFactory = problemFactory;
+        this.traceIdProvider = traceIdProvider;
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -114,19 +113,8 @@ public class GlobalExceptionHandler {
             String detail,
             List<FieldViolation> fieldErrors,
             HttpServletRequest request) {
-        String traceId = traceId(request);
-        MDC.put(TRACE_ID_MDC_KEY, traceId);
-        try {
-            log.warn("API error: {}", errorCode);
-            return problemFactory.create(errorCode, detail, traceId, fieldErrors);
-        } finally {
-            MDC.remove(TRACE_ID_MDC_KEY);
-        }
-    }
-
-    private String traceId(HttpServletRequest request) {
-        String requestTraceId = request.getHeader(TRACE_ID_HEADER);
-        return StringUtils.hasText(requestTraceId) ? requestTraceId : UUID.randomUUID().toString();
+        log.warn("API error: {}, traceId={}", errorCode, traceIdProvider.current());
+        return problemFactory.create(errorCode, detail, fieldErrors);
     }
 
     private ErrorCode duplicateErrorCode(DataIntegrityViolationException exception) {

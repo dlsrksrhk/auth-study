@@ -108,6 +108,28 @@ class AuditIntegrationTest {
     }
 
     @Test
+    void audit_storage_failure_does_not_replace_the_original_business_exception() {
+        Fixture fixture = fixture();
+        var department = departmentService.create(SYSTEM_ADMIN,
+                new CreateDepartmentCommand(fixture.code(), "FAIL", "Failure", null));
+        jdbc.execute("CREATE OR REPLACE FUNCTION task8_reject_failure_audit() RETURNS trigger "
+                + "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced audit failure'; END $$");
+        jdbc.execute("CREATE TRIGGER task8_reject_failure_audit_trigger BEFORE INSERT ON audit_logs "
+                + "FOR EACH ROW EXECUTE FUNCTION task8_reject_failure_audit()");
+        try {
+            assertThatThrownBy(() -> departmentService.changeStatus(SYSTEM_ADMIN,
+                    new ChangeDepartmentStatusCommand(fixture.code(), department.code(),
+                            DepartmentStatus.INACTIVE, department.version() + 1)))
+                    .isInstanceOfSatisfying(ApiException.class,
+                            failure -> assertThat(failure.errorCode())
+                                    .isEqualTo(com.sweet.authstudy.shared.error.ErrorCode.OPTIMISTIC_LOCK_CONFLICT));
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS task8_reject_failure_audit_trigger ON audit_logs");
+            jdbc.execute("DROP FUNCTION IF EXISTS task8_reject_failure_audit()");
+        }
+    }
+
+    @Test
     void successful_audit_rolls_back_with_its_business_change() {
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         String code = "T" + suffix.toUpperCase();

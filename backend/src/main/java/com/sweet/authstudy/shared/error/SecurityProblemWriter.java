@@ -3,7 +3,6 @@ package com.sweet.authstudy.shared.error;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.UUID;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,16 +10,19 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
+import com.sweet.authstudy.shared.trace.TraceIdProvider;
 
 @Component
 public class SecurityProblemWriter {
     private final ApiProblemFactory problemFactory;
     private final ObjectMapper objectMapper;
+    private final TraceIdProvider traceIdProvider;
 
-    public SecurityProblemWriter(ApiProblemFactory problemFactory, ObjectMapper objectMapper) {
+    public SecurityProblemWriter(ApiProblemFactory problemFactory, ObjectMapper objectMapper,
+            TraceIdProvider traceIdProvider) {
         this.problemFactory = problemFactory;
         this.objectMapper = objectMapper;
+        this.traceIdProvider = traceIdProvider;
     }
 
     public void write(HttpServletRequest request, HttpServletResponse response,
@@ -28,12 +30,11 @@ public class SecurityProblemWriter {
         response.setStatus(errorCode.status().value());
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+        response.setHeader(TraceIdProvider.HEADER, traceIdProvider.current());
         if (errorCode == ErrorCode.UNAUTHENTICATED) {
             response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
         }
-        String incomingTraceId = request.getHeader("X-Trace-Id");
-        String traceId = StringUtils.hasText(incomingTraceId) ? incomingTraceId : UUID.randomUUID().toString();
         objectMapper.writeValue(response.getWriter(),
-                problemFactory.create(errorCode, detail, traceId, List.of()));
+                problemFactory.create(errorCode, detail, List.of()));
     }
 }

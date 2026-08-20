@@ -9,6 +9,8 @@ import java.util.Map;
 
 import com.sweet.authstudy.audit.application.AuditActions;
 import com.sweet.authstudy.audit.application.AuditService;
+import com.sweet.authstudy.audit.application.AuditFailurePlan;
+import com.sweet.authstudy.audit.application.AuditedTransactionExecutor;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
@@ -33,17 +35,19 @@ public class CompanyService {
     private final TenantGuard tenantGuard;
     private final AccountService accountService;
     private final AuditService auditService;
+    private final AuditedTransactionExecutor auditedTransactions;
     private final Clock clock;
 
     public CompanyService(
             CompanyRepository companyRepository, PositionService positionService,
             TenantGuard tenantGuard, AccountService accountService,
-            AuditService auditService, Clock clock) {
+            AuditService auditService, AuditedTransactionExecutor auditedTransactions, Clock clock) {
         this.companyRepository = companyRepository;
         this.positionService = positionService;
         this.tenantGuard = tenantGuard;
         this.accountService = accountService;
         this.auditService = auditService;
+        this.auditedTransactions = auditedTransactions;
         this.clock = clock;
     }
 
@@ -63,16 +67,18 @@ public class CompanyService {
         return CompanyView.from(saved);
     }
 
-    @Transactional
     public CompanyView update(AuthenticatedAccount actor, String code, UpdateCompanyCommand command) {
-        tenantGuard.requireSystemAdmin(actor);
-        Company identified = findCompany(normalizeCode(code));
-        Company company = companyRepository.findLockedById(identified.id())
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
-        CompanyStatus previousStatus = company.status();
-        String action = previousStatus == command.status()
-                ? AuditActions.COMPANY_UPDATE : AuditActions.COMPANY_STATUS_CHANGE;
-        try {
+        AuditFailurePlan failurePlan = new AuditFailurePlan();
+        return auditedTransactions.execute(failurePlan, () -> {
+            tenantGuard.requireSystemAdmin(actor);
+            Company identified = findCompany(normalizeCode(code));
+            Company company = companyRepository.findLockedById(identified.id())
+                    .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
+            CompanyStatus previousStatus = company.status();
+            String action = previousStatus == command.status()
+                    ? AuditActions.COMPANY_UPDATE : AuditActions.COMPANY_STATUS_CHANGE;
+            failurePlan.identify(actor, action, "COMPANY", company.id(), company.id(),
+                    Map.of("code", company.code(), "previousStatus", previousStatus.name()));
             if (company.version() != command.version()) {
                 throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "Company version does not match.");
             }
@@ -85,11 +91,7 @@ public class CompanyService {
                     Map.of("code", saved.code(), "status", saved.status().name(),
                             "previousStatus", previousStatus.name()));
             return CompanyView.from(saved);
-        } catch (ApiException failure) {
-            auditService.recordFailure(actor, action, "COMPANY", company.id(), company.id(),
-                    Map.of("code", company.code(), "previousStatus", previousStatus.name()), failure);
-            throw failure;
-        }
+        });
     }
 
     @Transactional(readOnly = true)

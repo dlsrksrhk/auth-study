@@ -9,6 +9,8 @@ import java.util.Map;
 
 import com.sweet.authstudy.audit.application.AuditActions;
 import com.sweet.authstudy.audit.application.AuditService;
+import com.sweet.authstudy.audit.application.AuditFailurePlan;
+import com.sweet.authstudy.audit.application.AuditedTransactionExecutor;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.authorization.AdministrativeTargetGuard;
 import com.sweet.authstudy.hr.company.domain.Company;
@@ -44,6 +46,7 @@ public class MembershipService {
     private final TenantGuard tenantGuard;
     private final AdministrativeTargetGuard targetGuard;
     private final AuditService auditService;
+    private final AuditedTransactionExecutor auditedTransactions;
 
     public MembershipService(
             MembershipRepository membershipRepository,
@@ -52,6 +55,7 @@ public class MembershipService {
             DepartmentRepository departmentRepository, TenantGuard tenantGuard,
             AdministrativeTargetGuard targetGuard,
             AuditService auditService,
+            AuditedTransactionExecutor auditedTransactions,
             Clock clock) {
         this.membershipRepository = membershipRepository;
         this.companyRepository = companyRepository;
@@ -60,6 +64,7 @@ public class MembershipService {
         this.tenantGuard = tenantGuard;
         this.targetGuard = targetGuard;
         this.auditService = auditService;
+        this.auditedTransactions = auditedTransactions;
         this.clock = clock;
     }
 
@@ -87,18 +92,21 @@ public class MembershipService {
         return MembershipView.from(saved);
     }
 
-    @Transactional
     public MembershipView update(AuthenticatedAccount actor, UpdateMembershipCommand command) {
-        if (command == null || command.role() == null) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED, "Membership update data is required.");
-        }
-        Company company = findLockedCompany(command.companyCode());
-        tenantGuard.requireCompanyAccess(actor, company.id());
-        requireActive(company);
-        HrUser user = findUser(company.id(), command.userCode());
-        targetGuard.requireMayMutateUser(actor, user.id());
-        DepartmentMembership membership = findMembership(command.membershipId());
-        try {
+        AuditFailurePlan failurePlan = new AuditFailurePlan();
+        return auditedTransactions.execute(failurePlan, () -> {
+            if (command == null || command.role() == null) {
+                throw new ApiException(ErrorCode.VALIDATION_FAILED, "Membership update data is required.");
+            }
+            Company company = findLockedCompany(command.companyCode());
+            tenantGuard.requireCompanyAccess(actor, company.id());
+            requireActive(company);
+            HrUser user = findUser(company.id(), command.userCode());
+            targetGuard.requireMayMutateUser(actor, user.id());
+            DepartmentMembership membership = findMembership(command.membershipId());
+            failurePlan.identify(actor, AuditActions.MEMBERSHIP_UPDATE, "MEMBERSHIP",
+                    membership.id(), company.id(), Map.of("membershipId", membership.id(),
+                            "userCode", user.code()));
             requireOwnership(membership, company, user);
             requireVersion(membership, command.version());
             requireActive(membership);
@@ -112,23 +120,21 @@ public class MembershipService {
                             "userCode", user.code(), "departmentCode", department.code(),
                             "role", saved.role().name(), "primary", saved.primary()));
             return MembershipView.from(saved);
-        } catch (ApiException failure) {
-            auditService.recordFailure(actor, AuditActions.MEMBERSHIP_UPDATE, "MEMBERSHIP",
-                    membership.id(), company.id(), Map.of("membershipId", membership.id(),
-                            "userCode", user.code()), failure);
-            throw failure;
-        }
+        });
     }
 
-    @Transactional
     public MembershipView end(
             AuthenticatedAccount actor, String companyCode, String userCode, long membershipId, long version) {
-        Company company = findLockedCompany(companyCode);
-        tenantGuard.requireCompanyAccess(actor, company.id());
-        HrUser user = findUser(company.id(), userCode);
-        targetGuard.requireMayMutateUser(actor, user.id());
-        DepartmentMembership membership = findMembership(membershipId);
-        try {
+        AuditFailurePlan failurePlan = new AuditFailurePlan();
+        return auditedTransactions.execute(failurePlan, () -> {
+            Company company = findLockedCompany(companyCode);
+            tenantGuard.requireCompanyAccess(actor, company.id());
+            HrUser user = findUser(company.id(), userCode);
+            targetGuard.requireMayMutateUser(actor, user.id());
+            DepartmentMembership membership = findMembership(membershipId);
+            failurePlan.identify(actor, AuditActions.MEMBERSHIP_END, "MEMBERSHIP",
+                    membership.id(), company.id(), Map.of("membershipId", membership.id(),
+                            "userCode", user.code()));
             requireOwnership(membership, company, user);
             requireVersion(membership, version);
             requireActive(membership);
@@ -142,12 +148,7 @@ public class MembershipService {
                     saved.id(), company.id(), Map.of("membershipId", saved.id(),
                             "userCode", user.code(), "departmentCode", department.code()));
             return MembershipView.from(saved);
-        } catch (ApiException failure) {
-            auditService.recordFailure(actor, AuditActions.MEMBERSHIP_END, "MEMBERSHIP",
-                    membership.id(), company.id(), Map.of("membershipId", membership.id(),
-                            "userCode", user.code()), failure);
-            throw failure;
-        }
+        });
     }
 
     @Transactional(readOnly = true)
