@@ -126,12 +126,28 @@ public final class Account {
     }
 
     public void addRole(AccountRole role, Instant now) {
-        this.roles.add(Objects.requireNonNull(role));
+        Objects.requireNonNull(role);
+        if (companyId == null && role != AccountRole.SYSTEM_ADMIN) {
+            throw new IllegalArgumentException("A system account cannot have company roles.");
+        }
+        if (companyId != null && role == AccountRole.SYSTEM_ADMIN) {
+            throw new IllegalArgumentException("A company account cannot have the system administrator role.");
+        }
+        this.roles.add(role);
+        validateOwnership();
         this.updatedAt = Objects.requireNonNull(now);
     }
 
     public void removeRole(AccountRole role, Instant now) {
-        this.roles.remove(Objects.requireNonNull(role));
+        Objects.requireNonNull(role);
+        if (companyId == null && role == AccountRole.SYSTEM_ADMIN) {
+            throw new IllegalArgumentException("The system administrator role is required.");
+        }
+        if (companyId != null && role == AccountRole.USER) {
+            throw new IllegalArgumentException("The user role is required for a company account.");
+        }
+        this.roles.remove(role);
+        validateOwnership();
         this.updatedAt = Objects.requireNonNull(now);
     }
 
@@ -144,6 +160,9 @@ public final class Account {
         }
         if (companyId != null && roles.contains(AccountRole.SYSTEM_ADMIN)) {
             throw new IllegalArgumentException("A company account cannot have the system administrator role.");
+        }
+        if (companyId != null && !roles.contains(AccountRole.USER)) {
+            throw new IllegalArgumentException("A company account must have the user role.");
         }
     }
 

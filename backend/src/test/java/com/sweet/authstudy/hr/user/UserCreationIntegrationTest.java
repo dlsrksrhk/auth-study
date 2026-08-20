@@ -6,9 +6,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.LocalDate;
 
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
+import com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
+import com.sweet.authstudy.hr.company.application.CompanyView;
+import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.hr.position.application.PositionCommands.CreatePositionCommand;
+import com.sweet.authstudy.hr.position.application.PositionCommands.UpdatePositionCommand;
 import com.sweet.authstudy.hr.position.application.PositionService;
+import com.sweet.authstudy.hr.position.application.PositionView;
 import com.sweet.authstudy.hr.user.application.UserCommands.CreateUserCommand;
 import com.sweet.authstudy.hr.user.application.UserService;
 import com.sweet.authstudy.hr.user.application.UserViews.CreatedUserView;
@@ -150,6 +155,34 @@ class UserCreationIntegrationTest {
         assertFailure(
                 command("U001", "E-1001", "kim@acme.example", "ARCHITECT"),
                 ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
+    @Test
+    void rejects_user_creation_for_inactive_company() {
+        CompanyView company = companyService.find("ACME");
+        companyService.update(
+                "ACME", new UpdateCompanyCommand(company.name(), CompanyStatus.INACTIVE, company.version()));
+
+        assertFailure(
+                command("U001", "E-1001", "kim@acme.example", "EMPLOYEE"),
+                ErrorCode.INVALID_STATE);
+    }
+
+    @Test
+    void rejects_user_creation_for_inactive_position() {
+        PositionView position = positionService.list("ACME").stream()
+                .filter(view -> view.code().equals("EMPLOYEE"))
+                .findFirst()
+                .orElseThrow();
+        positionService.update(
+                "ACME",
+                "EMPLOYEE",
+                new UpdatePositionCommand(
+                        position.name(), position.level(), position.displayOrder(), false, position.version()));
+
+        assertFailure(
+                command("U001", "E-1001", "kim@acme.example", "EMPLOYEE"),
+                ErrorCode.INVALID_STATE);
     }
 
     private CreateUserCommand command(String code, String employeeNumber, String email, String positionCode) {

@@ -12,7 +12,8 @@ CREATE TABLE users (
     status VARCHAR(20) NOT NULL,
     version BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT uk_users_id_company UNIQUE (id, company_id)
 );
 
 CREATE UNIQUE INDEX uk_users_company_code_upper ON users (company_id, upper(code));
@@ -21,7 +22,7 @@ CREATE UNIQUE INDEX uk_users_company_employee_number ON users (company_id, emplo
 CREATE TABLE accounts (
     id BIGSERIAL PRIMARY KEY,
     company_id BIGINT REFERENCES companies (id),
-    user_id BIGINT REFERENCES users (id),
+    user_id BIGINT,
     login_email VARCHAR(320) NOT NULL,
     password_hash VARCHAR(100) NOT NULL,
     status VARCHAR(20) NOT NULL,
@@ -31,6 +32,8 @@ CREATE TABLE accounts (
     version BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT fk_accounts_user_company FOREIGN KEY (user_id, company_id)
+        REFERENCES users (id, company_id),
     CONSTRAINT ck_accounts_owner CHECK (
         (company_id IS NULL AND user_id IS NULL)
         OR (company_id IS NOT NULL AND user_id IS NOT NULL)

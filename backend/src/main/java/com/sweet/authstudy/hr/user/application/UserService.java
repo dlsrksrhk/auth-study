@@ -8,6 +8,7 @@ import java.util.Locale;
 
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
+import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.hr.position.domain.Position;
 import com.sweet.authstudy.hr.position.domain.PositionRepository;
 import com.sweet.authstudy.hr.user.domain.HrUser;
@@ -56,6 +57,9 @@ public class UserService {
         }
         Company company = companyRepository.findByCode(normalizeCode(command.companyCode()))
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
+        if (company.status() != CompanyStatus.ACTIVE) {
+            throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
+        }
         String code = normalizeCode(command.code());
         String employeeNumber = normalizeRequired(command.employeeNumber());
         String loginEmail = normalizeEmail(command.loginEmail());
@@ -67,6 +71,9 @@ public class UserService {
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Position was not found."));
         if (position.companyId() != company.id()) {
             throw new ApiException(ErrorCode.INVALID_STATE, "Position belongs to another company.");
+        }
+        if (!position.active()) {
+            throw new ApiException(ErrorCode.INVALID_STATE, "Position is inactive.");
         }
 
         HrUser savedUser = userRepository.save(HrUser.create(
