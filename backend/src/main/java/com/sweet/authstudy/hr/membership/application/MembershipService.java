@@ -5,9 +5,9 @@ import static com.sweet.authstudy.hr.membership.application.MembershipCommands.U
 
 import java.time.Clock;
 import java.util.List;
-import java.util.Locale;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
+import com.sweet.authstudy.authorization.AdministrativeTargetGuard;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
@@ -23,6 +23,8 @@ import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
+import com.sweet.authstudy.shared.validation.BusinessCode;
+import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -37,18 +39,21 @@ public class MembershipService {
     private final DepartmentRepository departmentRepository;
     private final Clock clock;
     private final TenantGuard tenantGuard;
+    private final AdministrativeTargetGuard targetGuard;
 
     public MembershipService(
             MembershipRepository membershipRepository,
             CompanyRepository companyRepository,
             UserRepository userRepository,
             DepartmentRepository departmentRepository, TenantGuard tenantGuard,
+            AdministrativeTargetGuard targetGuard,
             Clock clock) {
         this.membershipRepository = membershipRepository;
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
         this.departmentRepository = departmentRepository;
         this.tenantGuard = tenantGuard;
+        this.targetGuard = targetGuard;
         this.clock = clock;
     }
 
@@ -61,6 +66,7 @@ public class MembershipService {
         tenantGuard.requireCompanyAccess(actor, company.id());
         requireActive(company);
         HrUser user = findUser(company.id(), command.userCode());
+        targetGuard.requireMayMutateUser(actor, user.id());
         Department department = findDepartment(company.id(), command.departmentCode());
         requireAssignable(user, department);
         rejectAssignConflicts(user.id(), department.id(), command.role(), command.primary());
@@ -79,6 +85,7 @@ public class MembershipService {
         tenantGuard.requireCompanyAccess(actor, company.id());
         requireActive(company);
         HrUser user = findUser(company.id(), command.userCode());
+        targetGuard.requireMayMutateUser(actor, user.id());
         DepartmentMembership membership = findMembership(command.membershipId());
         requireOwnership(membership, company, user);
         requireVersion(membership, command.version());
@@ -96,6 +103,7 @@ public class MembershipService {
         Company company = findLockedCompany(companyCode);
         tenantGuard.requireCompanyAccess(actor, company.id());
         HrUser user = findUser(company.id(), userCode);
+        targetGuard.requireMayMutateUser(actor, user.id());
         DepartmentMembership membership = findMembership(membershipId);
         requireOwnership(membership, company, user);
         requireVersion(membership, version);
@@ -115,6 +123,19 @@ public class MembershipService {
         tenantGuard.requireCompanyAccess(actor, company.id());
         HrUser user = findUser(company.id(), userCode);
         return membershipRepository.findAllByUserId(user.id()).stream().map(MembershipView::from).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PageResult<MembershipView> searchByUser(
+            AuthenticatedAccount actor, String companyCode, String userCode,
+            String search, Boolean active, int page, int size, String sort) {
+        Company company = findCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        HrUser user = findUser(company.id(), userCode);
+        var result = membershipRepository.searchByUser(
+                company.id(), user.id(), search, active, page, size, sort);
+        return new PageResult<>(result.content().stream().map(MembershipView::from).toList(),
+                result.totalElements(), result.totalPages());
     }
 
     private void rejectAssignConflicts(
@@ -246,9 +267,6 @@ public class MembershipService {
     }
 
     private String normalizeCode(String value) {
-        if (value == null || value.isBlank()) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED, "A required value is missing.");
-        }
-        return value.trim().toUpperCase(Locale.ROOT);
+        return BusinessCode.normalize(value);
     }
 }

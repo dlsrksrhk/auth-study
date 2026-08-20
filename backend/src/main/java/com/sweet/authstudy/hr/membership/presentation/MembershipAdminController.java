@@ -3,8 +3,6 @@ package com.sweet.authstudy.hr.membership.presentation;
 import static com.sweet.authstudy.hr.membership.presentation.MembershipRequests.AssignMembershipRequest;
 import static com.sweet.authstudy.hr.membership.presentation.MembershipRequests.UpdateMembershipRequest;
 
-import java.net.URI;
-import java.util.Comparator;
 import java.util.Set;
 
 import com.sweet.authstudy.hr.membership.application.MembershipCommands.AssignMembershipCommand;
@@ -13,8 +11,11 @@ import com.sweet.authstudy.hr.membership.application.MembershipService;
 import com.sweet.authstudy.hr.membership.application.MembershipView;
 import com.sweet.authstudy.shared.presentation.PageResponse;
 import com.sweet.authstudy.shared.presentation.PageRules;
+import com.sweet.authstudy.shared.presentation.Locations;
 import com.sweet.authstudy.shared.security.ActorContext;
 import com.sweet.authstudy.shared.security.TenantGuard;
+import com.sweet.authstudy.shared.validation.BusinessCode;
+import com.sweet.authstudy.shared.validation.ValidCode;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -44,39 +45,39 @@ public class MembershipAdminController {
 
     @GetMapping
     public PageResponse<MembershipView> list(
-            @PathVariable String companyCode, @PathVariable String userCode,
+            @PathVariable @ValidCode String companyCode, @PathVariable @ValidCode String userCode,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(defaultValue = "startedAt") String sort) {
+            @RequestParam(defaultValue = "startedAt") String sort,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) MembershipStatus status) {
         PageRules.validate(page, size, sort, SORTS);
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
-        Comparator<MembershipView> comparator = switch (sort) {
-            case "departmentId" -> Comparator.comparingLong(MembershipView::departmentId);
-            case "role" -> Comparator.comparing(value -> value.role().name());
-            case "startedAt" -> Comparator.comparing(MembershipView::startedAt);
-            default -> Comparator.comparing(MembershipView::id);
-        };
-        var values = membershipService.listByUser(actor, companyCode, userCode).stream()
-                .sorted(comparator).toList();
-        return PageResponse.of(values, page, size);
+        Boolean active = status == null ? null : status == MembershipStatus.ACTIVE;
+        var result = membershipService.searchByUser(actor, companyCode, userCode,
+                search == null ? "" : search.trim(), active, page, size, sort);
+        return new PageResponse<>(result.content(), page, size,
+                result.totalElements(), result.totalPages());
     }
 
     @PostMapping
     public ResponseEntity<MembershipView> assign(
-            @PathVariable String companyCode, @PathVariable String userCode,
+            @PathVariable @ValidCode String companyCode, @PathVariable @ValidCode String userCode,
             @Valid @RequestBody AssignMembershipRequest request) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
         MembershipView created = membershipService.assign(actor, new AssignMembershipCommand(
                 companyCode, userCode, request.departmentCode(), request.role(),
                 request.primary(), request.startedAt()));
-        return ResponseEntity.created(URI.create("/api/v1/admin/companies/" + companyCode
-                + "/users/" + userCode + "/memberships/" + created.id())).body(created);
+        return ResponseEntity.created(Locations.resource("api", "v1", "admin", "companies",
+                BusinessCode.normalize(companyCode), "users", BusinessCode.normalize(userCode),
+                "memberships", created.id().toString())).body(created);
     }
 
     @PutMapping("/{membershipId}")
-    public MembershipView update(@PathVariable String companyCode, @PathVariable String userCode,
+    public MembershipView update(@PathVariable @ValidCode String companyCode,
+            @PathVariable @ValidCode String userCode,
             @PathVariable long membershipId, @Valid @RequestBody UpdateMembershipRequest request) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
@@ -85,10 +86,13 @@ public class MembershipAdminController {
     }
 
     @DeleteMapping("/{membershipId}")
-    public MembershipView end(@PathVariable String companyCode, @PathVariable String userCode,
+    public MembershipView end(@PathVariable @ValidCode String companyCode,
+            @PathVariable @ValidCode String userCode,
             @PathVariable long membershipId, @RequestParam Long version) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
         return membershipService.end(actor, companyCode, userCode, membershipId, version);
     }
+
+    public enum MembershipStatus { ACTIVE, ENDED }
 }

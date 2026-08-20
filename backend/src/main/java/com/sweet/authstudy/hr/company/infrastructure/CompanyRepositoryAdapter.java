@@ -2,12 +2,16 @@ package com.sweet.authstudy.hr.company.infrastructure;
 
 import java.util.Optional;
 import java.util.List;
+import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.shared.application.PageResult;
 
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import org.springframework.stereotype.Repository;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 
 @Repository
 public class CompanyRepositoryAdapter implements CompanyRepository {
@@ -58,5 +62,18 @@ public class CompanyRepositoryAdapter implements CompanyRepository {
     @Override
     public List<Company> findAll() {
         return repository.findAll().stream().map(CompanyJpaEntity::toDomain).toList();
+    }
+
+    @Override
+    public PageResult<Company> search(
+            String search, CompanyStatus status, int page, int size, String sort) {
+        var result = repository.search(search, status, PageRequest.of(page, size, stableSort(sort, "code")));
+        return new PageResult<>(result.getContent().stream().map(CompanyJpaEntity::toDomain).toList(),
+                result.getTotalElements(), result.getTotalPages());
+    }
+
+    private Sort stableSort(String requested, String tieBreaker) {
+        Sort sort = Sort.by(requested);
+        return requested.equals(tieBreaker) ? sort : sort.and(Sort.by(tieBreaker));
     }
 }

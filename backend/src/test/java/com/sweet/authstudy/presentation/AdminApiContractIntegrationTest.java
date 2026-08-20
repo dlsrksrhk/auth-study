@@ -4,11 +4,17 @@ import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.http.HttpHeaders.AUTHORIZATION;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Clock;
 import java.util.UUID;
@@ -17,6 +23,11 @@ import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.identity.application.JwtTokenService;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
+import com.sweet.authstudy.hr.company.domain.CompanyRepository;
+import com.sweet.authstudy.hr.position.domain.PositionRepository;
+import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
+import com.sweet.authstudy.hr.user.domain.UserRepository;
+import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +38,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -35,7 +47,12 @@ import org.springframework.test.web.servlet.MockMvc;
 class AdminApiContractIntegrationTest {
 
     @Autowired MockMvc mvc;
-    @Autowired AccountRepository accountRepository;
+    @MockitoSpyBean AccountRepository accountRepository;
+    @MockitoSpyBean CompanyRepository companyRepository;
+    @MockitoSpyBean PositionRepository positionRepository;
+    @MockitoSpyBean DepartmentRepository departmentRepository;
+    @MockitoSpyBean MembershipRepository membershipRepository;
+    @Autowired UserRepository userRepository;
     @Autowired JwtTokenService jwtTokenService;
     @Autowired PasswordEncoder passwordEncoder;
     @Autowired Clock clock;
@@ -159,11 +176,220 @@ class AdminApiContractIntegrationTest {
     }
 
     @Test
-    void very_large_zero_based_page_is_an_empty_page_instead_of_an_internal_error() throws Exception {
+    void excessively_large_page_is_rejected_consistently() throws Exception {
         mvc.perform(get("/api/v1/admin/companies")
                         .param("page", String.valueOf(Integer.MAX_VALUE))
                         .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void all_admin_lists_reject_an_offset_that_cannot_be_safely_queried() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String companyCode = "P" + suffix;
+        createCompany(companyCode, suffix + ".page.example");
+        createUser(companyCode, suffix + ".page.example", "U001");
+
+        var paths = java.util.List.of(
+                "/api/v1/admin/companies",
+                "/api/v1/admin/companies/" + companyCode + "/positions",
+                "/api/v1/admin/companies/" + companyCode + "/departments",
+                "/api/v1/admin/companies/" + companyCode + "/users",
+                "/api/v1/admin/companies/" + companyCode + "/users/U001/memberships");
+        for (String path : paths) {
+            mvc.perform(get(path).param("page", String.valueOf(Integer.MAX_VALUE))
+                            .header(AUTHORIZATION, "Bearer " + systemToken))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        }
+    }
+
+    @Test
+    void unsafe_business_codes_are_rejected_without_persistence() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String companyCode = "S" + suffix;
+        createCompany(companyCode, suffix + ".safe.example");
+
+        mvc.perform(post("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"BAD/CODE\",\"name\":\"Bad\","
+                                + "\"emailDomain\":\"bad-" + suffix + ".example\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/admin/companies/{companyCode}/positions", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"BAD?CODE\",\"name\":\"Bad\",\"level\":1,\"displayOrder\":1}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/admin/companies/{companyCode}/departments", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"BAD#CODE\",\"name\":\"Bad\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/admin/companies/{companyCode}/users", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"BAD CODE\",\"employeeNumber\":\"E-BAD\","
+                                + "\"name\":\"Bad\",\"loginEmail\":\"bad@" + suffix + ".safe.example\","
+                                + "\"phone\":\"010-0000-0000\",\"hiredAt\":\"2026-08-20\","
+                                + "\"workplace\":\"Seoul\",\"positionCode\":\"EMPLOYEE\"}"))
+                .andExpect(status().isBadRequest());
+
+        assertThat(companyRepository.findByCode("BAD/CODE")).isEmpty();
+        long companyId = companyRepository.findByCode(companyCode).orElseThrow().id();
+        assertThat(positionRepository.findByCompanyIdAndCode(companyId, "BAD?CODE")).isEmpty();
+        assertThat(departmentRepository.findByCompanyIdAndCode(companyId, "BAD#CODE")).isEmpty();
+        assertThat(userRepository.findByCompanyIdAndCode(companyId, "BAD CODE")).isEmpty();
+    }
+
+    @Test
+    void valid_path_safe_codes_produce_canonical_locations() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 6);
+        String code = "C-" + suffix + "_1";
+        mvc.perform(post("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"" + code + "\",\"name\":\"Safe\","
+                                + "\"emailDomain\":\"" + suffix + ".location.example\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Location", endsWith(
+                        "/api/v1/admin/companies/" + code.toUpperCase())));
+    }
+
+    @Test
+    void validation_problem_has_stable_type_title_and_reuses_trace_id() throws Exception {
+        mvc.perform(post("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .header("X-Trace-Id", "trace-validation-1")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"\",\"name\":\"\",\"emailDomain\":\"\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("https://auth-study.local/problems/validation-failed"))
+                .andExpect(jsonPath("$.title").value("Validation failed"))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.traceId").value("trace-validation-1"));
+    }
+
+    @Test
+    void framework_routing_errors_use_the_same_problem_details_contract() throws Exception {
+        mvc.perform(get("/api/v1/admin/not-a-route")
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isNotFound())
+                .andExpect(header().string("Content-Type", org.hamcrest.Matchers.containsString(
+                        "application/problem+json")))
+                .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
+                .andExpect(jsonPath("$.type").value("https://auth-study.local/problems/resource-not-found"))
+                .andExpect(jsonPath("$.traceId").isNotEmpty())
+                .andExpect(jsonPath("$.fieldErrors").isArray());
+        mvc.perform(delete("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string("Allow", org.hamcrest.Matchers.containsString("GET")))
+                .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"))
+                .andExpect(jsonPath("$.type").value("https://auth-study.local/problems/method-not-allowed"));
+        mvc.perform(post("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType("text/plain").content("unsupported"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(header().string("Accept", org.hamcrest.Matchers.containsString("application/json")))
+                .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"))
+                .andExpect(jsonPath("$.type").value(
+                        "https://auth-study.local/problems/unsupported-media-type"));
+    }
+
+    @Test
+    void duplicate_sort_values_have_a_stable_code_tiebreaker_across_pages() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
+        String firstInserted = "Z" + suffix;
+        String secondInserted = "A" + suffix;
+        createCompany(firstInserted, suffix.toLowerCase() + "-z.sort.example");
+        createCompany(secondInserted, suffix.toLowerCase() + "-a.sort.example");
+
+        String firstPage = mvc.perform(get("/api/v1/admin/companies")
+                        .param("search", suffix).param("sort", "name").param("page", "0").param("size", "1")
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2))
+                .andReturn().getResponse().getContentAsString();
+        String secondPage = mvc.perform(get("/api/v1/admin/companies")
+                        .param("search", suffix).param("sort", "name").param("page", "1").param("size", "1")
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content").isEmpty());
+                .andReturn().getResponse().getContentAsString();
+        assertThat(com.jayway.jsonpath.JsonPath.<String>read(firstPage, "$.content[0].code"))
+                .isEqualTo(secondInserted);
+        assertThat(com.jayway.jsonpath.JsonPath.<String>read(secondPage, "$.content[0].code"))
+                .isEqualTo(firstInserted);
+    }
+
+    @Test
+    void unsafe_path_code_uses_the_same_validation_problem_contract() throws Exception {
+        mvc.perform(get("/api/v1/admin/companies/BAD.CODE/positions")
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.type").value("https://auth-study.local/problems/validation-failed"));
+    }
+
+    @Test
+    void user_list_does_not_load_accounts_one_by_one() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String companyCode = "N" + suffix;
+        createCompany(companyCode, suffix + ".nplusone.example");
+        createUser(companyCode, suffix + ".nplusone.example", "U001");
+        createUser(companyCode, suffix + ".nplusone.example", "U002");
+        clearInvocations(accountRepository);
+
+        mvc.perform(get("/api/v1/admin/companies/{companyCode}/users", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2));
+
+        verify(accountRepository, never()).findByUserId(anyLong());
+    }
+
+    @Test
+    void list_endpoints_do_not_load_the_entire_tenant_collection_before_paging() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String companyCode = "D" + suffix;
+        createCompany(companyCode, suffix + ".dbpage.example");
+        createUser(companyCode, suffix + ".dbpage.example", "U001");
+        clearInvocations(companyRepository, positionRepository, departmentRepository, membershipRepository);
+
+        mvc.perform(get("/api/v1/admin/companies").header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/admin/companies/{companyCode}/positions", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/admin/companies/{companyCode}/departments", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/admin/companies/{companyCode}/users/U001/memberships", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isOk());
+
+        verify(companyRepository, never()).findAll();
+        verify(positionRepository, never()).findAllByCompanyId(anyLong());
+        verify(departmentRepository, never()).findAllByCompanyId(anyLong());
+        verify(membershipRepository, never()).findAllByUserId(anyLong());
+    }
+
+    private void createCompany(String code, String domain) throws Exception {
+        mvc.perform(post("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"" + code + "\",\"name\":\"Acme\","
+                                + "\"emailDomain\":\"" + domain + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    private void createUser(String companyCode, String domain, String userCode) throws Exception {
+        String local = userCode.toLowerCase();
+        mvc.perform(post("/api/v1/admin/companies/{companyCode}/users", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"" + userCode + "\",\"employeeNumber\":\"E-" + userCode + "\","
+                                + "\"name\":\"" + userCode + "\",\"loginEmail\":\"" + local + "@" + domain
+                                + "\",\"phone\":\"010-0000-0000\","
+                                + "\"hiredAt\":\"2026-08-20\",\"workplace\":\"Seoul\","
+                                + "\"positionCode\":\"EMPLOYEE\"}"))
+                .andExpect(status().isCreated());
     }
 }

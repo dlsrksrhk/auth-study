@@ -9,7 +9,9 @@ public final class PageRules {
     private PageRules() {}
 
     public static void validate(int page, int size, String sort, Set<String> allowedSorts) {
-        if (page < 0 || size < 1 || size > 100 || sort == null || !allowedSorts.contains(sort)) {
+        long offset = (long) page * size;
+        if (page < 0 || size < 1 || size > 100 || offset + size > Integer.MAX_VALUE
+                || sort == null || !allowedSorts.contains(sort)) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Invalid pagination or sort value.");
         }
     }

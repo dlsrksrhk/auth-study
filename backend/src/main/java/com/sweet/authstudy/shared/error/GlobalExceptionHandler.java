@@ -11,6 +11,9 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.util.StringUtils;
@@ -19,6 +22,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -28,6 +33,11 @@ public class GlobalExceptionHandler {
     private static final String TRACE_ID_MDC_KEY = "traceId";
     private static final String INVALID_FIELD_MESSAGE = "Invalid request value.";
     private static final String INTERNAL_ERROR_DETAIL = "The request could not be completed.";
+    private final ApiProblemFactory problemFactory;
+
+    public GlobalExceptionHandler(ApiProblemFactory problemFactory) {
+        this.problemFactory = problemFactory;
+    }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ProblemDetail handleValidation(MethodArgumentNotValidException exception, HttpServletRequest request) {
@@ -40,10 +50,35 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({
             HttpMessageNotReadableException.class,
             MissingServletRequestParameterException.class,
-            MethodArgumentTypeMismatchException.class
+            MethodArgumentTypeMismatchException.class,
+            HandlerMethodValidationException.class,
+            jakarta.validation.ConstraintViolationException.class
     })
     ProblemDetail handleMalformedRequest(Exception exception, HttpServletRequest request) {
         return problem(ErrorCode.VALIDATION_FAILED, "Validation failed.", List.of(), request);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    ProblemDetail handleNoResource(NoResourceFoundException exception, HttpServletRequest request) {
+        return problem(ErrorCode.RESOURCE_NOT_FOUND, "The requested resource was not found.", List.of(), request);
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    ResponseEntity<ProblemDetail> handleMethodNotAllowed(
+            HttpRequestMethodNotSupportedException exception, HttpServletRequest request) {
+        ProblemDetail body = problem(ErrorCode.METHOD_NOT_ALLOWED,
+                "The request method is not supported for this resource.", List.of(), request);
+        return ResponseEntity.status(ErrorCode.METHOD_NOT_ALLOWED.status())
+                .headers(exception.getHeaders()).body(body);
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    ResponseEntity<ProblemDetail> handleUnsupportedMediaType(
+            HttpMediaTypeNotSupportedException exception, HttpServletRequest request) {
+        ProblemDetail body = problem(ErrorCode.UNSUPPORTED_MEDIA_TYPE,
+                "The request media type is not supported.", List.of(), request);
+        return ResponseEntity.status(ErrorCode.UNSUPPORTED_MEDIA_TYPE.status())
+                .headers(exception.getHeaders()).body(body);
     }
 
     @ExceptionHandler(ApiException.class)
@@ -83,11 +118,7 @@ public class GlobalExceptionHandler {
         MDC.put(TRACE_ID_MDC_KEY, traceId);
         try {
             log.warn("API error: {}", errorCode);
-            ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(errorCode.status(), detail);
-            problemDetail.setProperty("code", errorCode.name());
-            problemDetail.setProperty("traceId", traceId);
-            problemDetail.setProperty("fieldErrors", fieldErrors);
-            return problemDetail;
+            return problemFactory.create(errorCode, detail, traceId, fieldErrors);
         } finally {
             MDC.remove(TRACE_ID_MDC_KEY);
         }
@@ -139,6 +170,8 @@ public class GlobalExceptionHandler {
             case UNAUTHENTICATED -> "Authentication is required.";
             case FORBIDDEN -> "You do not have permission to perform this action.";
             case RESOURCE_NOT_FOUND -> "The requested resource was not found.";
+            case METHOD_NOT_ALLOWED -> "The request method is not supported for this resource.";
+            case UNSUPPORTED_MEDIA_TYPE -> "The request media type is not supported.";
             case DUPLICATE_CODE, DUPLICATE_EMAIL, DUPLICATE_EMPLOYEE_NUMBER ->
                     "A resource with the same unique value already exists.";
             case OPTIMISTIC_LOCK_CONFLICT -> "The resource was changed by another request. Retry with the latest version.";

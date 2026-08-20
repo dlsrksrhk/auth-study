@@ -1,6 +1,8 @@
 package com.sweet.authstudy.identity.infrastructure;
 
 import java.util.Optional;
+import java.util.List;
+import java.util.Collection;
 
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,6 +13,8 @@ import org.springframework.data.repository.query.Param;
 interface AccountJpaRepository extends JpaRepository<AccountJpaEntity, Long> {
 
     Optional<AccountJpaEntity> findByUserId(long userId);
+
+    List<AccountJpaEntity> findAllByUserIdIn(Collection<Long> userIds);
 
     Optional<AccountJpaEntity> findByCompanyIdAndLoginEmailIgnoreCase(long companyId, String loginEmail);
 

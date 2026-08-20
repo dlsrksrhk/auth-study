@@ -2,6 +2,8 @@ package com.sweet.authstudy.identity.domain;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.List;
+import java.util.Collection;
 
 public interface AccountRepository {
 
@@ -12,6 +14,8 @@ public interface AccountRepository {
     Optional<Account> findByIdForUpdate(long id);
 
     Optional<Account> findByUserId(long userId);
+
+    List<Account> findAllByUserIds(Collection<Long> userIds);
 
     Optional<Account> findCompanyAccount(long companyId, String loginEmail);
 

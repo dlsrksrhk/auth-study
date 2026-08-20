@@ -2,6 +2,7 @@ package com.sweet.authstudy.hr.company.domain;
 
 import java.util.Optional;
 import java.util.List;
+import com.sweet.authstudy.shared.application.PageResult;
 
 public interface CompanyRepository {
 
@@ -16,4 +17,6 @@ public interface CompanyRepository {
     Optional<Company> findLockedById(long id);
 
     List<Company> findAll();
+
+    PageResult<Company> search(String search, CompanyStatus status, int page, int size, String sort);
 }

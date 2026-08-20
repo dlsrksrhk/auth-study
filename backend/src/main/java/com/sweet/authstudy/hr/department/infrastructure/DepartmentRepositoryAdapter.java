@@ -6,6 +6,9 @@ import java.util.Optional;
 import com.sweet.authstudy.hr.department.domain.Department;
 import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
 import com.sweet.authstudy.hr.department.domain.DepartmentStatus;
+import com.sweet.authstudy.shared.application.PageResult;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -49,5 +52,19 @@ public class DepartmentRepositoryAdapter implements DepartmentRepository {
     @Override
     public boolean existsActiveChild(long parentDepartmentId) {
         return repository.existsByParentDepartmentIdAndStatus(parentDepartmentId, DepartmentStatus.ACTIVE);
+    }
+
+    @Override
+    public PageResult<Department> search(
+            long companyId, String search, DepartmentStatus status, int page, int size, String sort) {
+        var result = repository.search(companyId, search, status,
+                PageRequest.of(page, size, stableSort(sort, "code")));
+        return new PageResult<>(result.getContent().stream().map(DepartmentJpaEntity::toDomain).toList(),
+                result.getTotalElements(), result.getTotalPages());
+    }
+
+    private Sort stableSort(String requested, String tieBreaker) {
+        Sort sort = Sort.by(requested);
+        return requested.equals(tieBreaker) ? sort : sort.and(Sort.by(tieBreaker));
     }
 }

@@ -56,7 +56,7 @@ class DepartmentTreeIntegrationTest {
     @Test
     void normalizes_code_and_rejects_case_insensitive_duplicates_within_company() {
         DepartmentView created = departmentService.create(SYSTEM_ADMIN,
-                new CreateDepartmentCommand(" acme ", " dev ", " Development ", null));
+                new CreateDepartmentCommand("acme", "dev", " Development ", null));
 
         assertThat(created.code()).isEqualTo("DEV");
         assertThat(created.name()).isEqualTo("Development");

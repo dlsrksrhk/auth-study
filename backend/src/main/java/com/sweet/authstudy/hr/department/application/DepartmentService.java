@@ -7,7 +7,6 @@ import static com.sweet.authstudy.hr.department.application.DepartmentCommands.U
 
 import java.time.Clock;
 import java.util.List;
-import java.util.Locale;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
@@ -20,6 +19,8 @@ import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
+import com.sweet.authstudy.shared.validation.BusinessCode;
+import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -146,6 +147,16 @@ public class DepartmentService {
         return departmentRepository.findAllByCompanyId(company.id()).stream().map(DepartmentView::from).toList();
     }
 
+    @Transactional(readOnly = true)
+    public PageResult<DepartmentView> search(AuthenticatedAccount actor, String companyCode,
+            String search, DepartmentStatus status, int page, int size, String sort) {
+        Company company = findCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        var result = departmentRepository.search(company.id(), search, status, page, size, sort);
+        return new PageResult<>(result.content().stream().map(DepartmentView::from).toList(),
+                result.totalElements(), result.totalPages());
+    }
+
     private Department save(Department department) {
         try {
             return departmentRepository.save(department);
@@ -212,7 +223,7 @@ public class DepartmentService {
     }
 
     private String normalizeCode(String value) {
-        return normalizeRequired(value).toUpperCase(Locale.ROOT);
+        return BusinessCode.normalize(value);
     }
 
     private String normalizeRequired(String value) {

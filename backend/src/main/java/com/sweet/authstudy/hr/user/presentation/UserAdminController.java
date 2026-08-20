@@ -5,7 +5,6 @@ import static com.sweet.authstudy.hr.user.presentation.UserRequests.CreateUserRe
 import static com.sweet.authstudy.hr.user.presentation.UserRequests.TemporaryPasswordResponse;
 import static com.sweet.authstudy.hr.user.presentation.UserRequests.UpdateUserRequest;
 
-import java.net.URI;
 import java.util.Set;
 
 import com.sweet.authstudy.hr.user.application.UserCommands.CreateUserCommand;
@@ -16,8 +15,11 @@ import com.sweet.authstudy.hr.user.application.UserViews.UserView;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.shared.presentation.PageResponse;
 import com.sweet.authstudy.shared.presentation.PageRules;
+import com.sweet.authstudy.shared.presentation.Locations;
 import com.sweet.authstudy.shared.security.ActorContext;
 import com.sweet.authstudy.shared.security.TenantGuard;
+import com.sweet.authstudy.shared.validation.BusinessCode;
+import com.sweet.authstudy.shared.validation.ValidCode;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -29,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 @RestController
 @RequestMapping("/api/v1/admin/companies/{companyCode}/users")
@@ -45,7 +48,7 @@ public class UserAdminController {
     }
 
     @GetMapping
-    public PageResponse<UserView> list(@PathVariable String companyCode,
+    public PageResponse<UserView> list(@PathVariable @ValidCode String companyCode,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(defaultValue = "code") String sort,
@@ -61,7 +64,7 @@ public class UserAdminController {
     }
 
     @PostMapping
-    public ResponseEntity<CreatedUserView> create(@PathVariable String companyCode,
+    public ResponseEntity<CreatedUserView> create(@PathVariable @ValidCode String companyCode,
             @Valid @RequestBody CreateUserRequest request) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
@@ -69,19 +72,19 @@ public class UserAdminController {
                 companyCode, request.code(), request.employeeNumber(), request.name(), request.loginEmail(),
                 request.phone(), request.hiredAt(), request.workplace(), request.profileImageUrl(),
                 request.positionCode()));
-        return ResponseEntity.created(URI.create("/api/v1/admin/companies/" + companyCode
-                + "/users/" + created.user().code())).body(created);
+        return ResponseEntity.created(Locations.resource("api", "v1", "admin", "companies",
+                BusinessCode.normalize(companyCode), "users", created.user().code())).body(created);
     }
 
     @GetMapping("/{userCode}")
-    public UserView find(@PathVariable String companyCode, @PathVariable String userCode) {
+    public UserView find(@PathVariable @ValidCode String companyCode, @PathVariable @ValidCode String userCode) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
         return userService.find(actor, companyCode, userCode);
     }
 
     @PutMapping("/{userCode}")
-    public UserView update(@PathVariable String companyCode, @PathVariable String userCode,
+    public UserView update(@PathVariable @ValidCode String companyCode, @PathVariable @ValidCode String userCode,
             @Valid @RequestBody UpdateUserRequest request) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
@@ -91,7 +94,8 @@ public class UserAdminController {
     }
 
     @PutMapping("/{userCode}/status")
-    public UserView changeStatus(@PathVariable String companyCode, @PathVariable String userCode,
+    public UserView changeStatus(@PathVariable @ValidCode String companyCode,
+            @PathVariable @ValidCode String userCode,
             @Valid @RequestBody ChangeUserStatusRequest request) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
@@ -100,15 +104,16 @@ public class UserAdminController {
 
     @PostMapping("/{userCode}/temporary-password")
     public TemporaryPasswordResponse resetTemporaryPassword(
-            @PathVariable String companyCode, @PathVariable String userCode) {
+            @PathVariable @ValidCode String companyCode, @PathVariable @ValidCode String userCode) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
         return new TemporaryPasswordResponse(userService.resetTemporaryPassword(actor, companyCode, userCode));
     }
 
     @PutMapping("/{userCode}/admin-role")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN')")
     public ResponseEntity<Void> assignAdminRole(
-            @PathVariable String companyCode, @PathVariable String userCode) {
+            @PathVariable @ValidCode String companyCode, @PathVariable @ValidCode String userCode) {
         var actor = actorContext.current();
         tenantGuard.requireSystemAdmin(actor);
         userService.assignCompanyAdmin(actor, companyCode, userCode);
@@ -116,8 +121,9 @@ public class UserAdminController {
     }
 
     @DeleteMapping("/{userCode}/admin-role")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN')")
     public ResponseEntity<Void> revokeAdminRole(
-            @PathVariable String companyCode, @PathVariable String userCode) {
+            @PathVariable @ValidCode String companyCode, @PathVariable @ValidCode String userCode) {
         var actor = actorContext.current();
         tenantGuard.requireSystemAdmin(actor);
         userService.revokeCompanyAdmin(actor, companyCode, userCode);

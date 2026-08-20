@@ -54,8 +54,14 @@ public class UserRepositoryAdapter implements UserRepository {
     @Override
     public UserPage search(
             long companyId, String search, UserStatus status, int page, int size, String sort) {
-        var result = repository.search(companyId, search, status, PageRequest.of(page, size, Sort.by(sort)));
+        var result = repository.search(companyId, search, status,
+                PageRequest.of(page, size, stableSort(sort, "code")));
         return new UserPage(result.getContent().stream().map(UserJpaEntity::toDomain).toList(),
                 result.getTotalElements(), result.getTotalPages());
+    }
+
+    private Sort stableSort(String requested, String tieBreaker) {
+        Sort sort = Sort.by(requested);
+        return requested.equals(tieBreaker) ? sort : sort.and(Sort.by(tieBreaker));
     }
 }

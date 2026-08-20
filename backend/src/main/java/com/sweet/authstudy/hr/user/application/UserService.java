@@ -9,8 +9,11 @@ import static com.sweet.authstudy.hr.user.application.UserViews.UserPage;
 import java.time.Clock;
 import java.util.Locale;
 import java.util.List;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
+import com.sweet.authstudy.authorization.AdministrativeTargetGuard;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
@@ -27,6 +30,7 @@ import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
+import com.sweet.authstudy.shared.validation.BusinessCode;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,6 +47,7 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final AccountService accountService;
     private final TenantGuard tenantGuard;
+    private final AdministrativeTargetGuard targetGuard;
     private final Clock clock;
 
     public UserService(
@@ -55,6 +60,7 @@ public class UserService {
             PasswordEncoder passwordEncoder,
             AccountService accountService,
             TenantGuard tenantGuard,
+            AdministrativeTargetGuard targetGuard,
             Clock clock) {
         this.companyRepository = companyRepository;
         this.positionRepository = positionRepository;
@@ -65,6 +71,7 @@ public class UserService {
         this.passwordEncoder = passwordEncoder;
         this.accountService = accountService;
         this.tenantGuard = tenantGuard;
+        this.targetGuard = targetGuard;
         this.clock = clock;
     }
 
@@ -124,6 +131,7 @@ public class UserService {
         tenantGuard.requireCompanyAccess(actor, company.id());
         HrUser user = userRepository.findByCompanyIdAndCode(company.id(), normalizeCode(userCode))
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User was not found."));
+        Account targetAccount = targetGuard.requireMayMutateUser(actor, user.id());
         if (user.version() != version) {
             throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "User version does not match.");
         }
@@ -132,9 +140,7 @@ public class UserService {
         }
         user.changeStatus(status, clock.instant());
         HrUser saved = userRepository.save(user);
-        Account account = accountRepository.findByUserId(saved.id())
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
-        return UserView.from(saved, account.loginEmail());
+        return UserView.from(saved, targetAccount.loginEmail());
     }
 
     @Transactional
@@ -147,6 +153,7 @@ public class UserService {
         tenantGuard.requireCompanyAccess(actor, company.id());
         requireActive(company);
         HrUser user = findUser(company.id(), userCode);
+        Account targetAccount = targetGuard.requireMayMutateUser(actor, user.id());
         if (user.version() != command.version()) {
             throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "User version does not match.");
         }
@@ -160,9 +167,7 @@ public class UserService {
                 command.hiredAt(), normalizeRequired(command.workplace()),
                 normalizeOptional(command.profileImageUrl()), position.id(), clock.instant());
         HrUser saved = userRepository.save(user);
-        Account account = accountRepository.findByUserId(saved.id())
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
-        return UserView.from(saved, account.loginEmail());
+        return UserView.from(saved, targetAccount.loginEmail());
     }
 
     @Transactional(readOnly = true)
@@ -181,11 +186,14 @@ public class UserService {
         Company company = findCompany(companyCode);
         tenantGuard.requireCompanyAccess(actor, company.id());
         var result = userRepository.search(company.id(), search, status, page, size, sort);
-        var content = result.content().stream().map(user -> {
-            Account account = accountRepository.findByUserId(user.id())
-                    .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
-            return UserView.from(user, account.loginEmail());
-        }).toList();
+        var accounts = accountRepository.findAllByUserIds(
+                result.content().stream().map(HrUser::id).toList()).stream()
+                .collect(Collectors.toMap(Account::userId, Function.identity()));
+        var content = result.content().stream().map(user -> UserView.from(user,
+                java.util.Optional.ofNullable(accounts.get(user.id()))
+                        .orElseThrow(() -> new ApiException(
+                                ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."))
+                        .loginEmail())).toList();
         return new UserPage(content, result.totalElements(), result.totalPages());
     }
 
@@ -196,8 +204,7 @@ public class UserService {
         tenantGuard.requireCompanyAccess(actor, company.id());
         requireActive(company);
         HrUser user = findUser(company.id(), userCode);
-        Account account = accountRepository.findByUserId(user.id())
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+        Account account = targetGuard.requireMayMutateUser(actor, user.id());
         return accountService.resetTemporaryPassword(account.id());
     }
 
@@ -290,7 +297,7 @@ public class UserService {
     }
 
     private String normalizeCode(String value) {
-        return normalizeRequired(value).toUpperCase(Locale.ROOT);
+        return BusinessCode.normalize(value);
     }
 
     private String normalizeEmail(String value) {

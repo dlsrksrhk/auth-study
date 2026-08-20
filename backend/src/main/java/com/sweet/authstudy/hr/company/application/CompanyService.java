@@ -5,7 +5,6 @@ import static com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateC
 
 import java.time.Clock;
 import java.util.Locale;
-import java.util.List;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
@@ -15,6 +14,8 @@ import com.sweet.authstudy.hr.position.application.PositionService;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
+import com.sweet.authstudy.shared.validation.BusinessCode;
+import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -69,9 +70,12 @@ public class CompanyService {
     }
 
     @Transactional(readOnly = true)
-    public List<CompanyView> list(AuthenticatedAccount actor) {
+    public PageResult<CompanyView> list(AuthenticatedAccount actor, String search,
+            CompanyStatus status, int page, int size, String sort) {
         tenantGuard.requireSystemAdmin(actor);
-        return companyRepository.findAll().stream().map(CompanyView::from).toList();
+        var result = companyRepository.search(search, status, page, size, sort);
+        return new PageResult<>(result.content().stream().map(CompanyView::from).toList(),
+                result.totalElements(), result.totalPages());
     }
 
     private void rejectDuplicateCompany(String code, String domain) {
@@ -89,7 +93,7 @@ public class CompanyService {
     }
 
     private String normalizeCode(String value) {
-        return normalizeRequiredValue(value).toUpperCase(Locale.ROOT);
+        return BusinessCode.normalize(value);
     }
 
     private String normalizeDomain(String value) {

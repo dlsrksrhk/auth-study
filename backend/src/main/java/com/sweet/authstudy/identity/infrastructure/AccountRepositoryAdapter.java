@@ -1,6 +1,8 @@
 package com.sweet.authstudy.identity.infrastructure;
 
 import java.util.Optional;
+import java.util.List;
+import java.util.Collection;
 
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
@@ -41,6 +43,11 @@ public class AccountRepositoryAdapter implements AccountRepository {
     @Override
     public Optional<Account> findByUserId(long userId) {
         return repository.findByUserId(userId).map(AccountJpaEntity::toDomain);
+    }
+
+    @Override
+    public List<Account> findAllByUserIds(Collection<Long> userIds) {
+        return repository.findAllByUserIdIn(userIds).stream().map(AccountJpaEntity::toDomain).toList();
     }
 
     @Override

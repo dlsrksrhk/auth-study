@@ -5,7 +5,6 @@ import static com.sweet.authstudy.hr.position.application.PositionCommands.Updat
 
 import java.time.Clock;
 import java.util.List;
-import java.util.Locale;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
@@ -15,6 +14,8 @@ import com.sweet.authstudy.hr.position.domain.PositionRepository;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
+import com.sweet.authstudy.shared.validation.BusinessCode;
+import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -86,6 +87,16 @@ public class PositionService {
         return positionRepository.findAllByCompanyId(company.id()).stream().map(PositionView::from).toList();
     }
 
+    @Transactional(readOnly = true)
+    public PageResult<PositionView> search(AuthenticatedAccount actor, String companyCode,
+            String search, Boolean active, int page, int size, String sort) {
+        Company company = findCompany(normalizeCode(companyCode));
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        var result = positionRepository.search(company.id(), search, active, page, size, sort);
+        return new PageResult<>(result.content().stream().map(PositionView::from).toList(),
+                result.totalElements(), result.totalPages());
+    }
+
     @Transactional
     public void createDefaults(AuthenticatedAccount actor, long companyId) {
         tenantGuard.requireCompanyAccess(actor, companyId);
@@ -119,7 +130,7 @@ public class PositionService {
     }
 
     private String normalizeCode(String value) {
-        return normalizeRequiredValue(value).toUpperCase(Locale.ROOT);
+        return BusinessCode.normalize(value);
     }
 
     private String normalizeRequiredValue(String value) {

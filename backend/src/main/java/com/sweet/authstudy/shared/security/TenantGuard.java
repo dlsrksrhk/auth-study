@@ -1,6 +1,5 @@
 package com.sweet.authstudy.shared.security;
 
-import java.util.Locale;
 import java.util.Objects;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
@@ -11,6 +10,7 @@ import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import org.springframework.stereotype.Component;
+import com.sweet.authstudy.shared.validation.BusinessCode;
 
 @Component
 public class TenantGuard {
@@ -44,10 +44,7 @@ public class TenantGuard {
     }
 
     public long requireCompanyAccess(AuthenticatedAccount actor, String companyCode) {
-        if (companyCode == null || companyCode.isBlank()) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED, "Company code is required.");
-        }
-        Company company = companyRepository.findByCode(companyCode.trim().toUpperCase(Locale.ROOT))
+        Company company = companyRepository.findByCode(BusinessCode.normalize(companyCode))
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
         requireCompanyAccess(actor, company.id());
         return company.id();

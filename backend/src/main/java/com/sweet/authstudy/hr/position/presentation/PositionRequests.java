@@ -3,12 +3,13 @@ package com.sweet.authstudy.hr.position.presentation;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import com.sweet.authstudy.shared.validation.ValidCode;
 
 public final class PositionRequests {
     private PositionRequests() {}
 
     public record CreatePositionRequest(
-            @NotBlank @Size(max = 50) String code,
+            @ValidCode String code,
             @NotBlank @Size(max = 100) String name,
             @NotNull Integer level,
             @NotNull Integer displayOrder) {}

@@ -38,7 +38,7 @@ class CompanyServiceIntegrationTest {
     @Test
     void creates_company_with_normalized_identity_and_five_positions() {
         CompanyView company = companyService.create(SYSTEM_ADMIN,
-                new CreateCompanyCommand(" acme ", "Acme", " ACME.EXAMPLE "));
+                new CreateCompanyCommand("acme", "Acme", " ACME.EXAMPLE "));
 
         assertThat(company.code()).isEqualTo("ACME");
         assertThat(company.emailDomain()).isEqualTo("acme.example");
@@ -77,7 +77,7 @@ class CompanyServiceIntegrationTest {
                 new CreateCompanyCommand("ACME", "Acme", "acme.example"));
 
         CompanyView updated = companyService.update(SYSTEM_ADMIN,
-                " acme ", new UpdateCompanyCommand("Acme Korea", CompanyStatus.INACTIVE, created.version()));
+                "acme", new UpdateCompanyCommand("Acme Korea", CompanyStatus.INACTIVE, created.version()));
 
         assertThat(updated)
                 .extracting(CompanyView::code, CompanyView::name, CompanyView::emailDomain, CompanyView::status)
@@ -90,7 +90,7 @@ class CompanyServiceIntegrationTest {
         companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand("ACME", "Acme", "acme.example"));
 
         PositionView created = positionService.create(SYSTEM_ADMIN,
-                " acme ", new CreatePositionCommand(" senior_manager ", "Senior Manager", 60, 60));
+                "acme", new CreatePositionCommand("senior_manager", "Senior Manager", 60, 60));
         PositionView updated = positionService.update(SYSTEM_ADMIN,
                 "ACME",
                 "senior_manager",
@@ -108,7 +108,7 @@ class CompanyServiceIntegrationTest {
         positionService.create(SYSTEM_ADMIN, "ACME", new CreatePositionCommand("LEAD", "Lead", 60, 60));
 
         assertThatThrownBy(() -> positionService.create(SYSTEM_ADMIN,
-                        "ACME", new CreatePositionCommand(" lead ", "Lead II", 70, 70)))
+                        "ACME", new CreatePositionCommand("lead", "Lead II", 70, 70)))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.DUPLICATE_CODE));

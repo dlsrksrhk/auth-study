@@ -2,13 +2,17 @@ package com.sweet.authstudy.authorization;
 
 import static org.springframework.http.HttpHeaders.AUTHORIZATION;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 
@@ -17,6 +21,12 @@ import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.hr.position.domain.Position;
 import com.sweet.authstudy.hr.position.domain.PositionRepository;
+import com.sweet.authstudy.hr.department.domain.Department;
+import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
+import com.sweet.authstudy.hr.membership.domain.DepartmentMembership;
+import com.sweet.authstudy.hr.membership.domain.DepartmentRole;
+import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
+import com.sweet.authstudy.hr.user.application.UserService;
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.identity.application.JwtTokenService;
@@ -39,6 +49,7 @@ import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.http.MediaType;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -55,11 +66,17 @@ class TenantAuthorizationIntegrationTest {
     @Autowired PasswordEncoder passwordEncoder;
     @Autowired Clock clock;
     @Autowired ActorContext actorContext;
+    @Autowired DepartmentRepository departmentRepository;
+    @Autowired MembershipRepository membershipRepository;
+    @Autowired UserService userService;
 
     private String companyAdminToken;
     private String acmeCode;
     private String betaCode;
     private String userCode;
+    private String targetAdminCode;
+    private long targetMembershipId;
+    private AuthenticatedAccount companyAdminActor;
 
     @AfterEach
     void clearSecurityContext() {
@@ -86,8 +103,24 @@ class TenantAuthorizationIntegrationTest {
                 passwordEncoder.encode("Temporary1234!"), clock.instant());
         account.addRole(AccountRole.COMPANY_ADMIN, clock.instant());
         account = accountRepository.save(account);
-        companyAdminToken = jwtTokenService.issue(new AuthenticatedAccount(
-                account.id(), acme.id(), user.id(), account.roles(), false), false).accessToken();
+        companyAdminActor = new AuthenticatedAccount(
+                account.id(), acme.id(), user.id(), account.roles(), false);
+        companyAdminToken = jwtTokenService.issue(companyAdminActor, false).accessToken();
+
+        targetAdminCode = "T" + suffix;
+        HrUser target = userRepository.save(HrUser.create(
+                acme.id(), targetAdminCode, "T-" + suffix, "Target Admin", "010-1111-1111",
+                LocalDate.of(2026, 8, 20), "Seoul", null, position.id(), clock.instant()));
+        Account targetAccount = Account.createCompanyAccount(
+                acme.id(), target.id(), "target@" + suffix.toLowerCase() + ".acme.example",
+                passwordEncoder.encode("Temporary1234!"), clock.instant());
+        targetAccount.addRole(AccountRole.COMPANY_ADMIN, clock.instant());
+        accountRepository.save(targetAccount);
+        Department department = departmentRepository.save(Department.create(
+                acme.id(), null, "DEV", "Development", clock.instant()));
+        targetMembershipId = membershipRepository.save(DepartmentMembership.create(
+                acme.id(), target.id(), department.id(), DepartmentRole.MEMBER, true,
+                Instant.parse("2026-08-20T00:00:00Z"), clock.instant())).id();
     }
 
     @Test
@@ -95,7 +128,10 @@ class TenantAuthorizationIntegrationTest {
         mvc.perform(get("/api/v1/admin/companies/{companyCode}/users", betaCode)
                         .header(AUTHORIZATION, "Bearer " + companyAdminToken))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"))
+                .andExpect(jsonPath("$.type").value("https://auth-study.local/problems/forbidden"))
+                .andExpect(jsonPath("$.title").value("Forbidden"))
+                .andExpect(jsonPath("$.fieldErrors").isArray());
     }
 
     @Test
@@ -129,5 +165,76 @@ class TenantAuthorizationIntegrationTest {
                 .isInstanceOfSatisfying(ApiException.class,
                         exception -> org.assertj.core.api.Assertions.assertThat(exception.errorCode())
                                 .isEqualTo(ErrorCode.UNAUTHENTICATED));
+    }
+
+    @Test
+    void company_admin_cannot_mutate_another_company_admin_as_an_ordinary_user() throws Exception {
+        var requests = java.util.List.of(
+                put("/api/v1/admin/companies/{companyCode}/users/{userCode}", acmeCode, targetAdminCode)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Changed\",\"phone\":\"010-2222-2222\","
+                                + "\"hiredAt\":\"2026-08-20\",\"workplace\":\"Busan\","
+                                + "\"positionCode\":\"EMPLOYEE\",\"version\":0}"),
+                put("/api/v1/admin/companies/{companyCode}/users/{userCode}/status", acmeCode, targetAdminCode)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"LOCKED\",\"version\":0}"),
+                post("/api/v1/admin/companies/{companyCode}/users/{userCode}/temporary-password",
+                        acmeCode, targetAdminCode),
+                post("/api/v1/admin/companies/{companyCode}/users/{userCode}/memberships",
+                        acmeCode, targetAdminCode)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"departmentCode\":\"DEV\",\"role\":\"MEMBER\","
+                                + "\"primary\":false,\"startedAt\":\"2026-08-21T00:00:00Z\"}"),
+                put("/api/v1/admin/companies/{companyCode}/users/{userCode}/memberships/{membershipId}",
+                        acmeCode, targetAdminCode, targetMembershipId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"role\":\"HEAD\",\"primary\":true,\"version\":0}"),
+                delete("/api/v1/admin/companies/{companyCode}/users/{userCode}/memberships/{membershipId}",
+                        acmeCode, targetAdminCode, targetMembershipId).param("version", "0"));
+
+        for (var request : requests) {
+            mvc.perform(request.header(AUTHORIZATION, "Bearer " + companyAdminToken))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        }
+    }
+
+    @Test
+    void application_service_also_blocks_company_admin_target_mutation() {
+        assertThatThrownBy(() -> userService.resetTemporaryPassword(
+                companyAdminActor, acmeCode, targetAdminCode))
+                .isInstanceOfSatisfying(ApiException.class,
+                        exception -> org.assertj.core.api.Assertions.assertThat(exception.errorCode())
+                                .isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    @Test
+    void application_service_also_blocks_cross_tenant_reads() {
+        assertThatThrownBy(() -> userService.list(
+                companyAdminActor, betaCode, "", null, 0, 20, "code"))
+                .isInstanceOfSatisfying(ApiException.class,
+                        exception -> org.assertj.core.api.Assertions.assertThat(exception.errorCode())
+                                .isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    @Test
+    void method_secured_system_admin_endpoints_reject_company_admin() throws Exception {
+        mvc.perform(post("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + companyAdminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\":\"NEWCO\",\"name\":\"New\",\"emailDomain\":\"new.example\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    void security_problem_reuses_trace_id_and_preserves_bearer_challenge() throws Exception {
+        mvc.perform(get("/api/v1/auth/me").header("X-Trace-Id", "trace-security-1"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", org.hamcrest.Matchers.containsString("Bearer")))
+                .andExpect(jsonPath("$.type").value("https://auth-study.local/problems/unauthenticated"))
+                .andExpect(jsonPath("$.title").value("Authentication required"))
+                .andExpect(jsonPath("$.traceId").value("trace-security-1"))
+                .andExpect(jsonPath("$.fieldErrors").isArray());
     }
 }

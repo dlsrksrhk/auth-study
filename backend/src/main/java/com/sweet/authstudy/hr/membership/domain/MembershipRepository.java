@@ -2,6 +2,7 @@ package com.sweet.authstudy.hr.membership.domain;
 
 import java.util.List;
 import java.util.Optional;
+import com.sweet.authstudy.shared.application.PageResult;
 
 public interface MembershipRepository {
 
@@ -12,6 +13,10 @@ public interface MembershipRepository {
     Optional<DepartmentMembership> findActivePrimaryByUserId(long userId);
 
     List<DepartmentMembership> findAllByUserId(long userId);
+
+    PageResult<DepartmentMembership> searchByUser(
+            long companyId, long userId, String search, Boolean active,
+            int page, int size, String sort);
 
     boolean existsActiveByUserIdAndDepartmentId(long userId, long departmentId);
 

@@ -8,12 +8,13 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import com.sweet.authstudy.shared.validation.ValidCode;
 
 public final class UserRequests {
     private UserRequests() {}
 
     public record CreateUserRequest(
-            @NotBlank @Size(max = 50) String code,
+            @ValidCode String code,
             @NotBlank @Size(max = 50) String employeeNumber,
             @NotBlank @Size(max = 100) String name,
             @NotBlank @Email @Size(max = 254) String loginEmail,
@@ -21,7 +22,7 @@ public final class UserRequests {
             @NotNull @JsonFormat(pattern = "yyyy-MM-dd") LocalDate hiredAt,
             @NotBlank @Size(max = 100) String workplace,
             @Size(max = 2048) String profileImageUrl,
-            @NotBlank @Size(max = 50) String positionCode) {}
+            @ValidCode String positionCode) {}
 
     public record UpdateUserRequest(
             @NotBlank @Size(max = 100) String name,
@@ -29,7 +30,7 @@ public final class UserRequests {
             @NotNull @JsonFormat(pattern = "yyyy-MM-dd") LocalDate hiredAt,
             @NotBlank @Size(max = 100) String workplace,
             @Size(max = 2048) String profileImageUrl,
-            @NotBlank @Size(max = 50) String positionCode,
+            @ValidCode String positionCode,
             @NotNull Long version) {}
 
     public record ChangeUserStatusRequest(
