@@ -4,6 +4,7 @@ import java.util.Optional;
 
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
+import com.sweet.authstudy.identity.domain.AccountRepository.LoginSnapshot;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -49,19 +50,24 @@ public class AccountRepositoryAdapter implements AccountRepository {
     }
 
     @Override
-    public Optional<Account> findCompanyAccountForUpdate(long companyId, String loginEmail) {
-        return repository.findCompanyAccountForUpdate(companyId, loginEmail).map(AccountJpaEntity::toDomain);
-    }
-
-    @Override
     public Optional<Account> findSystemByEmail(String loginEmail) {
         return repository.findByCompanyIdIsNullAndLoginEmailIgnoreCase(loginEmail)
                 .map(AccountJpaEntity::toDomain);
     }
 
+    @Override
+    public Optional<LoginSnapshot> findCompanyLoginSnapshot(long companyId, String loginEmail) {
+        return repository.findCompanyLoginSnapshot(companyId, loginEmail).map(this::snapshot);
+    }
 
     @Override
-    public Optional<Account> findSystemByEmailForUpdate(String loginEmail) {
-        return repository.findSystemByEmailForUpdate(loginEmail).map(AccountJpaEntity::toDomain);
+    public Optional<LoginSnapshot> findSystemLoginSnapshot(String loginEmail) {
+        return repository.findSystemLoginSnapshot(loginEmail).map(this::snapshot);
     }
+
+    private LoginSnapshot snapshot(AccountLoginProjection projection) {
+        return new LoginSnapshot(projection.getAccountId(), projection.getPasswordHash(),
+                projection.getStatus(), projection.getLockedUntil());
+    }
+
 }

@@ -16,16 +16,19 @@ interface AccountJpaRepository extends JpaRepository<AccountJpaEntity, Long> {
 
     Optional<AccountJpaEntity> findByCompanyIdIsNullAndLoginEmailIgnoreCase(String loginEmail);
 
+    @Query("select a.id as accountId, a.passwordHash as passwordHash, a.status as status, "
+            + "a.lockedUntil as lockedUntil from AccountJpaEntity a "
+            + "where a.companyId = :companyId and lower(a.loginEmail) = lower(:email)")
+    Optional<AccountLoginProjection> findCompanyLoginSnapshot(
+            @Param("companyId") long companyId, @Param("email") String email);
+
+    @Query("select a.id as accountId, a.passwordHash as passwordHash, a.status as status, "
+            + "a.lockedUntil as lockedUntil from AccountJpaEntity a "
+            + "where a.companyId is null and lower(a.loginEmail) = lower(:email)")
+    Optional<AccountLoginProjection> findSystemLoginSnapshot(@Param("email") String email);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from AccountJpaEntity a where a.id = :id")
     Optional<AccountJpaEntity> findByIdForUpdate(@Param("id") long id);
 
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select a from AccountJpaEntity a where a.companyId = :companyId and lower(a.loginEmail) = lower(:email)")
-    Optional<AccountJpaEntity> findCompanyAccountForUpdate(
-            @Param("companyId") long companyId, @Param("email") String email);
-
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select a from AccountJpaEntity a where a.companyId is null and lower(a.loginEmail) = lower(:email)")
-    Optional<AccountJpaEntity> findSystemByEmailForUpdate(@Param("email") String email);
 }

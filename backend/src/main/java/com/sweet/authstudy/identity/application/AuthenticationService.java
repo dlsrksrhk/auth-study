@@ -25,6 +25,7 @@ import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
+import com.sweet.authstudy.identity.domain.AccountRepository.LoginSnapshot;
 import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.identity.domain.RefreshToken;
 import com.sweet.authstudy.identity.domain.RefreshTokenRepository;
@@ -70,24 +71,40 @@ public class AuthenticationService {
         if (command == null || command.email() == null || command.password() == null) {
             throw unauthenticated();
         }
-        LoginOutcome outcome = transactions.execute(status -> loginInTransaction(command));
+        LoginVerification verification = verifyPasswordOutsideWriteLock(command);
+        if (verification == null) throw unauthenticated();
+        LoginOutcome outcome = transactions.execute(status -> loginInTransaction(verification));
         if (outcome == null || outcome.result() == null) throw unauthenticated();
         return outcome.result();
     }
 
-    private LoginOutcome loginInTransaction(LoginCommand command) {
+    private LoginVerification verifyPasswordOutsideWriteLock(LoginCommand command) {
         Instant now = clock.instant();
-        Account account = resolveAccountForUpdate(command.email());
-        if (account == null || account.status() != AccountStatus.ACTIVE) {
+        LoginSnapshot snapshot = resolveLoginSnapshot(command.email());
+        if (snapshot == null || snapshot.status() != AccountStatus.ACTIVE) {
             performDummyPasswordComparison(command.password());
+            return null;
+        }
+        if (snapshot.lockedUntil() != null && snapshot.lockedUntil().isAfter(now)) {
+            performDummyPasswordComparison(command.password());
+            return null;
+        }
+        boolean passwordMatched = passwordEncoder.matches(command.password(), snapshot.passwordHash());
+        return new LoginVerification(snapshot.accountId(), snapshot.passwordHash(), passwordMatched);
+    }
+
+    private LoginOutcome loginInTransaction(LoginVerification verification) {
+        Instant now = clock.instant();
+        Account account = accountRepository.findByIdForUpdate(verification.accountId()).orElse(null);
+        if (account == null || !account.passwordHash().equals(verification.passwordHash())) {
             return LoginOutcome.failure();
         }
-        if (account.lockedUntil() != null && account.lockedUntil().isAfter(now)) {
-            performDummyPasswordComparison(command.password());
+        if (account.status() != AccountStatus.ACTIVE
+                || account.lockedUntil() != null && account.lockedUntil().isAfter(now)) {
             return LoginOutcome.failure();
         }
         if (account.lockedUntil() != null) account.clearFailedLogins(now);
-        if (!passwordEncoder.matches(command.password(), account.passwordHash())) {
+        if (!verification.passwordMatched()) {
             int nextFailures = account.failedLoginAttempts() + 1;
             Instant lockedUntil = nextFailures >= properties.loginLock().maxFailures()
                     ? now.plus(properties.loginLock().lockDuration()) : null;
@@ -184,15 +201,15 @@ public class AuthenticationService {
         });
     }
 
-    private Account resolveAccountForUpdate(String rawEmail) {
+    private LoginSnapshot resolveLoginSnapshot(String rawEmail) {
         String email = rawEmail.trim().toLowerCase(Locale.ROOT);
-        Account system = accountRepository.findSystemByEmailForUpdate(email).orElse(null);
+        LoginSnapshot system = accountRepository.findSystemLoginSnapshot(email).orElse(null);
         if (system != null) return system;
         int at = email.lastIndexOf('@');
         if (at <= 0 || at == email.length() - 1) return null;
         Company company = companyRepository.findByEmailDomain(email.substring(at + 1)).orElse(null);
         if (company == null || company.status() != CompanyStatus.ACTIVE) return null;
-        return accountRepository.findCompanyAccountForUpdate(company.id(), email).orElse(null);
+        return accountRepository.findCompanyLoginSnapshot(company.id(), email).orElse(null);
     }
 
     private boolean loginStateAllowed(Account account, HrUser user) {
@@ -259,6 +276,7 @@ public class AuthenticationService {
         static LoginOutcome success(LoginResult result) { return new LoginOutcome(result); }
         static LoginOutcome failure() { return new LoginOutcome(null); }
     }
+    private record LoginVerification(long accountId, String passwordHash, boolean passwordMatched) {}
     private record RefreshOutcome(RefreshResult result) {
         static RefreshOutcome success(RefreshResult result) { return new RefreshOutcome(result); }
         static RefreshOutcome failure() { return new RefreshOutcome(null); }

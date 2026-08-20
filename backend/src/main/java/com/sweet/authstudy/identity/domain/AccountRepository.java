@@ -1,5 +1,6 @@
 package com.sweet.authstudy.identity.domain;
 
+import java.time.Instant;
 import java.util.Optional;
 
 public interface AccountRepository {
@@ -14,9 +15,11 @@ public interface AccountRepository {
 
     Optional<Account> findCompanyAccount(long companyId, String loginEmail);
 
-    Optional<Account> findCompanyAccountForUpdate(long companyId, String loginEmail);
-
     Optional<Account> findSystemByEmail(String loginEmail);
 
-    Optional<Account> findSystemByEmailForUpdate(String loginEmail);
+    Optional<LoginSnapshot> findCompanyLoginSnapshot(long companyId, String loginEmail);
+
+    Optional<LoginSnapshot> findSystemLoginSnapshot(String loginEmail);
+
+    record LoginSnapshot(long accountId, String passwordHash, AccountStatus status, Instant lockedUntil) {}
 }
