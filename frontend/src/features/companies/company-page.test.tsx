@@ -34,6 +34,14 @@ const company = {
   updatedAt: "2026-08-20T01:00:00Z",
 };
 
+const companyB = {
+  ...company,
+  id: 9,
+  code: "BETA",
+  name: "Beta",
+  emailDomain: "beta.example",
+};
+
 const defaultPositions = [
   ["EMPLOYEE", "사원", 10],
   ["ASSISTANT_MANAGER", "대리", 20],
@@ -262,12 +270,104 @@ describe("CompanyPage", () => {
     finishPositions();
     expect(await screen.findByText("기본 직위 5개가 준비되었습니다.")).toBeVisible();
   });
+
+  it.each(["resolve", "reject"] as const)(
+    "keeps company B's provisioning result when company A later %s",
+    async (lateOutcome) => {
+      let releaseCompanyA!: () => void;
+      let markCompanyAStarted!: () => void;
+      let markCompanyAFinished!: () => void;
+      const companyAGate = new Promise<void>((resolve) => { releaseCompanyA = resolve; });
+      const companyAStarted = new Promise<void>((resolve) => { markCompanyAStarted = resolve; });
+      const companyAFinished = new Promise<void>((resolve) => { markCompanyAFinished = resolve; });
+      const createdCompanies: typeof company[] = [];
+      let companyAAborted = false;
+
+      server.use(
+        http.get("/api/v1/admin/companies", () => HttpResponse.json({
+          ...emptyPage,
+          content: createdCompanies,
+          totalElements: createdCompanies.length,
+          totalPages: createdCompanies.length > 0 ? 1 : 0,
+        })),
+        http.post("/api/v1/admin/companies", async ({ request }) => {
+          const input = await request.json() as { code: string };
+          const saved = input.code === companyB.code ? companyB : company;
+          createdCompanies.push(saved);
+          return HttpResponse.json(saved, { status: 201 });
+        }),
+        http.get("/api/v1/admin/companies/ACME/positions", async ({ request }) => {
+          request.signal.addEventListener("abort", () => { companyAAborted = true; }, { once: true });
+          markCompanyAStarted();
+          await companyAGate;
+          markCompanyAFinished();
+          return lateOutcome === "resolve"
+            ? HttpResponse.json({ ...emptyPage, content: defaultPositions, totalElements: 5, totalPages: 1 })
+            : HttpResponse.json({
+              type: "about:blank", title: "Failed", status: 500, code: "INTERNAL", traceId: "trace-a", fieldErrors: [],
+            }, { status: 500 });
+        }),
+        http.get("/api/v1/admin/companies/BETA/positions", () => HttpResponse.json({
+          ...emptyPage,
+          content: defaultPositions,
+          totalElements: 5,
+          totalPages: 1,
+        })),
+      );
+
+      const user = userEvent.setup();
+      render(<CompanyPage />);
+      await screen.findByText("등록된 회사가 없습니다.");
+      await submitCompanyForm(user);
+      await companyAStarted;
+      await submitCompanyForm(user, companyB);
+
+      expect(await screen.findByText("기본 직위 5개가 준비되었습니다.")).toBeVisible();
+      expect(screen.getByRole("link", { name: "직위 관리" })).toHaveAttribute("href", "/companies/BETA/positions");
+
+      releaseCompanyA();
+      await companyAFinished;
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(companyAAborted).toBe(true);
+      expect(screen.getByText("기본 직위 5개가 준비되었습니다.")).toBeVisible();
+      expect(screen.getByRole("link", { name: "직위 관리" })).toHaveAttribute("href", "/companies/BETA/positions");
+      expect(screen.queryByText("회사는 생성되었지만 기본 직위 5개를 확인하지 못했습니다.")).not.toBeInTheDocument();
+    },
+  );
+
+  it("aborts an in-flight provisioning verification when the company table unmounts", async () => {
+    let releasePositions!: () => void;
+    let markStarted!: () => void;
+    const positionsGate = new Promise<void>((resolve) => { releasePositions = resolve; });
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let requestSignal: AbortSignal | undefined;
+    server.use(
+      http.get("/api/v1/admin/companies", () => HttpResponse.json(emptyPage)),
+      http.post("/api/v1/admin/companies", () => HttpResponse.json(company, { status: 201 })),
+      http.get("/api/v1/admin/companies/ACME/positions", async ({ request }) => {
+        requestSignal = request.signal;
+        markStarted();
+        await positionsGate;
+        return HttpResponse.json({ ...emptyPage, content: defaultPositions, totalElements: 5, totalPages: 1 });
+      }),
+    );
+
+    const user = userEvent.setup();
+    const view = render(<CompanyPage />);
+    await screen.findByText("등록된 회사가 없습니다.");
+    await submitCompanyForm(user);
+    await started;
+    view.unmount();
+
+    expect(requestSignal?.aborted).toBe(true);
+    releasePositions();
+  });
 });
 
-async function submitCompanyForm(user: ReturnType<typeof userEvent.setup>) {
+async function submitCompanyForm(user: ReturnType<typeof userEvent.setup>, input = company) {
   await user.click(screen.getByRole("button", { name: "회사 생성" }));
-  await user.type(screen.getByLabelText("코드"), "ACME");
-  await user.type(screen.getByLabelText("회사명"), "Acme");
-  await user.type(screen.getByLabelText("이메일 도메인"), "acme.example");
+  await user.type(screen.getByLabelText("코드"), input.code);
+  await user.type(screen.getByLabelText("회사명"), input.name);
+  await user.type(screen.getByLabelText("이메일 도메인"), input.emailDomain);
   await user.click(screen.getByRole("button", { name: "저장" }));
 }

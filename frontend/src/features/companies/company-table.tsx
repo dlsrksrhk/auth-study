@@ -55,6 +55,21 @@ export function CompanyTable() {
   const [editing, setEditing] = useState<Company | null | undefined>(undefined);
   const [defaultPositionCheck, setDefaultPositionCheck] = useState<DefaultPositionCheck>(null);
   const requestId = useRef(0);
+  const provisioningRequestId = useRef(0);
+  const provisioningController = useRef<AbortController | null>(null);
+  const provisioningCompanyCode = useRef<string | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      provisioningRequestId.current += 1;
+      provisioningCompanyCode.current = null;
+      provisioningController.current?.abort();
+      provisioningController.current = null;
+    };
+  }, []);
 
   const replaceQuery = useCallback((changes: Record<string, string | null>) => {
     const next = new URLSearchParams(parsedQuery.canonical);
@@ -107,9 +122,20 @@ export function CompanyTable() {
     setReload((value) => value + 1);
     if (editing === null) {
       window.dispatchEvent(new Event("auth-study:company-created"));
+      const id = ++provisioningRequestId.current;
+      const companyCode = saved.code.trim().toUpperCase();
+      provisioningCompanyCode.current = companyCode;
+      provisioningController.current?.abort();
+      const controller = new AbortController();
+      provisioningController.current = controller;
+      const isLatest = () => mounted.current
+        && id === provisioningRequestId.current
+        && companyCode === provisioningCompanyCode.current
+        && controller === provisioningController.current;
       setDefaultPositionCheck({ status: "loading", company: saved });
-      void positionApi.list(saved.code, { page: 0, size: 20, sort: "displayOrder" })
+      void positionApi.list(companyCode, { page: 0, size: 20, sort: "displayOrder" }, controller.signal)
         .then((positions) => {
+          if (!isLatest()) return;
           const actualCodes = positions.content.map((position) => position.code).sort();
           const complete = positions.totalElements === 5
             && actualCodes.length === 5
@@ -118,7 +144,14 @@ export function CompanyTable() {
             ? { status: "success", company: saved, positions: positions.content }
             : { status: "warning", company: saved });
         })
-        .catch(() => setDefaultPositionCheck({ status: "warning", company: saved }));
+        .catch((cause) => {
+          if (!isLatest() || (cause instanceof DOMException && cause.name === "AbortError")) return;
+          setDefaultPositionCheck({ status: "warning", company: saved });
+        })
+        .finally(() => {
+          if (!isLatest()) return;
+          provisioningController.current = null;
+        });
     }
   }
 
