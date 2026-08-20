@@ -1,9 +1,13 @@
 package com.sweet.authstudy.hr.user.infrastructure;
 
 import java.util.Optional;
+import java.util.List;
 
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
+import com.sweet.authstudy.hr.user.domain.UserStatus;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -40,5 +44,18 @@ public class UserRepositoryAdapter implements UserRepository {
     @Override
     public Optional<HrUser> findByCompanyIdAndEmployeeNumber(long companyId, String employeeNumber) {
         return repository.findByCompanyIdAndEmployeeNumber(companyId, employeeNumber).map(UserJpaEntity::toDomain);
+    }
+
+    @Override
+    public List<HrUser> findAllByCompanyId(long companyId) {
+        return repository.findAllByCompanyId(companyId).stream().map(UserJpaEntity::toDomain).toList();
+    }
+
+    @Override
+    public UserPage search(
+            long companyId, String search, UserStatus status, int page, int size, String sort) {
+        var result = repository.search(companyId, search, status, PageRequest.of(page, size, Sort.by(sort)));
+        return new UserPage(result.getContent().stream().map(UserJpaEntity::toDomain).toList(),
+                result.getTotalElements(), result.getTotalPages());
     }
 }

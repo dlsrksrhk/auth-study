@@ -1,6 +1,7 @@
 package com.sweet.authstudy.hr;
 
 import static com.sweet.authstudy.hr.membership.domain.DepartmentRole.MEMBER;
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -64,38 +65,40 @@ class OrganizationCompanyStateConcurrencyIntegrationTest {
     void rejects_department_create_resuming_after_company_deactivation() throws Exception {
         TestCompany company = createCompany();
 
-        Throwable result = runAfterCompanyDeactivation(company, () -> departmentService.create(
+        Throwable result = runAfterCompanyDeactivation(company, () -> departmentService.create(SYSTEM_ADMIN,
                 new CreateDepartmentCommand(company.code(), "LATE", "Late", null)));
 
         assertInactiveCompanyFailure(result);
-        assertThat(departmentService.tree(company.code())).isEmpty();
+        assertThat(departmentService.tree(SYSTEM_ADMIN, company.code())).isEmpty();
     }
 
     @Test
     void rejects_membership_assign_resuming_after_company_deactivation() throws Exception {
         TestCompany company = createCompany();
-        departmentService.create(new CreateDepartmentCommand(company.code(), "DEV", "Development", null));
+        departmentService.create(SYSTEM_ADMIN,
+                new CreateDepartmentCommand(company.code(), "DEV", "Development", null));
         createUser(company, "U001", "E-1001");
 
-        Throwable result = runAfterCompanyDeactivation(company, () -> membershipService.assign(
+        Throwable result = runAfterCompanyDeactivation(company, () -> membershipService.assign(SYSTEM_ADMIN,
                 new AssignMembershipCommand(
                         company.code(), "U001", "DEV", MEMBER, true,
                         Instant.parse("2026-08-20T00:00:00Z"))));
 
         assertInactiveCompanyFailure(result);
-        assertThat(membershipService.listByUser(company.code(), "U001")).isEmpty();
+        assertThat(membershipService.listByUser(SYSTEM_ADMIN, company.code(), "U001")).isEmpty();
     }
 
     @Test
     void rejects_user_activation_resuming_after_company_deactivation() throws Exception {
         TestCompany company = createCompany();
-        departmentService.create(new CreateDepartmentCommand(company.code(), "DEV", "Development", null));
+        departmentService.create(SYSTEM_ADMIN,
+                new CreateDepartmentCommand(company.code(), "DEV", "Development", null));
         CreatedUserView pending = createUser(company, "U001", "E-1001");
-        membershipService.assign(new AssignMembershipCommand(
+        membershipService.assign(SYSTEM_ADMIN, new AssignMembershipCommand(
                 company.code(), "U001", "DEV", MEMBER, true,
                 Instant.parse("2026-08-20T00:00:00Z")));
 
-        Throwable result = runAfterCompanyDeactivation(company, () -> userService.changeStatus(
+        Throwable result = runAfterCompanyDeactivation(company, () -> userService.changeStatus(SYSTEM_ADMIN,
                 company.code(), "U001", UserStatus.ACTIVE, pending.user().version()));
 
         assertInactiveCompanyFailure(result);
@@ -128,8 +131,8 @@ class OrganizationCompanyStateConcurrencyIntegrationTest {
                 }
             });
             assertThat(staleCompanyRead.await(5, TimeUnit.SECONDS)).isTrue();
-            CompanyView latest = companyService.find(company.code());
-            companyService.update(company.code(), new UpdateCompanyCommand(
+            CompanyView latest = companyService.find(SYSTEM_ADMIN, company.code());
+            companyService.update(SYSTEM_ADMIN, company.code(), new UpdateCompanyCommand(
                     latest.name(), CompanyStatus.INACTIVE, latest.version()));
             resumeMutation.countDown();
             return mutation.get(10, TimeUnit.SECONDS);
@@ -141,14 +144,14 @@ class OrganizationCompanyStateConcurrencyIntegrationTest {
     private TestCompany createCompany() {
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 10).toUpperCase();
         String code = "CO" + suffix;
-        CompanyView company = companyService.create(new CreateCompanyCommand(
+        CompanyView company = companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand(
                 code, code, code.toLowerCase() + ".example"));
         return new TestCompany(company.id(), company.code(), company.emailDomain());
     }
 
     private CreatedUserView createUser(
             TestCompany company, String code, String employeeNumber) {
-        return userService.create(new CreateUserCommand(
+        return userService.create(SYSTEM_ADMIN, new CreateUserCommand(
                 company.code(), code, employeeNumber, code, code.toLowerCase() + "@" + company.emailDomain(),
                 "010-0000-0000", LocalDate.parse("2026-08-20"), "Seoul", null, "EMPLOYEE"));
     }

@@ -3,11 +3,13 @@ package com.sweet.authstudy.hr.department.application;
 import static com.sweet.authstudy.hr.department.application.DepartmentCommands.CreateDepartmentCommand;
 import static com.sweet.authstudy.hr.department.application.DepartmentCommands.ChangeDepartmentStatusCommand;
 import static com.sweet.authstudy.hr.department.application.DepartmentCommands.MoveDepartmentCommand;
+import static com.sweet.authstudy.hr.department.application.DepartmentCommands.UpdateDepartmentCommand;
 
 import java.time.Clock;
 import java.util.List;
 import java.util.Locale;
 
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
@@ -17,6 +19,7 @@ import com.sweet.authstudy.hr.department.domain.DepartmentStatus;
 import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
+import com.sweet.authstudy.shared.security.TenantGuard;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -29,24 +32,28 @@ public class DepartmentService {
     private final CompanyRepository companyRepository;
     private final MembershipRepository membershipRepository;
     private final Clock clock;
+    private final TenantGuard tenantGuard;
 
     public DepartmentService(
             DepartmentRepository departmentRepository,
             CompanyRepository companyRepository,
-            MembershipRepository membershipRepository,
+            MembershipRepository membershipRepository, TenantGuard tenantGuard,
             Clock clock) {
         this.departmentRepository = departmentRepository;
         this.companyRepository = companyRepository;
         this.membershipRepository = membershipRepository;
+        this.tenantGuard = tenantGuard;
         this.clock = clock;
     }
 
     @Transactional
-    public DepartmentView create(CreateDepartmentCommand command) {
+    public DepartmentView create(AuthenticatedAccount actor, CreateDepartmentCommand command) {
         if (command == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department data is required.");
         }
-        Company company = findActiveLockedCompany(command.companyCode());
+        Company company = findLockedCompany(command.companyCode());
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        requireActive(company);
         String code = normalizeCode(command.code());
         if (departmentRepository.findByCompanyIdAndCode(company.id(), code).isPresent()) {
             throw new ApiException(ErrorCode.DUPLICATE_CODE, "Department code already exists.");
@@ -58,11 +65,13 @@ public class DepartmentService {
     }
 
     @Transactional
-    public DepartmentView move(MoveDepartmentCommand command) {
+    public DepartmentView move(AuthenticatedAccount actor, MoveDepartmentCommand command) {
         if (command == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department move data is required.");
         }
-        Company company = findActiveLockedCompany(command.companyCode());
+        Company company = findLockedCompany(command.companyCode());
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        requireActive(company);
         Department department = findDepartment(company.id(), command.code());
         requireVersion(department, command.version());
         Long parentId = resolveActiveParent(company.id(), command.newParentCode());
@@ -72,11 +81,13 @@ public class DepartmentService {
     }
 
     @Transactional
-    public DepartmentView changeStatus(ChangeDepartmentStatusCommand command) {
+    public DepartmentView changeStatus(
+            AuthenticatedAccount actor, ChangeDepartmentStatusCommand command) {
         if (command == null || command.status() == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department status data is required.");
         }
         Company company = findLockedCompany(command.companyCode());
+        tenantGuard.requireCompanyAccess(actor, company.id());
         Department department = findDepartment(company.id(), command.code());
         requireVersion(department, command.version());
         if (command.status() == DepartmentStatus.ACTIVE && company.status() != CompanyStatus.ACTIVE) {
@@ -102,9 +113,36 @@ public class DepartmentService {
         return DepartmentView.from(save(department));
     }
 
+    @Transactional
+    public DepartmentView update(AuthenticatedAccount actor, UpdateDepartmentCommand command) {
+        if (command == null || command.status() == null) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED, "Department data is required.");
+        }
+        Company company = findLockedCompany(command.companyCode());
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        Department department = findDepartment(company.id(), command.code());
+        requireVersion(department, command.version());
+        Long parentId = resolveActiveParent(company.id(), command.parentCode());
+        rejectCycle(department, parentId);
+        if (command.status() == DepartmentStatus.ACTIVE && company.status() != CompanyStatus.ACTIVE) {
+            throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
+        }
+        if (command.status() == DepartmentStatus.INACTIVE) {
+            if (departmentRepository.existsActiveChild(department.id())) {
+                throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active child.");
+            }
+            if (membershipRepository.existsActiveByDepartmentId(department.id())) {
+                throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active membership.");
+            }
+        }
+        department.update(normalizeRequired(command.name()), parentId, command.status(), clock.instant());
+        return DepartmentView.from(save(department));
+    }
+
     @Transactional(readOnly = true)
-    public List<DepartmentView> tree(String companyCode) {
+    public List<DepartmentView> tree(AuthenticatedAccount actor, String companyCode) {
         Company company = findCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
         return departmentRepository.findAllByCompanyId(company.id()).stream().map(DepartmentView::from).toList();
     }
 
@@ -145,12 +183,10 @@ public class DepartmentService {
         return parent.id();
     }
 
-    private Company findActiveLockedCompany(String code) {
-        Company company = findLockedCompany(code);
+    private void requireActive(Company company) {
         if (company.status() != CompanyStatus.ACTIVE) {
             throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
         }
-        return company;
     }
 
     private Company findLockedCompany(String code) {

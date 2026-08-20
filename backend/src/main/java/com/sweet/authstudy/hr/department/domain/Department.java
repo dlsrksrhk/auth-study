@@ -66,6 +66,13 @@ public final class Department {
         this.updatedAt = Objects.requireNonNull(now);
     }
 
+    public void update(String name, Long parentDepartmentId, DepartmentStatus status, Instant now) {
+        this.name = Objects.requireNonNull(name);
+        this.parentDepartmentId = parentDepartmentId;
+        this.status = Objects.requireNonNull(status);
+        this.updatedAt = Objects.requireNonNull(now);
+    }
+
     public Long id() { return id; }
     public long companyId() { return companyId; }
     public Long parentDepartmentId() { return parentDepartmentId; }

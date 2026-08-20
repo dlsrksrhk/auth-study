@@ -19,4 +19,14 @@ public final class UserCommands {
             String profileImageUrl,
             String positionCode) {
     }
+
+    public record UpdateUserCommand(
+            String name,
+            String phone,
+            LocalDate hiredAt,
+            String workplace,
+            String profileImageUrl,
+            String positionCode,
+            long version) {
+    }
 }

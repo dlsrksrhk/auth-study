@@ -18,4 +18,9 @@ public final class DepartmentCommands {
     public record ChangeDepartmentStatusCommand(
             String companyCode, String code, DepartmentStatus status, long version) {
     }
+
+    public record UpdateDepartmentCommand(
+            String companyCode, String code, String name, String parentCode,
+            DepartmentStatus status, long version) {
+    }
 }

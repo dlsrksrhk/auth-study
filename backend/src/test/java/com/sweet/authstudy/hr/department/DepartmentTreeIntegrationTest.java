@@ -3,6 +3,7 @@ package com.sweet.authstudy.hr.department;
 import static com.sweet.authstudy.hr.department.application.DepartmentCommands.CreateDepartmentCommand;
 import static com.sweet.authstudy.hr.department.application.DepartmentCommands.ChangeDepartmentStatusCommand;
 import static com.sweet.authstudy.hr.department.application.DepartmentCommands.MoveDepartmentCommand;
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -36,7 +37,7 @@ class DepartmentTreeIntegrationTest {
 
     @BeforeEach
     void createCompany() {
-        companyService.create(new CreateCompanyCommand("ACME", "Acme", "acme.example"));
+        companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand("ACME", "Acme", "acme.example"));
     }
 
     @Test
@@ -45,7 +46,7 @@ class DepartmentTreeIntegrationTest {
         createDepartment("DEV", "HQ");
         createDepartment("API", "DEV");
 
-        assertThatThrownBy(() -> departmentService.move(
+        assertThatThrownBy(() -> departmentService.move(SYSTEM_ADMIN,
                 new MoveDepartmentCommand("ACME", "HQ", "API", hq.version())))
                 .isInstanceOfSatisfying(
                         ApiException.class,
@@ -54,12 +55,12 @@ class DepartmentTreeIntegrationTest {
 
     @Test
     void normalizes_code_and_rejects_case_insensitive_duplicates_within_company() {
-        DepartmentView created = departmentService.create(
+        DepartmentView created = departmentService.create(SYSTEM_ADMIN,
                 new CreateDepartmentCommand(" acme ", " dev ", " Development ", null));
 
         assertThat(created.code()).isEqualTo("DEV");
         assertThat(created.name()).isEqualTo("Development");
-        assertThatThrownBy(() -> departmentService.create(
+        assertThatThrownBy(() -> departmentService.create(SYSTEM_ADMIN,
                 new CreateDepartmentCommand("ACME", "DeV", "Duplicate", null)))
                 .isInstanceOfSatisfying(
                         ApiException.class,
@@ -68,10 +69,10 @@ class DepartmentTreeIntegrationTest {
 
     @Test
     void requires_parent_to_belong_to_the_same_company() {
-        companyService.create(new CreateCompanyCommand("BETA", "Beta", "beta.example"));
-        departmentService.create(new CreateDepartmentCommand("BETA", "OTHER", "Other", null));
+        companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand("BETA", "Beta", "beta.example"));
+        departmentService.create(SYSTEM_ADMIN, new CreateDepartmentCommand("BETA", "OTHER", "Other", null));
 
-        assertThatThrownBy(() -> departmentService.create(
+        assertThatThrownBy(() -> departmentService.create(SYSTEM_ADMIN,
                 new CreateDepartmentCommand("ACME", "DEV", "Development", "OTHER")))
                 .isInstanceOfSatisfying(
                         ApiException.class,
@@ -82,12 +83,12 @@ class DepartmentTreeIntegrationTest {
     void rejects_self_parent_and_stale_move() {
         DepartmentView hq = createDepartment("HQ", null);
 
-        assertThatThrownBy(() -> departmentService.move(
+        assertThatThrownBy(() -> departmentService.move(SYSTEM_ADMIN,
                 new MoveDepartmentCommand("ACME", "HQ", "HQ", hq.version())))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.INVALID_STATE));
-        assertThatThrownBy(() -> departmentService.move(
+        assertThatThrownBy(() -> departmentService.move(SYSTEM_ADMIN,
                 new MoveDepartmentCommand("ACME", "HQ", null, hq.version() + 1)))
                 .isInstanceOfSatisfying(
                         ApiException.class,
@@ -100,7 +101,7 @@ class DepartmentTreeIntegrationTest {
         DepartmentView hq = createDepartment("HQ", null);
         createDepartment("DEV", "HQ");
 
-        assertThatThrownBy(() -> departmentService.changeStatus(
+        assertThatThrownBy(() -> departmentService.changeStatus(SYSTEM_ADMIN,
                 new ChangeDepartmentStatusCommand(
                         "ACME", "HQ", DepartmentStatus.INACTIVE, hq.version())))
                 .isInstanceOfSatisfying(
@@ -112,13 +113,13 @@ class DepartmentTreeIntegrationTest {
     void rejects_reactivation_below_an_inactive_parent() {
         DepartmentView hq = createDepartment("HQ", null);
         DepartmentView dev = createDepartment("DEV", "HQ");
-        DepartmentView inactiveDev = departmentService.changeStatus(
+        DepartmentView inactiveDev = departmentService.changeStatus(SYSTEM_ADMIN,
                 new ChangeDepartmentStatusCommand(
                         "ACME", "DEV", DepartmentStatus.INACTIVE, dev.version()));
-        departmentService.changeStatus(new ChangeDepartmentStatusCommand(
+        departmentService.changeStatus(SYSTEM_ADMIN, new ChangeDepartmentStatusCommand(
                 "ACME", "HQ", DepartmentStatus.INACTIVE, hq.version()));
 
-        assertThatThrownBy(() -> departmentService.changeStatus(
+        assertThatThrownBy(() -> departmentService.changeStatus(SYSTEM_ADMIN,
                 new ChangeDepartmentStatusCommand(
                         "ACME", "DEV", DepartmentStatus.ACTIVE, inactiveDev.version())))
                 .isInstanceOfSatisfying(
@@ -131,13 +132,14 @@ class DepartmentTreeIntegrationTest {
         DepartmentView hq = createDepartment("HQ", null);
         DepartmentView dev = createDepartment("DEV", "HQ");
 
-        assertThat(departmentService.tree("ACME"))
+        assertThat(departmentService.tree(SYSTEM_ADMIN, "ACME"))
                 .extracting(DepartmentView::code)
                 .containsExactly("DEV", "HQ");
         assertThat(dev.parentDepartmentId()).isEqualTo(hq.id());
     }
 
     private DepartmentView createDepartment(String code, String parentCode) {
-        return departmentService.create(new CreateDepartmentCommand("ACME", code, code, parentCode));
+        return departmentService.create(SYSTEM_ADMIN,
+                new CreateDepartmentCommand("ACME", code, code, parentCode));
     }
 }

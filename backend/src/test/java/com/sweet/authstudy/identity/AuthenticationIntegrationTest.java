@@ -1,5 +1,6 @@
 package com.sweet.authstudy.identity;
 
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
 import static com.sweet.authstudy.identity.application.AuthCommands.ChangePasswordCommand;
 import static com.sweet.authstudy.identity.application.AuthCommands.LoginCommand;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -76,8 +77,8 @@ class AuthenticationIntegrationTest {
         String code = "C" + suffix.toUpperCase();
         String domain = suffix + ".example";
         email = "kim@" + domain;
-        company = companyService.create(new CreateCompanyCommand(code, "Acme", domain));
-        long positionId = positionService.list(code).stream()
+        company = companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand(code, "Acme", domain));
+        long positionId = positionService.list(SYSTEM_ADMIN, code).stream()
                 .filter(position -> position.code().equals("EMPLOYEE"))
                 .findFirst().orElseThrow().id();
         user = userRepository.save(HrUser.create(

@@ -110,6 +110,18 @@ public final class HrUser {
         this.updatedAt = Objects.requireNonNull(now);
     }
 
+    public void updateProfile(
+            String name, String phone, LocalDate hiredAt, String workplace,
+            String profileImageUrl, long positionId, Instant now) {
+        this.name = Objects.requireNonNull(name);
+        this.phone = Objects.requireNonNull(phone);
+        this.hiredAt = Objects.requireNonNull(hiredAt);
+        this.workplace = Objects.requireNonNull(workplace);
+        this.profileImageUrl = profileImageUrl;
+        this.positionId = positionId;
+        this.updatedAt = Objects.requireNonNull(now);
+    }
+
     public Long id() { return id; }
     public long companyId() { return companyId; }
     public String code() { return code; }

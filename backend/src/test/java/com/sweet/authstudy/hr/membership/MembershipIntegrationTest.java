@@ -6,6 +6,7 @@ import static com.sweet.authstudy.hr.membership.application.MembershipCommands.A
 import static com.sweet.authstudy.hr.membership.application.MembershipCommands.UpdateMembershipCommand;
 import static com.sweet.authstudy.hr.membership.domain.DepartmentRole.HEAD;
 import static com.sweet.authstudy.hr.membership.domain.DepartmentRole.MEMBER;
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -60,10 +61,10 @@ class MembershipIntegrationTest {
 
     @BeforeEach
     void setUpOrganization() {
-        companyService.create(new CreateCompanyCommand("ACME", "Acme", "acme.example"));
-        departmentService.create(new CreateDepartmentCommand("ACME", "DEV", "Development", null));
-        departmentService.create(new CreateDepartmentCommand("ACME", "TF", "Task Force", null));
-        departmentService.create(new CreateDepartmentCommand("ACME", "SALES", "Sales", null));
+        companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand("ACME", "Acme", "acme.example"));
+        departmentService.create(SYSTEM_ADMIN, new CreateDepartmentCommand("ACME", "DEV", "Development", null));
+        departmentService.create(SYSTEM_ADMIN, new CreateDepartmentCommand("ACME", "TF", "Task Force", null));
+        departmentService.create(SYSTEM_ADMIN, new CreateDepartmentCommand("ACME", "SALES", "Sales", null));
         createUser("U001", "E-1001");
         createUser("U002", "E-1002");
         createUser("U003", "E-1003");
@@ -71,22 +72,22 @@ class MembershipIntegrationTest {
 
     @Test
     void allows_multiple_memberships_but_only_one_active_primary_and_head() {
-        membershipService.assign(command("U001", "DEV", MEMBER, true));
-        membershipService.assign(command("U001", "TF", MEMBER, false));
+        membershipService.assign(SYSTEM_ADMIN, command("U001", "DEV", MEMBER, true));
+        membershipService.assign(SYSTEM_ADMIN, command("U001", "TF", MEMBER, false));
 
-        assertThatThrownBy(() -> membershipService.assign(command("U001", "SALES", MEMBER, true)))
+        assertThatThrownBy(() -> membershipService.assign(SYSTEM_ADMIN, command("U001", "SALES", MEMBER, true)))
                 .isInstanceOf(ApiException.class);
 
-        membershipService.assign(command("U002", "DEV", HEAD, false));
-        assertThatThrownBy(() -> membershipService.assign(command("U003", "DEV", HEAD, false)))
+        membershipService.assign(SYSTEM_ADMIN, command("U002", "DEV", HEAD, false));
+        assertThatThrownBy(() -> membershipService.assign(SYSTEM_ADMIN, command("U003", "DEV", HEAD, false)))
                 .isInstanceOf(ApiException.class);
     }
 
     @Test
     void rejects_duplicate_active_membership_for_the_same_user_and_department() {
-        membershipService.assign(command("U001", "DEV", MEMBER, false));
+        membershipService.assign(SYSTEM_ADMIN, command("U001", "DEV", MEMBER, false));
 
-        assertThatThrownBy(() -> membershipService.assign(command("U001", "DEV", MEMBER, false)))
+        assertThatThrownBy(() -> membershipService.assign(SYSTEM_ADMIN, command("U001", "DEV", MEMBER, false)))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.INVALID_STATE));
@@ -94,16 +95,16 @@ class MembershipIntegrationTest {
 
     @Test
     void updates_role_and_primary_while_preserving_uniqueness_rules() {
-        MembershipView dev = membershipService.assign(command("U001", "DEV", MEMBER, false));
-        MembershipView tf = membershipService.assign(command("U001", "TF", MEMBER, true));
+        MembershipView dev = membershipService.assign(SYSTEM_ADMIN, command("U001", "DEV", MEMBER, false));
+        MembershipView tf = membershipService.assign(SYSTEM_ADMIN, command("U001", "TF", MEMBER, true));
 
-        assertThatThrownBy(() -> membershipService.update(new UpdateMembershipCommand(
+        assertThatThrownBy(() -> membershipService.update(SYSTEM_ADMIN, new UpdateMembershipCommand(
                 "ACME", "U001", dev.id(), HEAD, true, dev.version())))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.INVALID_STATE));
 
-        MembershipView updated = membershipService.update(new UpdateMembershipCommand(
+        MembershipView updated = membershipService.update(SYSTEM_ADMIN, new UpdateMembershipCommand(
                 "ACME", "U001", tf.id(), HEAD, true, tf.version()));
         assertThat(updated.role()).isEqualTo(HEAD);
         assertThat(updated.primary()).isTrue();
@@ -111,36 +112,36 @@ class MembershipIntegrationTest {
 
     @Test
     void ends_instead_of_deleting_and_allows_a_later_membership_in_the_same_department() {
-        MembershipView assigned = membershipService.assign(command("U001", "DEV", MEMBER, true));
+        MembershipView assigned = membershipService.assign(SYSTEM_ADMIN, command("U001", "DEV", MEMBER, true));
 
-        MembershipView ended = membershipService.end(
+        MembershipView ended = membershipService.end(SYSTEM_ADMIN,
                 "ACME", "U001", assigned.id(), assigned.version());
-        MembershipView reassigned = membershipService.assign(command("U001", "DEV", MEMBER, true));
+        MembershipView reassigned = membershipService.assign(SYSTEM_ADMIN, command("U001", "DEV", MEMBER, true));
 
         assertThat(ended.endedAt()).isNotNull();
         assertThat(reassigned.id()).isNotEqualTo(assigned.id());
-        assertThat(membershipService.listByUser("ACME", "U001"))
+        assertThat(membershipService.listByUser(SYSTEM_ADMIN, "ACME", "U001"))
                 .hasSize(2)
                 .anySatisfy(view -> assertThat(view.endedAt()).isEqualTo(ended.endedAt()));
     }
 
     @Test
     void rejects_membership_mutations_for_inactive_department_or_wrong_company() {
-        DepartmentView sales = departmentService.tree("ACME").stream()
+        DepartmentView sales = departmentService.tree(SYSTEM_ADMIN, "ACME").stream()
                 .filter(view -> view.code().equals("SALES"))
                 .findFirst()
                 .orElseThrow();
-        departmentService.changeStatus(new ChangeDepartmentStatusCommand(
+        departmentService.changeStatus(SYSTEM_ADMIN, new ChangeDepartmentStatusCommand(
                 "ACME", "SALES", DepartmentStatus.INACTIVE, sales.version()));
 
-        assertThatThrownBy(() -> membershipService.assign(command("U001", "SALES", MEMBER, false)))
+        assertThatThrownBy(() -> membershipService.assign(SYSTEM_ADMIN, command("U001", "SALES", MEMBER, false)))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.INVALID_STATE));
 
-        companyService.create(new CreateCompanyCommand("BETA", "Beta", "beta.example"));
-        departmentService.create(new CreateDepartmentCommand("BETA", "OPS", "Operations", null));
-        assertThatThrownBy(() -> membershipService.assign(new AssignMembershipCommand(
+        companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand("BETA", "Beta", "beta.example"));
+        departmentService.create(SYSTEM_ADMIN, new CreateDepartmentCommand("BETA", "OPS", "Operations", null));
+        assertThatThrownBy(() -> membershipService.assign(SYSTEM_ADMIN, new AssignMembershipCommand(
                 "BETA", "U001", "OPS", MEMBER, false, Instant.parse("2026-08-20T00:00:00Z"))))
                 .isInstanceOfSatisfying(
                         ApiException.class,
@@ -149,20 +150,20 @@ class MembershipIntegrationTest {
 
     @Test
     void rejects_department_deactivation_while_an_active_membership_exists() {
-        MembershipView membership = membershipService.assign(command("U001", "DEV", MEMBER, false));
-        DepartmentView dev = departmentService.tree("ACME").stream()
+        MembershipView membership = membershipService.assign(SYSTEM_ADMIN, command("U001", "DEV", MEMBER, false));
+        DepartmentView dev = departmentService.tree(SYSTEM_ADMIN, "ACME").stream()
                 .filter(view -> view.code().equals("DEV"))
                 .findFirst()
                 .orElseThrow();
 
-        assertThatThrownBy(() -> departmentService.changeStatus(new ChangeDepartmentStatusCommand(
+        assertThatThrownBy(() -> departmentService.changeStatus(SYSTEM_ADMIN, new ChangeDepartmentStatusCommand(
                 "ACME", "DEV", DepartmentStatus.INACTIVE, dev.version())))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.INVALID_STATE));
 
-        membershipService.end("ACME", "U001", membership.id(), membership.version());
-        assertThat(departmentService.changeStatus(new ChangeDepartmentStatusCommand(
+        membershipService.end(SYSTEM_ADMIN, "ACME", "U001", membership.id(), membership.version());
+        assertThat(departmentService.changeStatus(SYSTEM_ADMIN, new ChangeDepartmentStatusCommand(
                 "ACME", "DEV", DepartmentStatus.INACTIVE, dev.version())).status())
                 .isEqualTo(DepartmentStatus.INACTIVE);
     }
@@ -171,14 +172,14 @@ class MembershipIntegrationTest {
     void requires_an_active_position_and_primary_membership_before_user_activation() {
         CreatedUserView pending = createUser("U004", "E-1004");
 
-        assertThatThrownBy(() -> userService.changeStatus(
+        assertThatThrownBy(() -> userService.changeStatus(SYSTEM_ADMIN,
                 "ACME", "U004", UserStatus.ACTIVE, pending.user().version()))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.INVALID_STATE));
 
-        membershipService.assign(command("U004", "DEV", MEMBER, true));
-        assertThat(userService.changeStatus(
+        membershipService.assign(SYSTEM_ADMIN, command("U004", "DEV", MEMBER, true));
+        assertThat(userService.changeStatus(SYSTEM_ADMIN,
                 "ACME", "U004", UserStatus.ACTIVE, pending.user().version()).status())
                 .isEqualTo(UserStatus.ACTIVE);
     }
@@ -186,15 +187,15 @@ class MembershipIntegrationTest {
     @Test
     void rejects_user_activation_when_its_position_is_inactive() {
         CreatedUserView pending = createUser("U004", "E-1004");
-        membershipService.assign(command("U004", "DEV", MEMBER, true));
-        PositionView employee = positionService.list("ACME").stream()
+        membershipService.assign(SYSTEM_ADMIN, command("U004", "DEV", MEMBER, true));
+        PositionView employee = positionService.list(SYSTEM_ADMIN, "ACME").stream()
                 .filter(view -> view.code().equals("EMPLOYEE"))
                 .findFirst()
                 .orElseThrow();
-        positionService.update("ACME", "EMPLOYEE", new UpdatePositionCommand(
+        positionService.update(SYSTEM_ADMIN, "ACME", "EMPLOYEE", new UpdatePositionCommand(
                 employee.name(), employee.level(), employee.displayOrder(), false, employee.version()));
 
-        assertThatThrownBy(() -> userService.changeStatus(
+        assertThatThrownBy(() -> userService.changeStatus(SYSTEM_ADMIN,
                 "ACME", "U004", UserStatus.ACTIVE, pending.user().version()))
                 .isInstanceOfSatisfying(
                         ApiException.class,
@@ -203,25 +204,25 @@ class MembershipIntegrationTest {
 
     @Test
     void keeps_exactly_one_primary_membership_for_an_active_user() {
-        MembershipView dev = membershipService.assign(command("U001", "DEV", MEMBER, true));
-        MembershipView tf = membershipService.assign(command("U001", "TF", MEMBER, false));
-        var active = userService.changeStatus("ACME", "U001", UserStatus.ACTIVE, 0);
+        MembershipView dev = membershipService.assign(SYSTEM_ADMIN, command("U001", "DEV", MEMBER, true));
+        MembershipView tf = membershipService.assign(SYSTEM_ADMIN, command("U001", "TF", MEMBER, false));
+        var active = userService.changeStatus(SYSTEM_ADMIN, "ACME", "U001", UserStatus.ACTIVE, 0);
 
-        assertThatThrownBy(() -> membershipService.update(new UpdateMembershipCommand(
+        assertThatThrownBy(() -> membershipService.update(SYSTEM_ADMIN, new UpdateMembershipCommand(
                 "ACME", "U001", dev.id(), MEMBER, false, dev.version())))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.INVALID_STATE));
-        assertThatThrownBy(() -> membershipService.end(
+        assertThatThrownBy(() -> membershipService.end(SYSTEM_ADMIN,
                 "ACME", "U001", dev.id(), dev.version()))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.INVALID_STATE));
 
-        MembershipView promoted = membershipService.update(new UpdateMembershipCommand(
+        MembershipView promoted = membershipService.update(SYSTEM_ADMIN, new UpdateMembershipCommand(
                 "ACME", "U001", tf.id(), MEMBER, true, tf.version()));
         assertThat(promoted.primary()).isTrue();
-        assertThat(membershipService.listByUser("ACME", "U001"))
+        assertThat(membershipService.listByUser(SYSTEM_ADMIN, "ACME", "U001"))
                 .filteredOn(view -> view.endedAt() == null && view.primary())
                 .extracting(MembershipView::id)
                 .containsExactly(promoted.id());
@@ -230,10 +231,10 @@ class MembershipIntegrationTest {
 
     @Test
     void allows_ending_memberships_after_the_user_resigns() {
-        MembershipView membership = membershipService.assign(command("U001", "DEV", MEMBER, true));
-        userService.changeStatus("ACME", "U001", UserStatus.RESIGNED, 0);
+        MembershipView membership = membershipService.assign(SYSTEM_ADMIN, command("U001", "DEV", MEMBER, true));
+        userService.changeStatus(SYSTEM_ADMIN, "ACME", "U001", UserStatus.RESIGNED, 0);
 
-        MembershipView ended = membershipService.end(
+        MembershipView ended = membershipService.end(SYSTEM_ADMIN,
                 "ACME", "U001", membership.id(), membership.version());
 
         assertThat(ended.endedAt()).isNotNull();
@@ -247,7 +248,7 @@ class MembershipIntegrationTest {
     }
 
     private CreatedUserView createUser(String code, String employeeNumber) {
-        return userService.create(new CreateUserCommand(
+        return userService.create(SYSTEM_ADMIN, new CreateUserCommand(
                 "ACME", code, employeeNumber, code, code.toLowerCase() + "@acme.example",
                 "010-0000-0000", LocalDate.parse("2026-08-20"), "Seoul", null, "EMPLOYEE"));
     }

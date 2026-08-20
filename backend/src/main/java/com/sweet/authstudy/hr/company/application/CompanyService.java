@@ -5,13 +5,16 @@ import static com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateC
 
 import java.time.Clock;
 import java.util.Locale;
+import java.util.List;
 
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.hr.position.application.PositionService;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
+import com.sweet.authstudy.shared.security.TenantGuard;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,17 +25,21 @@ public class CompanyService {
 
     private final CompanyRepository companyRepository;
     private final PositionService positionService;
+    private final TenantGuard tenantGuard;
     private final Clock clock;
 
     public CompanyService(
-            CompanyRepository companyRepository, PositionService positionService, Clock clock) {
+            CompanyRepository companyRepository, PositionService positionService,
+            TenantGuard tenantGuard, Clock clock) {
         this.companyRepository = companyRepository;
         this.positionService = positionService;
+        this.tenantGuard = tenantGuard;
         this.clock = clock;
     }
 
     @Transactional
-    public CompanyView create(CreateCompanyCommand command) {
+    public CompanyView create(AuthenticatedAccount actor, CreateCompanyCommand command) {
+        tenantGuard.requireSystemAdmin(actor);
         String code = normalizeCode(command.code());
         String name = normalizeRequiredValue(command.name());
         String domain = normalizeDomain(command.emailDomain());
@@ -40,12 +47,13 @@ public class CompanyService {
         rejectDuplicateCompany(code, domain);
 
         Company saved = companyRepository.save(Company.create(code, name, domain, clock.instant()));
-        positionService.createDefaults(saved.id());
+        positionService.createDefaults(actor, saved.id());
         return CompanyView.from(saved);
     }
 
     @Transactional
-    public CompanyView update(String code, UpdateCompanyCommand command) {
+    public CompanyView update(AuthenticatedAccount actor, String code, UpdateCompanyCommand command) {
+        tenantGuard.requireSystemAdmin(actor);
         Company company = findCompany(normalizeCode(code));
         if (company.version() != command.version()) {
             throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "Company version does not match.");
@@ -55,8 +63,15 @@ public class CompanyService {
     }
 
     @Transactional(readOnly = true)
-    public CompanyView find(String code) {
+    public CompanyView find(AuthenticatedAccount actor, String code) {
+        tenantGuard.requireSystemAdmin(actor);
         return CompanyView.from(findCompany(normalizeCode(code)));
+    }
+
+    @Transactional(readOnly = true)
+    public List<CompanyView> list(AuthenticatedAccount actor) {
+        tenantGuard.requireSystemAdmin(actor);
+        return companyRepository.findAll().stream().map(CompanyView::from).toList();
     }
 
     private void rejectDuplicateCompany(String code, String domain) {

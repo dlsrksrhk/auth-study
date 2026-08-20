@@ -1,5 +1,6 @@
 package com.sweet.authstudy.hr.user;
 
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -60,12 +61,12 @@ class UserCreationIntegrationTest {
 
     @BeforeEach
     void createCompany() {
-        companyService.create(new CreateCompanyCommand("ACME", "Acme", "acme.example"));
+        companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand("ACME", "Acme", "acme.example"));
     }
 
     @Test
     void creates_pending_user_account_and_one_time_temporary_password() {
-        CreatedUserView result = userService.create(command(
+        CreatedUserView result = userService.create(SYSTEM_ADMIN, command(
                 "U001", "E-1001", "kim@acme.example", "EMPLOYEE"));
 
         Account account = accountRepository.findByUserId(result.user().id()).orElseThrow();
@@ -87,7 +88,7 @@ class UserCreationIntegrationTest {
 
     @Test
     void normalizes_user_identity_and_login_email() {
-        CreatedUserView result = userService.create(new CreateUserCommand(
+        CreatedUserView result = userService.create(SYSTEM_ADMIN, new CreateUserCommand(
                 " acme ", " u001 ", " E-1001 ", " Kim ", " KIM@ACME.EXAMPLE ",
                 " 010-0000-0000 ", LocalDate.parse("2026-08-20"), " Seoul ", null, " employee "));
 
@@ -99,7 +100,7 @@ class UserCreationIntegrationTest {
 
     @Test
     void resets_temporary_password_and_only_returns_the_plaintext_once() {
-        CreatedUserView created = userService.create(command(
+        CreatedUserView created = userService.create(SYSTEM_ADMIN, command(
                 "U001", "E-1001", "kim@acme.example", "EMPLOYEE"));
         Account before = accountRepository.findByUserId(created.user().id()).orElseThrow();
 
@@ -122,7 +123,7 @@ class UserCreationIntegrationTest {
 
     @Test
     void rejects_duplicate_user_code_within_company_case_insensitively() {
-        userService.create(command("U001", "E-1001", "kim@acme.example", "EMPLOYEE"));
+        userService.create(SYSTEM_ADMIN, command("U001", "E-1001", "kim@acme.example", "EMPLOYEE"));
 
         assertFailure(
                 command(" u001 ", "E-1002", "lee@acme.example", "EMPLOYEE"),
@@ -131,7 +132,7 @@ class UserCreationIntegrationTest {
 
     @Test
     void rejects_duplicate_login_email_within_company_case_insensitively() {
-        userService.create(command("U001", "E-1001", "kim@acme.example", "EMPLOYEE"));
+        userService.create(SYSTEM_ADMIN, command("U001", "E-1001", "kim@acme.example", "EMPLOYEE"));
 
         assertFailure(
                 command("U002", "E-1002", " KIM@ACME.EXAMPLE ", "EMPLOYEE"),
@@ -140,7 +141,7 @@ class UserCreationIntegrationTest {
 
     @Test
     void rejects_duplicate_employee_number_within_company() {
-        userService.create(command("U001", "E-1001", "kim@acme.example", "EMPLOYEE"));
+        userService.create(SYSTEM_ADMIN, command("U001", "E-1001", "kim@acme.example", "EMPLOYEE"));
 
         assertFailure(
                 command("U002", "E-1001", "lee@acme.example", "EMPLOYEE"),
@@ -149,8 +150,8 @@ class UserCreationIntegrationTest {
 
     @Test
     void rejects_position_owned_by_another_company() {
-        companyService.create(new CreateCompanyCommand("BETA", "Beta", "beta.example"));
-        positionService.create("BETA", new CreatePositionCommand("ARCHITECT", "Architect", 60, 60));
+        companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand("BETA", "Beta", "beta.example"));
+        positionService.create(SYSTEM_ADMIN, "BETA", new CreatePositionCommand("ARCHITECT", "Architect", 60, 60));
 
         assertFailure(
                 command("U001", "E-1001", "kim@acme.example", "ARCHITECT"),
@@ -159,8 +160,8 @@ class UserCreationIntegrationTest {
 
     @Test
     void rejects_user_creation_for_inactive_company() {
-        CompanyView company = companyService.find("ACME");
-        companyService.update(
+        CompanyView company = companyService.find(SYSTEM_ADMIN, "ACME");
+        companyService.update(SYSTEM_ADMIN,
                 "ACME", new UpdateCompanyCommand(company.name(), CompanyStatus.INACTIVE, company.version()));
 
         assertFailure(
@@ -170,11 +171,11 @@ class UserCreationIntegrationTest {
 
     @Test
     void rejects_user_creation_for_inactive_position() {
-        PositionView position = positionService.list("ACME").stream()
+        PositionView position = positionService.list(SYSTEM_ADMIN, "ACME").stream()
                 .filter(view -> view.code().equals("EMPLOYEE"))
                 .findFirst()
                 .orElseThrow();
-        positionService.update(
+        positionService.update(SYSTEM_ADMIN,
                 "ACME",
                 "EMPLOYEE",
                 new UpdatePositionCommand(
@@ -192,7 +193,7 @@ class UserCreationIntegrationTest {
     }
 
     private void assertFailure(CreateUserCommand command, ErrorCode errorCode) {
-        assertThatThrownBy(() -> userService.create(command))
+        assertThatThrownBy(() -> userService.create(SYSTEM_ADMIN, command))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(errorCode));

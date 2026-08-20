@@ -7,12 +7,14 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Locale;
 
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.position.domain.Position;
 import com.sweet.authstudy.hr.position.domain.PositionRepository;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
+import com.sweet.authstudy.shared.security.TenantGuard;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,17 +24,21 @@ public class PositionService {
     private final PositionRepository positionRepository;
     private final CompanyRepository companyRepository;
     private final Clock clock;
+    private final TenantGuard tenantGuard;
 
     public PositionService(
-            PositionRepository positionRepository, CompanyRepository companyRepository, Clock clock) {
+            PositionRepository positionRepository, CompanyRepository companyRepository,
+            TenantGuard tenantGuard, Clock clock) {
         this.positionRepository = positionRepository;
         this.companyRepository = companyRepository;
+        this.tenantGuard = tenantGuard;
         this.clock = clock;
     }
 
     @Transactional
-    public PositionView create(String companyCode, CreatePositionCommand command) {
+    public PositionView create(AuthenticatedAccount actor, String companyCode, CreatePositionCommand command) {
         Company company = findCompany(normalizeCode(companyCode));
+        tenantGuard.requireCompanyAccess(actor, company.id());
         String code = normalizeCode(command.code());
         if (positionRepository.findByCompanyIdAndCode(company.id(), code).isPresent()) {
             throw new ApiException(ErrorCode.DUPLICATE_CODE, "Position code already exists.");
@@ -49,8 +55,10 @@ public class PositionService {
     }
 
     @Transactional
-    public PositionView update(String companyCode, String code, UpdatePositionCommand command) {
+    public PositionView update(
+            AuthenticatedAccount actor, String companyCode, String code, UpdatePositionCommand command) {
         Company company = findCompany(normalizeCode(companyCode));
+        tenantGuard.requireCompanyAccess(actor, company.id());
         Position position = findPosition(company.id(), normalizeCode(code));
         if (position.version() != command.version()) {
             throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "Position version does not match.");
@@ -65,19 +73,22 @@ public class PositionService {
     }
 
     @Transactional(readOnly = true)
-    public PositionView find(String companyCode, String code) {
+    public PositionView find(AuthenticatedAccount actor, String companyCode, String code) {
         Company company = findCompany(normalizeCode(companyCode));
+        tenantGuard.requireCompanyAccess(actor, company.id());
         return PositionView.from(findPosition(company.id(), normalizeCode(code)));
     }
 
     @Transactional(readOnly = true)
-    public List<PositionView> list(String companyCode) {
+    public List<PositionView> list(AuthenticatedAccount actor, String companyCode) {
         Company company = findCompany(normalizeCode(companyCode));
+        tenantGuard.requireCompanyAccess(actor, company.id());
         return positionRepository.findAllByCompanyId(company.id()).stream().map(PositionView::from).toList();
     }
 
     @Transactional
-    public void createDefaults(long companyId) {
+    public void createDefaults(AuthenticatedAccount actor, long companyId) {
+        tenantGuard.requireCompanyAccess(actor, companyId);
         createDefault(companyId, "EMPLOYEE", "사원", 10);
         createDefault(companyId, "ASSISTANT_MANAGER", "대리", 20);
         createDefault(companyId, "MANAGER", "과장", 30);

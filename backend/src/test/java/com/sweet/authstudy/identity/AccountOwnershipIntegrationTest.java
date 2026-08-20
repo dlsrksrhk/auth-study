@@ -1,5 +1,6 @@
 package com.sweet.authstudy.identity;
 
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
@@ -45,11 +46,11 @@ class AccountOwnershipIntegrationTest {
 
     @Test
     void database_rejects_account_linking_a_company_to_another_companys_user() {
-        CompanyView acme = companyService.create(
+        CompanyView acme = companyService.create(SYSTEM_ADMIN,
                 new CreateCompanyCommand("ACME", "Acme", "acme.example"));
-        CompanyView beta = companyService.create(
+        CompanyView beta = companyService.create(SYSTEM_ADMIN,
                 new CreateCompanyCommand("BETA", "Beta", "beta.example"));
-        long betaPositionId = positionService.list("BETA").stream()
+        long betaPositionId = positionService.list(SYSTEM_ADMIN, "BETA").stream()
                 .filter(position -> position.code().equals("EMPLOYEE"))
                 .findFirst()
                 .orElseThrow()

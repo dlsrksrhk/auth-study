@@ -1,12 +1,16 @@
 package com.sweet.authstudy.hr.user.application;
 
 import static com.sweet.authstudy.hr.user.application.UserCommands.CreateUserCommand;
+import static com.sweet.authstudy.hr.user.application.UserCommands.UpdateUserCommand;
 import static com.sweet.authstudy.hr.user.application.UserViews.CreatedUserView;
 import static com.sweet.authstudy.hr.user.application.UserViews.UserView;
+import static com.sweet.authstudy.hr.user.application.UserViews.UserPage;
 
 import java.time.Clock;
 import java.util.Locale;
+import java.util.List;
 
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
@@ -17,10 +21,12 @@ import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.identity.application.PasswordGenerator;
+import com.sweet.authstudy.identity.application.AccountService;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
+import com.sweet.authstudy.shared.security.TenantGuard;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +41,8 @@ public class UserService {
     private final AccountRepository accountRepository;
     private final PasswordGenerator passwordGenerator;
     private final PasswordEncoder passwordEncoder;
+    private final AccountService accountService;
+    private final TenantGuard tenantGuard;
     private final Clock clock;
 
     public UserService(
@@ -45,6 +53,8 @@ public class UserService {
             AccountRepository accountRepository,
             PasswordGenerator passwordGenerator,
             PasswordEncoder passwordEncoder,
+            AccountService accountService,
+            TenantGuard tenantGuard,
             Clock clock) {
         this.companyRepository = companyRepository;
         this.positionRepository = positionRepository;
@@ -53,15 +63,19 @@ public class UserService {
         this.accountRepository = accountRepository;
         this.passwordGenerator = passwordGenerator;
         this.passwordEncoder = passwordEncoder;
+        this.accountService = accountService;
+        this.tenantGuard = tenantGuard;
         this.clock = clock;
     }
 
     @Transactional
-    public CreatedUserView create(CreateUserCommand command) {
+    public CreatedUserView create(AuthenticatedAccount actor, CreateUserCommand command) {
         if (command == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "User data is required.");
         }
-        Company company = findActiveLockedCompany(command.companyCode());
+        Company company = findLockedCompany(command.companyCode());
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        requireActive(company);
         String code = normalizeCode(command.code());
         String employeeNumber = normalizeRequired(command.employeeNumber());
         String loginEmail = normalizeEmail(command.loginEmail());
@@ -102,11 +116,12 @@ public class UserService {
 
     @Transactional
     public UserView changeStatus(
-            String companyCode, String userCode, UserStatus status, long version) {
+            AuthenticatedAccount actor, String companyCode, String userCode, UserStatus status, long version) {
         if (status == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "User status is required.");
         }
         Company company = findLockedCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
         HrUser user = userRepository.findByCompanyIdAndCode(company.id(), normalizeCode(userCode))
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User was not found."));
         if (user.version() != version) {
@@ -120,6 +135,92 @@ public class UserService {
         Account account = accountRepository.findByUserId(saved.id())
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
         return UserView.from(saved, account.loginEmail());
+    }
+
+    @Transactional
+    public UserView update(
+            AuthenticatedAccount actor, String companyCode, String userCode, UpdateUserCommand command) {
+        if (command == null || command.hiredAt() == null) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED, "User data is required.");
+        }
+        Company company = findLockedCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        requireActive(company);
+        HrUser user = findUser(company.id(), userCode);
+        if (user.version() != command.version()) {
+            throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "User version does not match.");
+        }
+        Position position = positionRepository
+                .findByCompanyIdAndCode(company.id(), normalizeCode(command.positionCode()))
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Position was not found."));
+        if (!position.active()) {
+            throw new ApiException(ErrorCode.INVALID_STATE, "Position is inactive.");
+        }
+        user.updateProfile(normalizeRequired(command.name()), normalizeRequired(command.phone()),
+                command.hiredAt(), normalizeRequired(command.workplace()),
+                normalizeOptional(command.profileImageUrl()), position.id(), clock.instant());
+        HrUser saved = userRepository.save(user);
+        Account account = accountRepository.findByUserId(saved.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+        return UserView.from(saved, account.loginEmail());
+    }
+
+    @Transactional(readOnly = true)
+    public UserView find(AuthenticatedAccount actor, String companyCode, String userCode) {
+        Company company = findCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        HrUser user = findUser(company.id(), userCode);
+        Account account = accountRepository.findByUserId(user.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+        return UserView.from(user, account.loginEmail());
+    }
+
+    @Transactional(readOnly = true)
+    public UserPage list(AuthenticatedAccount actor, String companyCode, String search,
+            UserStatus status, int page, int size, String sort) {
+        Company company = findCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        var result = userRepository.search(company.id(), search, status, page, size, sort);
+        var content = result.content().stream().map(user -> {
+            Account account = accountRepository.findByUserId(user.id())
+                    .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+            return UserView.from(user, account.loginEmail());
+        }).toList();
+        return new UserPage(content, result.totalElements(), result.totalPages());
+    }
+
+    @Transactional
+    public String resetTemporaryPassword(
+            AuthenticatedAccount actor, String companyCode, String userCode) {
+        Company company = findLockedCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        requireActive(company);
+        HrUser user = findUser(company.id(), userCode);
+        Account account = accountRepository.findByUserId(user.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+        return accountService.resetTemporaryPassword(account.id());
+    }
+
+    @Transactional
+    public void assignCompanyAdmin(
+            AuthenticatedAccount actor, String companyCode, String userCode) {
+        tenantGuard.requireSystemAdmin(actor);
+        Company company = findCompany(companyCode);
+        HrUser user = findUser(company.id(), userCode);
+        Account account = accountRepository.findByUserId(user.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+        accountService.assignCompanyAdmin(actor, account.id());
+    }
+
+    @Transactional
+    public void revokeCompanyAdmin(
+            AuthenticatedAccount actor, String companyCode, String userCode) {
+        tenantGuard.requireSystemAdmin(actor);
+        Company company = findCompany(companyCode);
+        HrUser user = findUser(company.id(), userCode);
+        Account account = accountRepository.findByUserId(user.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+        accountService.revokeCompanyAdmin(actor, account.id());
     }
 
     private void requireActivationReady(Company company, HrUser user) {
@@ -138,12 +239,10 @@ public class UserService {
         }
     }
 
-    private Company findActiveLockedCompany(String code) {
-        Company company = findLockedCompany(code);
+    private void requireActive(Company company) {
         if (company.status() != CompanyStatus.ACTIVE) {
             throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
         }
-        return company;
     }
 
     private Company findLockedCompany(String code) {
@@ -151,6 +250,16 @@ public class UserService {
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
         return companyRepository.findLockedById(identified.id())
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
+    }
+
+    private Company findCompany(String code) {
+        return companyRepository.findByCode(normalizeCode(code))
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
+    }
+
+    private HrUser findUser(long companyId, String code) {
+        return userRepository.findByCompanyIdAndCode(companyId, normalizeCode(code))
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User was not found."));
     }
 
     private void rejectDuplicates(long companyId, String code, String employeeNumber, String loginEmail) {

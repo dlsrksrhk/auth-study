@@ -1,6 +1,7 @@
 package com.sweet.authstudy.hr.company.domain;
 
 import java.util.Optional;
+import java.util.List;
 
 public interface CompanyRepository {
 
@@ -13,4 +14,6 @@ public interface CompanyRepository {
     Optional<Company> findById(long id);
 
     Optional<Company> findLockedById(long id);
+
+    List<Company> findAll();
 }

@@ -11,11 +11,14 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.util.StringUtils;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -32,6 +35,15 @@ public class GlobalExceptionHandler {
                 .map(error -> new FieldViolation(error.getField(), INVALID_FIELD_MESSAGE))
                 .toList();
         return problem(ErrorCode.VALIDATION_FAILED, "Validation failed.", fieldErrors, request);
+    }
+
+    @ExceptionHandler({
+            HttpMessageNotReadableException.class,
+            MissingServletRequestParameterException.class,
+            MethodArgumentTypeMismatchException.class
+    })
+    ProblemDetail handleMalformedRequest(Exception exception, HttpServletRequest request) {
+        return problem(ErrorCode.VALIDATION_FAILED, "Validation failed.", List.of(), request);
     }
 
     @ExceptionHandler(ApiException.class)

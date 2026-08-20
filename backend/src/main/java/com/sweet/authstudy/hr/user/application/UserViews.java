@@ -2,6 +2,7 @@ package com.sweet.authstudy.hr.user.application;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
@@ -38,4 +39,6 @@ public final class UserViews {
 
     public record CreatedUserView(UserView user, String temporaryPassword) {
     }
+
+    public record UserPage(List<UserView> content, long totalElements, int totalPages) {}
 }

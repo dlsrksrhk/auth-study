@@ -1,6 +1,7 @@
 package com.sweet.authstudy.hr.company.infrastructure;
 
 import java.util.Optional;
+import java.util.List;
 
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
@@ -52,5 +53,10 @@ public class CompanyRepositoryAdapter implements CompanyRepository {
             entityManager.refresh(entity, LockModeType.PESSIMISTIC_WRITE);
             return entity.toDomain();
         });
+    }
+
+    @Override
+    public List<Company> findAll() {
+        return repository.findAll().stream().map(CompanyJpaEntity::toDomain).toList();
     }
 }

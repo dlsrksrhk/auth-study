@@ -7,6 +7,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Locale;
 
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
@@ -21,6 +22,7 @@ import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
+import com.sweet.authstudy.shared.security.TenantGuard;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -34,26 +36,30 @@ public class MembershipService {
     private final UserRepository userRepository;
     private final DepartmentRepository departmentRepository;
     private final Clock clock;
+    private final TenantGuard tenantGuard;
 
     public MembershipService(
             MembershipRepository membershipRepository,
             CompanyRepository companyRepository,
             UserRepository userRepository,
-            DepartmentRepository departmentRepository,
+            DepartmentRepository departmentRepository, TenantGuard tenantGuard,
             Clock clock) {
         this.membershipRepository = membershipRepository;
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
         this.departmentRepository = departmentRepository;
+        this.tenantGuard = tenantGuard;
         this.clock = clock;
     }
 
     @Transactional
-    public MembershipView assign(AssignMembershipCommand command) {
+    public MembershipView assign(AuthenticatedAccount actor, AssignMembershipCommand command) {
         if (command == null || command.role() == null || command.startedAt() == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Membership data is required.");
         }
-        Company company = findActiveLockedCompany(command.companyCode());
+        Company company = findLockedCompany(command.companyCode());
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        requireActive(company);
         HrUser user = findUser(company.id(), command.userCode());
         Department department = findDepartment(company.id(), command.departmentCode());
         requireAssignable(user, department);
@@ -65,11 +71,13 @@ public class MembershipService {
     }
 
     @Transactional
-    public MembershipView update(UpdateMembershipCommand command) {
+    public MembershipView update(AuthenticatedAccount actor, UpdateMembershipCommand command) {
         if (command == null || command.role() == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Membership update data is required.");
         }
-        Company company = findActiveLockedCompany(command.companyCode());
+        Company company = findLockedCompany(command.companyCode());
+        tenantGuard.requireCompanyAccess(actor, company.id());
+        requireActive(company);
         HrUser user = findUser(company.id(), command.userCode());
         DepartmentMembership membership = findMembership(command.membershipId());
         requireOwnership(membership, company, user);
@@ -83,8 +91,10 @@ public class MembershipService {
     }
 
     @Transactional
-    public MembershipView end(String companyCode, String userCode, long membershipId, long version) {
+    public MembershipView end(
+            AuthenticatedAccount actor, String companyCode, String userCode, long membershipId, long version) {
         Company company = findLockedCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
         HrUser user = findUser(company.id(), userCode);
         DepartmentMembership membership = findMembership(membershipId);
         requireOwnership(membership, company, user);
@@ -99,8 +109,10 @@ public class MembershipService {
     }
 
     @Transactional(readOnly = true)
-    public List<MembershipView> listByUser(String companyCode, String userCode) {
+    public List<MembershipView> listByUser(
+            AuthenticatedAccount actor, String companyCode, String userCode) {
         Company company = findCompany(companyCode);
+        tenantGuard.requireCompanyAccess(actor, company.id());
         HrUser user = findUser(company.id(), userCode);
         return membershipRepository.findAllByUserId(user.id()).stream().map(MembershipView::from).toList();
     }
@@ -201,12 +213,10 @@ public class MembershipService {
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Membership was not found."));
     }
 
-    private Company findActiveLockedCompany(String code) {
-        Company company = findLockedCompany(code);
+    private void requireActive(Company company) {
         if (company.status() != CompanyStatus.ACTIVE) {
             throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
         }
-        return company;
     }
 
     private Company findLockedCompany(String code) {
