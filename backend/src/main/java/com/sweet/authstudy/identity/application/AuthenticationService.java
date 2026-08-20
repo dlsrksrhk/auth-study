@@ -38,6 +38,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class AuthenticationService {
+    private static final String DUMMY_PASSWORD_HASH =
+            "$2a$12$Fw8G.hdiMekZD1U1oRYN4uD2RtUQY4mSCkZIxgn1Kp7R3Ki/6IiS2";
     private final AccountRepository accountRepository;
     private final CompanyRepository companyRepository;
     private final UserRepository userRepository;
@@ -75,15 +77,23 @@ public class AuthenticationService {
 
     private LoginOutcome loginInTransaction(LoginCommand command) {
         Instant now = clock.instant();
-        Account account = resolveAccount(command.email());
-        if (account == null || account.status() != AccountStatus.ACTIVE) return LoginOutcome.failure();
-        if (account.lockedUntil() != null && account.lockedUntil().isAfter(now)) return LoginOutcome.failure();
+        Account account = resolveAccountForUpdate(command.email());
+        if (account == null || account.status() != AccountStatus.ACTIVE) {
+            performDummyPasswordComparison(command.password());
+            return LoginOutcome.failure();
+        }
+        if (account.lockedUntil() != null && account.lockedUntil().isAfter(now)) {
+            performDummyPasswordComparison(command.password());
+            return LoginOutcome.failure();
+        }
+        if (account.lockedUntil() != null) account.clearFailedLogins(now);
         if (!passwordEncoder.matches(command.password(), account.passwordHash())) {
             int nextFailures = account.failedLoginAttempts() + 1;
             Instant lockedUntil = nextFailures >= properties.loginLock().maxFailures()
                     ? now.plus(properties.loginLock().lockDuration()) : null;
             account.recordFailedLogin(lockedUntil, now);
             accountRepository.save(account);
+            if (lockedUntil != null) refreshTokenRepository.revokeAllByAccountId(account.id(), now);
             return LoginOutcome.failure();
         }
 
@@ -100,23 +110,28 @@ public class AuthenticationService {
 
     public RefreshResult refresh(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) throw unauthenticated();
-        RefreshOutcome outcome = transactions.execute(status -> refreshInTransaction(rawToken));
+        String tokenHash = hash(rawToken);
+        Long accountId = refreshTokenRepository.findAccountIdByHash(tokenHash).orElse(null);
+        if (accountId == null) throw unauthenticated();
+        RefreshOutcome outcome = transactions.execute(
+                status -> refreshInTransaction(tokenHash, accountId));
         if (outcome == null || outcome.result() == null) throw unauthenticated();
         return outcome.result();
     }
 
-    private RefreshOutcome refreshInTransaction(String rawToken) {
+    private RefreshOutcome refreshInTransaction(String tokenHash, long accountId) {
         Instant now = clock.instant();
-        RefreshToken current = refreshTokenRepository.findByHash(hash(rawToken)).orElse(null);
-        if (current == null) return RefreshOutcome.failure();
+        Account account = accountRepository.findByIdForUpdate(accountId).orElse(null);
+        if (account == null) return RefreshOutcome.failure();
+        RefreshToken current = refreshTokenRepository.findByHashForUpdate(tokenHash).orElse(null);
+        if (current == null || current.accountId() != account.id()) return RefreshOutcome.failure();
         if (current.usedAt() != null) {
             refreshTokenRepository.revokeFamily(current.familyId(), now);
             return RefreshOutcome.failure();
         }
         if (current.revokedAt() != null || current.expiredAt(now)) return RefreshOutcome.failure();
-        Account account = accountRepository.findById(current.accountId()).orElse(null);
-        if (account == null || !refreshStateAllowed(account)) {
-            refreshTokenRepository.revokeFamily(current.familyId(), now);
+        if (!refreshStateAllowed(account, now)) {
+            refreshTokenRepository.revokeAllByAccountId(account.id(), now);
             return RefreshOutcome.failure();
         }
         current.markUsed(now);
@@ -128,14 +143,24 @@ public class AuthenticationService {
 
     public void logout(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) return;
-        transactions.executeWithoutResult(status -> refreshTokenRepository.findByHash(hash(rawToken))
-                .ifPresent(token -> refreshTokenRepository.revokeFamily(token.familyId(), clock.instant())));
+        String tokenHash = hash(rawToken);
+        Long accountId = refreshTokenRepository.findAccountIdByHash(tokenHash).orElse(null);
+        if (accountId == null) return;
+        transactions.executeWithoutResult(status -> {
+            Account account = accountRepository.findByIdForUpdate(accountId).orElse(null);
+            if (account == null) return;
+            RefreshToken locked = refreshTokenRepository.findByHashForUpdate(tokenHash).orElse(null);
+            if (locked != null && locked.accountId() == account.id()) {
+                refreshTokenRepository.revokeAllByAccountId(account.id(), clock.instant());
+            }
+        });
     }
 
     public void changePassword(AuthenticatedAccount principal, ChangePasswordCommand command) {
         if (principal == null || command == null) throw unauthenticated();
         transactions.executeWithoutResult(status -> {
-            Account account = accountRepository.findById(principal.accountId()).orElseThrow(this::unauthenticated);
+            Account account = accountRepository.findByIdForUpdate(principal.accountId())
+                    .orElseThrow(this::unauthenticated);
             if (command.currentPassword() == null
                     || !passwordEncoder.matches(command.currentPassword(), account.passwordHash())) {
                 throw unauthenticated();
@@ -159,15 +184,15 @@ public class AuthenticationService {
         });
     }
 
-    private Account resolveAccount(String rawEmail) {
+    private Account resolveAccountForUpdate(String rawEmail) {
         String email = rawEmail.trim().toLowerCase(Locale.ROOT);
-        Account system = accountRepository.findSystemByEmail(email).orElse(null);
+        Account system = accountRepository.findSystemByEmailForUpdate(email).orElse(null);
         if (system != null) return system;
         int at = email.lastIndexOf('@');
         if (at <= 0 || at == email.length() - 1) return null;
         Company company = companyRepository.findByEmailDomain(email.substring(at + 1)).orElse(null);
         if (company == null || company.status() != CompanyStatus.ACTIVE) return null;
-        return accountRepository.findCompanyAccount(company.id(), email).orElse(null);
+        return accountRepository.findCompanyAccountForUpdate(company.id(), email).orElse(null);
     }
 
     private boolean loginStateAllowed(Account account, HrUser user) {
@@ -177,8 +202,9 @@ public class AuthenticationService {
                 : user.status() == UserStatus.ACTIVE;
     }
 
-    private boolean refreshStateAllowed(Account account) {
+    private boolean refreshStateAllowed(Account account, Instant now) {
         if (account.status() != AccountStatus.ACTIVE || account.mustChangePassword()) return false;
+        if (account.lockedUntil() != null && account.lockedUntil().isAfter(now)) return false;
         if (account.companyId() == null) return true;
         Company company = companyRepository.findById(account.companyId()).orElse(null);
         HrUser user = userRepository.findById(account.userId()).orElse(null);
@@ -210,11 +236,17 @@ public class AuthenticationService {
     }
 
     private void validateNewPassword(String password) {
-        if (password == null || password.length() < 12 || password.length() > 72
+        int characters = password == null ? 0 : password.codePointCount(0, password.length());
+        int utf8Bytes = password == null ? 0 : password.getBytes(StandardCharsets.UTF_8).length;
+        if (password == null || characters < 12 || characters > 64 || utf8Bytes > 72
                 || !password.matches(".*[A-Z].*") || !password.matches(".*[a-z].*")
                 || !password.matches(".*[0-9].*") || !password.matches(".*[^A-Za-z0-9].*")) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "New password does not meet policy.");
         }
+    }
+
+    private void performDummyPasswordComparison(String rawPassword) {
+        passwordEncoder.matches(rawPassword, DUMMY_PASSWORD_HASH);
     }
 
     private ApiException unauthenticated() {

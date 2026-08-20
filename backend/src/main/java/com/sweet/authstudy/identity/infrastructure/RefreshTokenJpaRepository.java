@@ -12,8 +12,14 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 interface RefreshTokenJpaRepository extends JpaRepository<RefreshTokenJpaEntity, Long> {
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<RefreshTokenJpaEntity> findByTokenHash(String tokenHash);
+
+    @Query("select t.accountId from RefreshTokenJpaEntity t where t.tokenHash = :tokenHash")
+    Optional<Long> findAccountIdByTokenHash(@Param("tokenHash") String tokenHash);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from RefreshTokenJpaEntity t where t.tokenHash = :tokenHash")
+    Optional<RefreshTokenJpaEntity> findByTokenHashForUpdate(@Param("tokenHash") String tokenHash);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update RefreshTokenJpaEntity t set t.revokedAt = :at where t.familyId = :familyId and t.revokedAt is null")

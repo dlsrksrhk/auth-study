@@ -17,6 +17,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
 import java.util.stream.IntStream;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
@@ -32,6 +34,8 @@ import com.sweet.authstudy.identity.application.AuthTokens.LoginResult;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountRole;
+import com.sweet.authstudy.shared.error.ApiException;
+import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -109,6 +113,45 @@ class AuthenticationIntegrationTest {
     }
 
     @Test
+    void parallel_bad_passwords_are_all_counted_without_conflict_errors() throws Exception {
+        Callable<Throwable> attempt = () -> {
+            try {
+                authenticationService.login(new LoginCommand(email, "wrong", "127.0.0.1"));
+                return null;
+            } catch (Throwable failure) {
+                return failure;
+            }
+        };
+
+        try (var executor = Executors.newFixedThreadPool(5)) {
+            var futures = IntStream.range(0, 5).mapToObj(i -> executor.submit(attempt)).toList();
+            for (var future : futures) {
+                assertThat(future.get()).isInstanceOfSatisfying(ApiException.class,
+                        failure -> assertThat(failure.errorCode()).isEqualTo(ErrorCode.UNAUTHENTICATED));
+            }
+        }
+        Account locked = accountRepository.findById(account.id()).orElseThrow();
+        assertThat(locked.failedLoginAttempts()).isEqualTo(5);
+        assertThat(locked.lockedUntil()).isAfter(clock.instant());
+    }
+
+    @Test
+    void rejects_ascii_password_longer_than_sixty_four_characters() {
+        String tooLong = "Aa1!" + "x".repeat(61);
+
+        assertPasswordValidationFailure(tooLong);
+    }
+
+    @Test
+    void rejects_password_exceeding_seventy_two_utf8_bytes() {
+        String tooManyBytes = "Aa1!" + "가".repeat(23);
+
+        assertThat(tooManyBytes.codePointCount(0, tooManyBytes.length())).isLessThanOrEqualTo(64);
+        assertThat(tooManyBytes.getBytes(java.nio.charset.StandardCharsets.UTF_8)).hasSizeGreaterThan(72);
+        assertPasswordValidationFailure(tooManyBytes);
+    }
+
+    @Test
     void password_change_revokes_refresh_and_pending_user_stays_blocked_until_active() {
         LoginResult temporaryLogin = authenticationService.login(
                 new LoginCommand(email, temporaryPassword, "127.0.0.1"));
@@ -165,5 +208,54 @@ class AuthenticationIntegrationTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
                 .andExpect(jsonPath("$.detail").value("Authentication is required."));
+    }
+
+    @Test
+    void password_change_only_jwt_is_filter_restricted_and_password_change_revokes_active_refresh() throws Exception {
+        String temporaryLoginBody = mvc.perform(post("/api/v1/auth/login")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"" + temporaryPassword + "\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String temporaryAccess = com.jayway.jsonpath.JsonPath.read(temporaryLoginBody, "$.accessToken");
+
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", "Bearer " + temporaryAccess))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/auth/password")
+                        .header("Authorization", "Bearer " + temporaryAccess)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"" + temporaryPassword
+                                + "\",\"newPassword\":\"ChangedPassword1234!\"}"))
+                .andExpect(status().isNoContent());
+
+        user.changeStatus(UserStatus.ACTIVE, clock.instant());
+        userRepository.save(user);
+        var activeLogin = mvc.perform(post("/api/v1/auth/login")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"email\":\"" + email
+                                + "\",\"password\":\"ChangedPassword1234!\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse();
+        String activeAccess = com.jayway.jsonpath.JsonPath.read(activeLogin.getContentAsString(), "$.accessToken");
+        String setCookie = activeLogin.getHeader("Set-Cookie");
+        String activeRefresh = setCookie.substring(setCookie.indexOf('=') + 1, setCookie.indexOf(';'));
+
+        mvc.perform(post("/api/v1/auth/password")
+                        .header("Authorization", "Bearer " + activeAccess)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"ChangedPassword1234!\","
+                                + "\"newPassword\":\"FinalPassword1234!\"}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(post("/api/v1/auth/refresh")
+                        .cookie(new jakarta.servlet.http.Cookie("AUTH_STUDY_REFRESH", activeRefresh))
+                        .header("Origin", "http://localhost:3000"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    private void assertPasswordValidationFailure(String newPassword) {
+        AuthenticatedAccount principal = new AuthenticatedAccount(
+                account.id(), company.id(), user.id(), account.roles(), true);
+        assertThatThrownBy(() -> authenticationService.changePassword(
+                principal, new ChangePasswordCommand(temporaryPassword, newPassword)))
+                .isInstanceOfSatisfying(ApiException.class,
+                        failure -> assertThat(failure.errorCode()).isEqualTo(ErrorCode.VALIDATION_FAILED));
     }
 }

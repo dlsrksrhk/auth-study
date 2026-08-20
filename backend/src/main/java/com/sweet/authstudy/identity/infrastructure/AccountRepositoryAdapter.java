@@ -33,6 +33,11 @@ public class AccountRepositoryAdapter implements AccountRepository {
     }
 
     @Override
+    public Optional<Account> findByIdForUpdate(long id) {
+        return repository.findByIdForUpdate(id).map(AccountJpaEntity::toDomain);
+    }
+
+    @Override
     public Optional<Account> findByUserId(long userId) {
         return repository.findByUserId(userId).map(AccountJpaEntity::toDomain);
     }
@@ -44,8 +49,19 @@ public class AccountRepositoryAdapter implements AccountRepository {
     }
 
     @Override
+    public Optional<Account> findCompanyAccountForUpdate(long companyId, String loginEmail) {
+        return repository.findCompanyAccountForUpdate(companyId, loginEmail).map(AccountJpaEntity::toDomain);
+    }
+
+    @Override
     public Optional<Account> findSystemByEmail(String loginEmail) {
         return repository.findByCompanyIdIsNullAndLoginEmailIgnoreCase(loginEmail)
                 .map(AccountJpaEntity::toDomain);
+    }
+
+
+    @Override
+    public Optional<Account> findSystemByEmailForUpdate(String loginEmail) {
+        return repository.findSystemByEmailForUpdate(loginEmail).map(AccountJpaEntity::toDomain);
     }
 }

@@ -12,13 +12,13 @@ import com.sweet.authstudy.identity.application.AuthenticationService;
 import com.sweet.authstudy.identity.application.AuthTokens.LoginResult;
 import com.sweet.authstudy.identity.application.AuthTokens.RefreshResult;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -46,18 +46,16 @@ public class AuthController {
     }
 
     @PostMapping("/refresh")
-    public ResponseEntity<TokenResponse> refresh(
-            @CookieValue(name = "AUTH_STUDY_REFRESH", required = false) String refreshToken) {
-        RefreshResult result = authenticationService.refresh(refreshToken);
+    public ResponseEntity<TokenResponse> refresh(HttpServletRequest request) {
+        RefreshResult result = authenticationService.refresh(readRefreshCookie(request));
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookie(result.refreshToken()).toString())
                 .body(TokenResponse.from(result.tokens(), false));
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(
-            @CookieValue(name = "AUTH_STUDY_REFRESH", required = false) String refreshToken) {
-        authenticationService.logout(refreshToken);
+    public ResponseEntity<Void> logout(HttpServletRequest request) {
+        authenticationService.logout(readRefreshCookie(request));
         return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE, deleteCookie().toString()).build();
     }
 
@@ -86,5 +84,15 @@ public class AuthController {
         return ResponseCookie.from(configured.name(), "").httpOnly(configured.httpOnly())
                 .secure(configured.secure()).sameSite(configured.sameSite()).path(configured.path())
                 .maxAge(0).build();
+    }
+
+    private String readRefreshCookie(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null) return null;
+        String configuredName = properties.refreshCookie().name();
+        for (Cookie cookie : cookies) {
+            if (configuredName.equals(cookie.getName())) return cookie.getValue();
+        }
+        return null;
     }
 }

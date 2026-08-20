@@ -16,6 +16,12 @@ public class RefreshTokenRepositoryAdapter implements RefreshTokenRepository {
     @Override public Optional<RefreshToken> findByHash(String hash) {
         return repository.findByTokenHash(hash).map(RefreshTokenJpaEntity::toDomain);
     }
+    @Override public Optional<Long> findAccountIdByHash(String hash) {
+        return repository.findAccountIdByTokenHash(hash);
+    }
+    @Override public Optional<RefreshToken> findByHashForUpdate(String hash) {
+        return repository.findByTokenHashForUpdate(hash).map(RefreshTokenJpaEntity::toDomain);
+    }
     @Override public RefreshToken save(RefreshToken token) {
         RefreshTokenJpaEntity entity = token.id() == null ? RefreshTokenJpaEntity.from(token)
                 : repository.findById(token.id()).orElseThrow(() -> new IllegalStateException("Refresh token does not exist."));
