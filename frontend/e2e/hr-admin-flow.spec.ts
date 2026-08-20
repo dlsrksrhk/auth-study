@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Response } from "@playwright/test";
 
 test("system admin provisions a company and company admin manages organization", async ({ page, context, browser }) => {
   const suffix = `${Date.now()}${Math.random().toString(36).slice(2, 7)}`.slice(-14).toUpperCase();
@@ -13,18 +13,19 @@ test("system admin provisions a company and company admin manages organization",
   await login(page, "admin@auth-study.local", "AuthStudy1234!");
   const loginResponse = await loginResponsePromise;
   expect(loginResponse.status()).toBe(200);
-  const loginHeaders = await loginResponse.allHeaders();
-  expect(loginHeaders["set-cookie"]).toContain("AUTH_STUDY_REFRESH=");
-  expect(loginHeaders["set-cookie"]).toContain("HttpOnly");
-  expect(loginHeaders["set-cookie"]).toContain("SameSite=Lax");
-  expect(loginHeaders["set-cookie"]).toContain("Path=/api/v1/auth");
-  expect(loginHeaders["set-cookie"]?.toLowerCase()).not.toContain("secure");
+  await expectRefreshSetCookie(loginResponse, "positive");
   await expect(page.getByRole("heading", { name: "관리자 대시보드" })).toBeVisible();
   const cookie = (await context.cookies()).find((item) => item.name === "AUTH_STUDY_REFRESH");
   expect(cookie).toMatchObject({ httpOnly: true, sameSite: "Lax", path: "/api/v1/auth", secure: false });
 
+  const refreshResponsePromise = page.waitForResponse((response) => response.url().endsWith("/api/v1/auth/refresh") && response.request().method() === "POST");
   const refreshStatus = await page.evaluate(async () => (await fetch("/api/v1/auth/refresh", { method: "POST" })).status);
+  const refreshResponse = await refreshResponsePromise;
   expect(refreshStatus).toBe(200);
+  expect(refreshResponse.status()).toBe(200);
+  await expectRefreshSetCookie(refreshResponse, "positive");
+  const rotatedCookie = (await context.cookies()).find((item) => item.name === "AUTH_STUDY_REFRESH");
+  expect(rotatedCookie).toMatchObject({ httpOnly: true, sameSite: "Lax", path: "/api/v1/auth", secure: false });
   const evilRefresh = await page.request.post("/api/v1/auth/refresh", { headers: { Origin: "https://evil.example" } });
   expect(evilRefresh.status()).toBe(403);
 
@@ -53,8 +54,13 @@ test("system admin provisions a company and company admin manages organization",
   const preGrantContext = await browser.newContext();
   const preGrantPage = await preGrantContext.newPage();
   await preGrantPage.goto("http://localhost:3000/login");
+  const forcedLoginResponsePromise = preGrantPage.waitForResponse((response) => response.url().endsWith("/api/v1/auth/login") && response.request().method() === "POST");
   await login(preGrantPage, companyAdminEmail, adminTemporaryPassword);
+  const forcedLoginResponse = await forcedLoginResponsePromise;
+  expect(forcedLoginResponse.status()).toBe(200);
+  expect(await refreshSetCookie(forcedLoginResponse)).toBeUndefined();
   await expect(preGrantPage).toHaveURL(/\/change-password$/);
+  expect((await preGrantContext.cookies()).find((item) => item.name === "AUTH_STUDY_REFRESH")).toBeUndefined();
   await preGrantPage.getByLabel("현재 비밀번호").fill(adminTemporaryPassword);
   await preGrantPage.getByLabel("새 비밀번호", { exact: true }).fill(changedPassword);
   await preGrantPage.getByLabel("새 비밀번호 확인").fill(changedPassword);
@@ -62,7 +68,8 @@ test("system admin provisions a company and company admin manages organization",
   await expect(preGrantPage).toHaveURL(/\/login$/);
   await login(preGrantPage, companyAdminEmail, changedPassword);
   await expect(preGrantPage).toHaveURL(/\/account$/);
-  expect((await preGrantContext.cookies()).find((item) => item.name === "AUTH_STUDY_REFRESH")).toBeDefined();
+  const normalLoginCookie = (await preGrantContext.cookies()).find((item) => item.name === "AUTH_STUDY_REFRESH");
+  expect(normalLoginCookie).toMatchObject({ httpOnly: true, sameSite: "Lax", path: "/api/v1/auth", secure: false });
   await page.getByRole("button", { name: "회사 관리자 지정" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "권한 변경 확인" }).click();
   await expect(page.getByText("회사 관리자 권한을 지정했습니다.")).toBeVisible();
@@ -73,8 +80,7 @@ test("system admin provisions a company and company admin manages organization",
   await page.getByRole("button", { name: "로그아웃" }).click();
   const logoutResponse = await logoutResponsePromise;
   expect(logoutResponse.status()).toBe(204);
-  expect((await logoutResponse.allHeaders())["set-cookie"]).toContain("Max-Age=0");
-  expect((await logoutResponse.allHeaders())["set-cookie"]).toContain("Path=/api/v1/auth");
+  await expectRefreshSetCookie(logoutResponse, "deleted");
   await expect(page).toHaveURL(/\/login$/);
   await expect.poll(async () => (await context.cookies()).find((item) => item.name === "AUTH_STUDY_REFRESH")).toBeUndefined();
 
@@ -164,4 +170,51 @@ async function activateUser(page: Page) {
   await page.getByRole("button", { name: "사용자 활성화" }).click();
   await page.getByRole("dialog", { name: "사용자를 활성화할까요?" }).getByRole("button", { name: "확인" }).click();
   await expect(page.getByText("ACTIVE", { exact: true })).toBeVisible();
+}
+
+type ParsedSetCookie = {
+  name: string;
+  value: string;
+  attributes: Map<string, string | true>;
+};
+
+async function refreshSetCookie(response: Response): Promise<ParsedSetCookie | undefined> {
+  const headers = await response.headersArray();
+  const values = headers
+    .filter((header) => header.name.toLowerCase() === "set-cookie")
+    .map((header) => parseSetCookie(header.value));
+  return values.find((cookie) => cookie.name === "AUTH_STUDY_REFRESH");
+}
+
+function parseSetCookie(value: string): ParsedSetCookie {
+  const [nameValue, ...rawAttributes] = value.split(";");
+  const separator = nameValue.indexOf("=");
+  if (separator <= 0) throw new Error(`Invalid Set-Cookie header: ${value}`);
+  const attributes = new Map<string, string | true>();
+  for (const rawAttribute of rawAttributes) {
+    const attribute = rawAttribute.trim();
+    if (!attribute) continue;
+    const equals = attribute.indexOf("=");
+    if (equals === -1) attributes.set(attribute.toLowerCase(), true);
+    else attributes.set(attribute.slice(0, equals).trim().toLowerCase(), attribute.slice(equals + 1).trim());
+  }
+  return { name: nameValue.slice(0, separator).trim(), value: nameValue.slice(separator + 1), attributes };
+}
+
+async function expectRefreshSetCookie(response: Response, maxAge: "positive" | "deleted") {
+  const cookie = await refreshSetCookie(response);
+  expect(cookie, "AUTH_STUDY_REFRESH Set-Cookie header").toBeDefined();
+  expect(cookie!.attributes.get("httponly")).toBe(true);
+  expect(String(cookie!.attributes.get("samesite")).toLowerCase()).toBe("lax");
+  expect(cookie!.attributes.get("path")).toBe("/api/v1/auth");
+  expect(cookie!.attributes.has("secure")).toBe(false);
+  const parsedMaxAge = Number(cookie!.attributes.get("max-age"));
+  if (maxAge === "deleted") {
+    expect(cookie!.value).toBe("");
+    expect(parsedMaxAge).toBe(0);
+  } else {
+    expect(cookie!.value.length).toBeGreaterThan(0);
+    expect(Number.isInteger(parsedMaxAge)).toBe(true);
+    expect(parsedMaxAge).toBeGreaterThan(0);
+  }
 }

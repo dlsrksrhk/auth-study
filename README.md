@@ -1,6 +1,6 @@
 # Auth Study HR 관리자 환경
 
-Spring Boot 4, PostgreSQL, Next.js 16으로 구성한 로컬 학습용 HR 관리자 환경입니다.
+Spring Boot 3.5.15, PostgreSQL, Next.js 16으로 구성한 로컬 학습용 HR 관리자 환경입니다.
 
 ## 첫 실행
 
@@ -13,17 +13,17 @@ docker compose -f infrastructure/docker-compose.yml up -d
 docker compose -f infrastructure/docker-compose.yml ps
 ```
 
-`auth-study-postgres`가 `healthy`가 된 뒤 백엔드를 실행합니다.
+`auth-study-postgres`가 `healthy`가 된 뒤, 저장소 루트를 현재 디렉터리로 연 새 PowerShell 창에서 백엔드를 실행합니다.
 
 ```powershell
-cd backend
+cd .\backend
 .\gradlew.bat bootRun
 ```
 
-새 PowerShell 창에서 프런트엔드를 실행합니다.
+저장소 루트를 현재 디렉터리로 연 새 PowerShell 창에서 프런트엔드를 실행합니다.
 
 ```powershell
-cd frontend
+cd .\frontend
 npm install
 npm run dev
 ```
@@ -37,26 +37,26 @@ Next.js는 `/api/*` 요청을 로컬 백엔드로 rewrite합니다. Refresh Toke
 
 ## 테스트
 
-저장소 루트에서 백엔드 전체 테스트를 실행합니다.
+저장소 루트를 현재 디렉터리로 연 PowerShell 창에서 백엔드 전체 테스트를 실행합니다.
 
 ```powershell
-cd backend
+cd .\backend
 .\gradlew.bat clean test
 ```
 
-프런트엔드 단위 테스트, 린트와 프로덕션 빌드를 실행합니다.
+별도의 PowerShell 창을 저장소 루트에서 열어 프런트엔드 단위 테스트, 린트와 프로덕션 빌드를 실행합니다.
 
 ```powershell
-cd frontend
+cd .\frontend
 npm test -- --run
 npm run lint
 npm run build
 ```
 
-실제 Chromium E2E는 PostgreSQL만 미리 실행한 상태에서 수행합니다. 설정이 `dev` 프로필의 백엔드와 현재 체크아웃의 프런트엔드를 직접 시작하므로 8080 또는 3000 포트에 기존 서버가 있으면 먼저 종료해야 합니다.
+실제 Chromium E2E는 PostgreSQL만 미리 실행한 상태에서 수행합니다. 설정이 `dev` 프로필의 백엔드와 현재 체크아웃의 프런트엔드를 직접 시작하므로 8080 또는 3000 포트에 기존 서버가 있으면 먼저 종료해야 합니다. 저장소 루트를 현재 디렉터리로 연 새 PowerShell 창에서 실행합니다.
 
 ```powershell
-cd frontend
+cd .\frontend
 npx playwright install chromium
 npm run test:e2e
 ```
@@ -65,7 +65,7 @@ npm run test:e2e
 
 ## 종료
 
-각 개발 서버에서 `Ctrl+C`를 누른 뒤 저장소 루트에서 데이터베이스를 중지합니다.
+각 개발 서버에서 `Ctrl+C`를 누른 뒤, 저장소 루트를 현재 디렉터리로 연 PowerShell 창에서 데이터베이스를 중지합니다.
 
 ```powershell
 docker compose -f infrastructure/docker-compose.yml down
