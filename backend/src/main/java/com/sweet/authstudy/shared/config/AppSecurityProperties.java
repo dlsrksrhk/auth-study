@@ -15,7 +15,7 @@ public record AppSecurityProperties(
     public record Jwt(String secret, Duration accessTokenTtl, Duration refreshTokenTtl) {
     }
 
-    public record RefreshCookie(String name, String path, boolean secure, String sameSite) {
+    public record RefreshCookie(String name, String path, boolean httpOnly, boolean secure, String sameSite) {
     }
 
     public record LoginLock(int maxFailures, Duration lockDuration) {

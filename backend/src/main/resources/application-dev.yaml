@@ -11,10 +11,11 @@ app:
       access-token-ttl: PT15M
       refresh-token-ttl: P7D
     refresh-cookie:
-      name: refresh_token
+      name: AUTH_STUDY_REFRESH
       path: /api/v1/auth
+      http-only: true
       secure: false
-      same-site: Strict
+      same-site: Lax
     browser-origin: http://localhost:3000
     login-lock:
       max-failures: 5
