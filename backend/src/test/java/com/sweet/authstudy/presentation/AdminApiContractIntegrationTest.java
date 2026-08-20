@@ -214,23 +214,23 @@ class AdminApiContractIntegrationTest {
         mvc.perform(post("/api/v1/admin/companies")
                         .header(AUTHORIZATION, "Bearer " + systemToken)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"code\":\"BAD/CODE\",\"name\":\"Bad\","
+                        .content("{\"code\":\" BAD/CODE \",\"name\":\"Bad\","
                                 + "\"emailDomain\":\"bad-" + suffix + ".example\"}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/v1/admin/companies/{companyCode}/positions", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"code\":\"BAD?CODE\",\"name\":\"Bad\",\"level\":1,\"displayOrder\":1}"))
+                        .content("{\"code\":\" BAD?CODE \",\"name\":\"Bad\",\"level\":1,\"displayOrder\":1}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/v1/admin/companies/{companyCode}/departments", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"code\":\"BAD#CODE\",\"name\":\"Bad\"}"))
+                        .content("{\"code\":\" BAD#CODE \",\"name\":\"Bad\"}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/v1/admin/companies/{companyCode}/users", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"code\":\"BAD CODE\",\"employeeNumber\":\"E-BAD\","
+                        .content("{\"code\":\" BAD CODE \",\"employeeNumber\":\"E-BAD\","
                                 + "\"name\":\"Bad\",\"loginEmail\":\"bad@" + suffix + ".safe.example\","
                                 + "\"phone\":\"010-0000-0000\",\"hiredAt\":\"2026-08-20\","
                                 + "\"workplace\":\"Seoul\",\"positionCode\":\"EMPLOYEE\"}"))
@@ -255,6 +255,43 @@ class AdminApiContractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", endsWith(
                         "/api/v1/admin/companies/" + code.toUpperCase())));
+    }
+
+    @Test
+    void surrounding_whitespace_is_trimmed_before_code_validation_and_location_creation() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 6);
+        String rawCode = " c-" + suffix + "_1 ";
+        String canonicalCode = rawCode.trim().toUpperCase();
+
+        mvc.perform(post("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"" + rawCode + "\",\"name\":\"Trimmed\","
+                                + "\"emailDomain\":\"" + suffix + ".trim.example\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value(canonicalCode))
+                .andExpect(header().string("Location", endsWith(
+                        "/api/v1/admin/companies/" + canonicalCode)));
+        assertThat(companyRepository.findByCode(canonicalCode)).isPresent();
+
+        String maximumCode = "A".repeat(50);
+        mvc.perform(post("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\" " + maximumCode + " \",\"name\":\"Maximum\","
+                                + "\"emailDomain\":\"" + suffix + ".maximum.example\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value(maximumCode));
+
+        String tooLongCode = "B".repeat(51);
+        mvc.perform(post("/api/v1/admin/companies")
+                        .header(AUTHORIZATION, "Bearer " + systemToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"code\":\" " + tooLongCode + " \",\"name\":\"Too Long\","
+                                + "\"emailDomain\":\"" + suffix + ".too-long.example\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        assertThat(companyRepository.findByCode(tooLongCode)).isEmpty();
     }
 
     @Test

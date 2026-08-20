@@ -247,7 +247,7 @@ class AdminResourceContractIntegrationTest {
     @Test
     void unsafe_code_is_rejected_by_the_application_service_too() {
         assertThatThrownBy(() -> companyService.create(systemActor,
-                new CreateCompanyCommand("BAD/CODE", "Bad", UUID.randomUUID() + ".example")))
+                new CreateCompanyCommand(" BAD/CODE ", "Bad", UUID.randomUUID() + ".example")))
                 .isInstanceOfSatisfying(ApiException.class,
                         failure -> assertThat(failure.errorCode()).isEqualTo(ErrorCode.VALIDATION_FAILED));
         assertThat(companyRepository.findByCode("BAD/CODE")).isEmpty();
@@ -258,11 +258,11 @@ class AdminResourceContractIntegrationTest {
         companyService.create(systemActor, new CreateCompanyCommand(companyCode, "Valid", domain));
 
         assertValidationFailure(() -> positionService.create(systemActor, companyCode,
-                new CreatePositionCommand("BAD?CODE", "Bad", 1, 1)));
+                new CreatePositionCommand(" BAD?CODE ", "Bad", 1, 1)));
         assertValidationFailure(() -> departmentService.create(systemActor,
-                new CreateDepartmentCommand(companyCode, "BAD#CODE", "Bad", null)));
+                new CreateDepartmentCommand(companyCode, " BAD#CODE ", "Bad", null)));
         assertValidationFailure(() -> userService.create(systemActor,
-                new CreateUserCommand(companyCode, " BAD", "E-BAD", "Bad", "bad@" + domain,
+                new CreateUserCommand(companyCode, " BAD CODE ", "E-BAD", "Bad", "bad@" + domain,
                         "010-0000-0000", LocalDate.of(2026, 8, 20), "Seoul", null, "EMPLOYEE")));
     }
 

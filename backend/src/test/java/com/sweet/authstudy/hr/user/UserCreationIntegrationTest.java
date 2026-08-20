@@ -89,8 +89,8 @@ class UserCreationIntegrationTest {
     @Test
     void normalizes_user_identity_and_login_email() {
         CreatedUserView result = userService.create(SYSTEM_ADMIN, new CreateUserCommand(
-                "acme", "u001", " E-1001 ", " Kim ", " KIM@ACME.EXAMPLE ",
-                " 010-0000-0000 ", LocalDate.parse("2026-08-20"), " Seoul ", null, "employee"));
+                " acme ", " u001 ", " E-1001 ", " Kim ", " KIM@ACME.EXAMPLE ",
+                " 010-0000-0000 ", LocalDate.parse("2026-08-20"), " Seoul ", null, " employee "));
 
         assertThat(result.user().code()).isEqualTo("U001");
         assertThat(result.user().employeeNumber()).isEqualTo("E-1001");
@@ -126,7 +126,7 @@ class UserCreationIntegrationTest {
         userService.create(SYSTEM_ADMIN, command("U001", "E-1001", "kim@acme.example", "EMPLOYEE"));
 
         assertFailure(
-                command("u001", "E-1002", "lee@acme.example", "EMPLOYEE"),
+                command(" u001 ", "E-1002", "lee@acme.example", "EMPLOYEE"),
                 ErrorCode.DUPLICATE_CODE);
     }
 

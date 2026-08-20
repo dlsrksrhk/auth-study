@@ -12,10 +12,18 @@ public final class BusinessCode {
 
     private BusinessCode() {}
 
+    public static boolean isValid(String value) {
+        if (value == null) {
+            return false;
+        }
+        String trimmed = value.trim();
+        return !trimmed.isEmpty() && trimmed.length() <= 50 && PATTERN.matcher(trimmed).matches();
+    }
+
     public static String normalize(String value) {
-        if (value == null || value.length() > 50 || !PATTERN.matcher(value).matches()) {
+        if (!isValid(value)) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "Business code is invalid.");
         }
-        return value.toUpperCase(Locale.ROOT);
+        return value.trim().toUpperCase(Locale.ROOT);
     }
 }
