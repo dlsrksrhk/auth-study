@@ -11,7 +11,8 @@ public enum ErrorCode {
     DUPLICATE_EMAIL(HttpStatus.CONFLICT),
     DUPLICATE_EMPLOYEE_NUMBER(HttpStatus.CONFLICT),
     OPTIMISTIC_LOCK_CONFLICT(HttpStatus.CONFLICT),
-    INVALID_STATE(HttpStatus.CONFLICT);
+    INVALID_STATE(HttpStatus.CONFLICT),
+    INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR);
 
     private final HttpStatus status;
 
