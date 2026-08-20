@@ -154,9 +154,11 @@ class HrAdminAcceptanceTest {
         assertThat(unsafeCreateJson).contains("\"name\":" + encodedUnsafeName);
         assertThat(createdUser.path("user").path("name").asText()).isEqualTo(unsafeName);
         assertThat(fieldNames(createdUser.path("user"))).containsExactlyInAnyOrder(
-                "id", "companyId", "code", "employeeNumber", "name", "loginEmail", "phone",
+                "id", "companyId", "code", "employeeNumber", "name", "loginEmail", "roles", "phone",
                 "hiredAt", "workplace", "profileImageUrl", "positionId", "status", "version",
                 "createdAt", "updatedAt");
+        assertThat(createdUser.path("user").path("roles").size()).isEqualTo(1);
+        assertThat(createdUser.path("user").path("roles").get(0).asText()).isEqualTo("USER");
         assertThat(createdUser.path("user").path("status").asText()).isEqualTo("PENDING");
         String userTemporaryPassword = createdUser.path("temporaryPassword").asText();
         long userVersion = createdUser.path("user").path("version").asLong();

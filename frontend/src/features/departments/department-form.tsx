@@ -11,7 +11,7 @@ import { isApiProblemError } from "@/lib/api/problem";
 import { departmentApi, type Department, type DepartmentStatus } from "./department-api";
 
 type Mode = "create" | "edit" | "move";
-type Props = { companyCode: string; departments: Department[]; department?: Department; mode: Mode; open: boolean; onOpenChange(open: boolean): void; onSaved(): void };
+type Props = { companyCode: string; departments: Department[]; department?: Department; mode: Mode; open: boolean; onOpenChange(open: boolean): void; onSaved(): void; onConflict?(traceId: string): void };
 
 function descendantsOf(departments: Department[], id: number): Set<number> {
   const result = new Set<number>([id]);
@@ -23,7 +23,7 @@ function descendantsOf(departments: Department[], id: number): Set<number> {
   return result;
 }
 
-export function DepartmentForm({ companyCode, departments, department, mode, open, onOpenChange, onSaved }: Props) {
+export function DepartmentForm({ companyCode, departments, department, mode, open, onOpenChange, onSaved, onConflict }: Props) {
   const [code, setCode] = useState(department?.code ?? "");
   const [name, setName] = useState(department?.name ?? "");
   const [parentCode, setParentCode] = useState(department ? departments.find((item) => item.id === department.parentDepartmentId)?.code ?? "" : "");
@@ -53,8 +53,9 @@ export function DepartmentForm({ companyCode, departments, department, mode, ope
       onSaved();
     } catch (cause) {
       if (isApiProblemError(cause)) {
-        const conflict = cause.status === 409;
-        setError(conflict && cause.code === "OPTIMISTIC_LOCK_CONFLICT" ? "다른 관리자가 수정했습니다. 최신 정보를 다시 불러와 주세요." : cause.detail ?? cause.title);
+        const conflict = cause.status === 409 && cause.code === "OPTIMISTIC_LOCK_CONFLICT";
+        if (conflict && onConflict) { onOpenChange(false); onConflict(cause.traceId); return; }
+        setError(conflict ? "다른 관리자가 수정했습니다. 최신 정보를 다시 불러와 주세요." : cause.detail ?? cause.title);
         setTraceId(cause.traceId);
       } else setError(cause instanceof Error ? cause.message : "부서 요청을 처리하지 못했습니다.");
     } finally { setPending(false); setConfirmInactive(false); }

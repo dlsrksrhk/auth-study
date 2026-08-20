@@ -156,6 +156,7 @@ class AdminResourceContractIntegrationTest {
         mvc.perform(get("/api/v1/admin/companies/{companyCode}/users/U001", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.code").value("U001"))
+                .andExpect(jsonPath("$.roles[0]").value("USER"))
                 .andExpect(jsonPath("$.temporaryPassword").doesNotExist());
         String updatedUser = mvc.perform(put("/api/v1/admin/companies/{companyCode}/users/U001", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken).contentType(APPLICATION_JSON)
@@ -229,9 +230,17 @@ class AdminResourceContractIntegrationTest {
         mvc.perform(put("/api/v1/admin/companies/{companyCode}/users/U001/admin-role", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isNoContent());
         assertThat(accountRepository.findById(accountId).orElseThrow().roles()).contains(AccountRole.COMPANY_ADMIN);
+        mvc.perform(get("/api/v1/admin/companies/{companyCode}/users/U001", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roles", org.hamcrest.Matchers.hasItems("USER", "COMPANY_ADMIN")));
         mvc.perform(delete("/api/v1/admin/companies/{companyCode}/users/U001/admin-role", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isNoContent());
         assertThat(accountRepository.findById(accountId).orElseThrow().roles()).doesNotContain(AccountRole.COMPANY_ADMIN);
+        mvc.perform(get("/api/v1/admin/companies/{companyCode}/users/U001", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.roles[0]").value("USER"))
+                .andExpect(jsonPath("$.roles.length()").value(1));
     }
 
     @Test

@@ -123,7 +123,7 @@ public class UserService {
                 clock.instant()));
 
         String temporaryPassword = passwordGenerator.generateTemporaryPassword();
-        accountRepository.save(Account.createCompanyAccount(
+        Account savedAccount = accountRepository.save(Account.createCompanyAccount(
                 company.id(),
                 savedUser.id(),
                 loginEmail,
@@ -132,7 +132,7 @@ public class UserService {
         auditService.record(actor, AuditActions.USER_CREATE, "USER", savedUser.id(), company.id(),
                 Map.of("code", savedUser.code(), "status", savedUser.status().name(),
                         "positionCode", position.code()));
-        return new CreatedUserView(UserViews.UserView.from(savedUser, loginEmail), temporaryPassword);
+        return new CreatedUserView(UserViews.UserView.from(savedUser, savedAccount), temporaryPassword);
     }
 
     public UserView changeStatus(
@@ -164,7 +164,7 @@ public class UserService {
             auditService.record(actor, AuditActions.USER_STATUS_CHANGE, "USER", saved.id(), company.id(),
                     Map.of("code", saved.code(), "status", saved.status().name(),
                             "previousStatus", previousStatus.name()));
-            return UserView.from(saved, targetAccount.loginEmail());
+            return UserView.from(saved, targetAccount);
         });
     }
 
@@ -197,7 +197,7 @@ public class UserService {
             HrUser saved = userRepository.save(user);
             auditService.record(actor, AuditActions.USER_UPDATE, "USER", saved.id(), company.id(),
                     Map.of("code", saved.code(), "positionCode", position.code()));
-            return UserView.from(saved, targetAccount.loginEmail());
+            return UserView.from(saved, targetAccount);
         });
     }
 
@@ -208,7 +208,7 @@ public class UserService {
         HrUser user = findUser(company.id(), userCode);
         Account account = accountRepository.findByUserId(user.id())
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
-        return UserView.from(user, account.loginEmail());
+        return UserView.from(user, account);
     }
 
     @Transactional(readOnly = true)
@@ -223,8 +223,7 @@ public class UserService {
         var content = result.content().stream().map(user -> UserView.from(user,
                 java.util.Optional.ofNullable(accounts.get(user.id()))
                         .orElseThrow(() -> new ApiException(
-                                ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."))
-                        .loginEmail())).toList();
+                                ErrorCode.RESOURCE_NOT_FOUND, "User account was not found.")))).toList();
         return new UserPage(content, result.totalElements(), result.totalPages());
     }
 

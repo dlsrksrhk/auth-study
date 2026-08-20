@@ -11,11 +11,11 @@ import type { Position } from "@/features/positions/position-api";
 import { isApiProblemError } from "@/lib/api/problem";
 import { userApi, type User } from "./user-api";
 
-type Props = { companyCode: string; user?: User; positions: Position[]; open: boolean; onOpenChange(open: boolean): void; onRefresh(): void };
+type Props = { companyCode: string; user?: User; positions: Position[]; open: boolean; onOpenChange(open: boolean): void; onRefresh(): void; onConflict?(traceId: string): void };
 type Draft = { code: string; employeeNumber: string; name: string; loginEmail: string; phone: string; hiredAt: string; workplace: string; profileImageUrl: string; positionCode: string };
 const blank: Draft = { code: "", employeeNumber: "", name: "", loginEmail: "", phone: "", hiredAt: "", workplace: "", profileImageUrl: "", positionCode: "" };
 
-export function UserForm({ companyCode, user, positions, open, onOpenChange, onRefresh }: Props) {
+export function UserForm({ companyCode, user, positions, open, onOpenChange, onRefresh, onConflict }: Props) {
   const currentPosition = positions.find((position) => position.id === user?.positionId);
   const initial = user ? { code: user.code, employeeNumber: user.employeeNumber, name: user.name, loginEmail: user.loginEmail, phone: user.phone, hiredAt: user.hiredAt, workplace: user.workplace, profileImageUrl: user.profileImageUrl ?? "", positionCode: currentPosition?.code ?? "" } : blank;
   const [draft, setDraft] = useState<Draft>(initial);
@@ -25,29 +25,38 @@ export function UserForm({ companyCode, user, positions, open, onOpenChange, onR
   const [temporaryPassword, setTemporaryPassword] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const firstRef = useRef<HTMLInputElement>(null);
+  const mutation = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!open) return;
     requestAnimationFrame(() => firstRef.current?.focus());
   }, [open]);
+  useEffect(() => () => mutation.current?.abort(), []);
 
   function field<K extends keyof Draft>(key: K, value: Draft[K]) { setDraft((old) => ({ ...old, [key]: value })); }
   async function submit(event: React.FormEvent) {
-    event.preventDefault(); setPending(true); setError(null); setTraceId(null);
+    event.preventDefault(); mutation.current?.abort(); const controller = new AbortController(); mutation.current = controller; setPending(true); setError(null); setTraceId(null);
     try {
       if (user) {
-        await userApi.update(companyCode, user.code, { name: draft.name, phone: draft.phone, hiredAt: draft.hiredAt, workplace: draft.workplace, profileImageUrl: draft.profileImageUrl, positionCode: draft.positionCode, version: user.version });
+        await userApi.update(companyCode, user.code, { name: draft.name, phone: draft.phone, hiredAt: draft.hiredAt, workplace: draft.workplace, profileImageUrl: draft.profileImageUrl, positionCode: draft.positionCode, version: user.version }, controller.signal);
+        if (controller.signal.aborted) return;
         onOpenChange(false); onRefresh();
       } else {
-        const created = await userApi.create(companyCode, draft);
+        const created = await userApi.create(companyCode, draft, controller.signal);
+        if (controller.signal.aborted) return;
         setTemporaryPassword(created.temporaryPassword);
         setDraft(blank);
-        onOpenChange(false); onRefresh();
+        onRefresh();
       }
     } catch (cause) {
-      if (isApiProblemError(cause)) { setError(cause.status === 409 && cause.code === "OPTIMISTIC_LOCK_CONFLICT" ? "다른 관리자가 수정했습니다. 최신 정보를 다시 불러와 주세요." : cause.detail ?? cause.title); setTraceId(cause.traceId); }
+      if (controller.signal.aborted) return;
+      if (isApiProblemError(cause)) {
+        const conflict = cause.status === 409 && cause.code === "OPTIMISTIC_LOCK_CONFLICT";
+        if (conflict && onConflict) { onOpenChange(false); onConflict(cause.traceId); return; }
+        setError(conflict ? "다른 관리자가 수정했습니다. 최신 정보를 다시 불러와 주세요." : cause.detail ?? cause.title); setTraceId(cause.traceId);
+      }
       else setError(cause instanceof Error ? cause.message : "사용자 요청을 처리하지 못했습니다.");
-    } finally { setPending(false); }
+    } finally { if (mutation.current === controller && !controller.signal.aborted) setPending(false); }
   }
   async function copy() {
     try { await navigator.clipboard.writeText(temporaryPassword); setCopyMessage("임시 비밀번호를 복사했습니다."); }

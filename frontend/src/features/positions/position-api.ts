@@ -55,4 +55,10 @@ export const positionApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...input, name: input.name.trim() }),
     }),
+  listAll: async (companyCode: string, active?: boolean, signal?: AbortSignal) => {
+    const first = await apiClient.request<PageResponse<Position>>(collectionPath(companyCode, { page: 0, size: 100, sort: "displayOrder", active }), { signal });
+    const rest = await Promise.all(Array.from({ length: Math.max(0, first.totalPages - 1) }, (_, index) =>
+      apiClient.request<PageResponse<Position>>(collectionPath(companyCode, { page: index + 1, size: 100, sort: "displayOrder", active }), { signal })));
+    return [first, ...rest].flatMap((page) => page.content);
+  },
 };

@@ -30,8 +30,10 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
   const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState(false);
   const [confirmStatus, setConfirmStatus] = useState<UserStatus | null>(null);
+  const [confirmAccountAction, setConfirmAccountAction] = useState<"reset" | "grant" | "revoke" | null>(null);
   const [temporaryPassword, setTemporaryPassword] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [notice, setNotice] = useState("");
   const requestId = useRef(0);
   let canonicalCompany = "", canonicalUser = "";
   try { canonicalCompany = decodeURIComponent(resourceCode(companyCode, "회사 코드")); canonicalUser = decodeURIComponent(resourceCode(userCode, "사용자 코드")); } catch { /* rendered below */ }
@@ -42,12 +44,12 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
     queueMicrotask(() => { if (id === requestId.current) { setLoading(true); setError(null); setTraceId(null); } });
     Promise.all([
       userApi.find(canonicalCompany, canonicalUser, controller.signal),
-      positionApi.list(canonicalCompany, { page: 0, size: 100, sort: "displayOrder" }, controller.signal),
+      positionApi.listAll(canonicalCompany, undefined, controller.signal),
       departmentApi.listAll(canonicalCompany, controller.signal),
-      userApi.memberships(canonicalCompany, canonicalUser, controller.signal),
+      userApi.membershipsAll(canonicalCompany, canonicalUser, controller.signal),
     ]).then(([nextUser, nextPositions, nextDepartments, nextMemberships]) => {
       if (id !== requestId.current) return;
-      setUser(nextUser); setPositions(nextPositions.content); setDepartments(nextDepartments); setMemberships(nextMemberships.content);
+      setUser(nextUser); setPositions(nextPositions); setDepartments(nextDepartments); setMemberships(nextMemberships);
     }).catch((cause) => {
       if (id !== requestId.current || (cause instanceof DOMException && cause.name === "AbortError")) return;
       if (isApiProblemError(cause)) { setError(cause.detail ?? cause.title); setTraceId(cause.traceId); } else setError(cause instanceof Error ? cause.message : "사용자 상세를 불러오지 못했습니다.");
@@ -61,12 +63,12 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
   }
   async function roleAction(action: "grant" | "revoke") {
     setPending(true); setError(null); setTraceId(null);
-    try { if (action === "grant") await userApi.grantAdmin(canonicalCompany, canonicalUser); else await userApi.revokeAdmin(canonicalCompany, canonicalUser); setReload((value) => value + 1); }
+    try { if (action === "grant") await userApi.grantAdmin(canonicalCompany, canonicalUser); else await userApi.revokeAdmin(canonicalCompany, canonicalUser); setConfirmAccountAction(null); setNotice(action === "grant" ? "회사 관리자 권한을 지정했습니다." : "회사 관리자 권한을 회수했습니다."); setReload((value) => value + 1); }
     catch (cause) { showMutationError(cause); } finally { setPending(false); }
   }
   async function resetPassword() {
     setPending(true); setError(null); setTraceId(null);
-    try { const result = await userApi.resetPassword(canonicalCompany, canonicalUser); setTemporaryPassword(result.temporaryPassword); }
+    try { const result = await userApi.resetPassword(canonicalCompany, canonicalUser); setConfirmAccountAction(null); setTemporaryPassword(result.temporaryPassword); }
     catch (cause) { showMutationError(cause); } finally { setPending(false); }
   }
   async function changeStatus() {
@@ -82,8 +84,11 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
   if (!user) return <div className="rounded-xl border bg-white p-8"><p aria-live="assertive" className="text-red-700">{error ?? "사용자를 찾을 수 없습니다."} {traceId ? `(추적 ID: ${traceId})` : ""}</p><Button className="mt-3" variant="outline" onClick={() => setReload((value) => value + 1)}>다시 시도</Button></div>;
   const position = positions.find((item) => item.id === user.positionId);
   const systemAdmin = actorRoles.includes("SYSTEM_ADMIN");
+  const targetCompanyAdmin = user.roles.includes("COMPANY_ADMIN");
+  const mayResetPassword = systemAdmin || !targetCompanyAdmin;
   return <section aria-labelledby="user-detail-title" className="mx-auto max-w-7xl">
-    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="font-mono text-xs font-semibold text-teal-700">{canonicalCompany} / {canonicalUser}</p><h1 className="mt-2 text-3xl font-semibold" id="user-detail-title">{user.name}</h1><p className="mt-2 text-sm text-slate-600">프로필, 계정, 상태와 복수 소속을 관리합니다.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditing(true)}>프로필 수정</Button><Button disabled={pending} variant="outline" onClick={() => void resetPassword()}>임시 비밀번호 재발급</Button>{systemAdmin ? <><Button disabled={pending} onClick={() => void roleAction("grant")}>회사 관리자 지정</Button><Button disabled={pending} variant="outline" onClick={() => void roleAction("revoke")}>회사 관리자 회수</Button></> : null}</div></div>
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="font-mono text-xs font-semibold text-teal-700">{canonicalCompany} / {canonicalUser}</p><h1 className="mt-2 text-3xl font-semibold" id="user-detail-title">{user.name}</h1><p className="mt-2 text-sm text-slate-600">프로필, 계정, 상태와 복수 소속을 관리합니다.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditing(true)}>프로필 수정</Button>{mayResetPassword ? <Button disabled={pending} variant="outline" onClick={() => setConfirmAccountAction("reset")}>임시 비밀번호 재발급</Button> : null}{systemAdmin ? targetCompanyAdmin ? <Button disabled={pending} variant="outline" onClick={() => setConfirmAccountAction("revoke")}>회사 관리자 회수</Button> : <Button disabled={pending} onClick={() => setConfirmAccountAction("grant")}>회사 관리자 지정</Button> : null}</div></div>
+    {notice ? <p aria-live="polite" className="mt-4 text-sm text-teal-700">{notice}</p> : null}
     {error ? <Alert className="mt-5" aria-live="assertive" variant="destructive"><AlertTitle>{error}</AlertTitle><AlertDescription>{traceId ? `추적 ID: ${traceId}` : null}</AlertDescription></Alert> : null}
     <div className="mt-6 grid gap-4 lg:grid-cols-2">
       <Card title="프로필"><Details values={[["이름", user.name], ["사번", user.employeeNumber], ["전화번호", user.phone], ["입사일", user.hiredAt], ["근무지", user.workplace], ["프로필 이미지 URL", user.profileImageUrl || "없음"]]} /></Card>
@@ -92,8 +97,9 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
       <Card title="계정"><Details values={[["로그인 이메일", user.loginEmail], ["사용자 코드", user.code]]} /></Card>
       <div className="rounded-xl border bg-white p-5 shadow-sm lg:col-span-2"><h2 className="mb-4 text-lg font-semibold">부서 소속</h2><MembershipEditor companyCode={canonicalCompany} departments={departments} memberships={memberships} onRefresh={() => setReload((value) => value + 1)} positionActive={Boolean(position?.active)} user={user} /></div>
     </div>
-    {editing ? <UserForm companyCode={canonicalCompany} onOpenChange={setEditing} onRefresh={() => setReload((value) => value + 1)} open positions={positions} user={user} /> : null}
+    {editing ? <UserForm companyCode={canonicalCompany} onConflict={(latestTraceId) => { setNotice("다른 관리자가 수정했습니다. 최신 사용자 정보를 다시 불러왔습니다."); setTraceId(latestTraceId); setReload((value) => value + 1); }} onOpenChange={setEditing} onRefresh={() => setReload((value) => value + 1)} open positions={positions} user={user} /> : null}
     <Dialog open={Boolean(confirmStatus)} onOpenChange={(next) => !pending && !next && setConfirmStatus(null)}><DialogContent showCloseButton={!pending}><DialogHeader><DialogTitle>사용자 상태를 {confirmStatus === "LOCKED" ? "잠금" : "퇴사"}으로 변경할까요?</DialogTitle><DialogDescription>로그인과 활성 Refresh Token에 즉시 영향을 줍니다. 서버가 현재 버전을 다시 확인합니다.</DialogDescription></DialogHeader><DialogFooter><Button disabled={pending} variant="outline" onClick={() => setConfirmStatus(null)}>취소</Button><Button disabled={pending} variant="destructive" onClick={() => void changeStatus()}>{pending ? "처리 중" : "상태 변경"}</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={Boolean(confirmAccountAction)} onOpenChange={(next) => !pending && !next && setConfirmAccountAction(null)}><DialogContent showCloseButton={!pending}><DialogHeader><DialogTitle>{confirmAccountAction === "reset" ? "임시 비밀번호를 재발급할까요?" : `회사 관리자 권한을 ${confirmAccountAction === "grant" ? "지정" : "회수"}할까요?`}</DialogTitle><DialogDescription>완료하면 해당 계정의 현재 로그인 세션의 Refresh Token이 폐기됩니다.</DialogDescription></DialogHeader><DialogFooter><Button disabled={pending} variant="outline" onClick={() => setConfirmAccountAction(null)}>취소</Button><Button disabled={pending} onClick={() => confirmAccountAction === "reset" ? void resetPassword() : void roleAction(confirmAccountAction!)}>{pending ? "처리 중" : confirmAccountAction === "reset" ? "재발급 확인" : "권한 변경 확인"}</Button></DialogFooter></DialogContent></Dialog>
     <Dialog open={Boolean(temporaryPassword)} onOpenChange={(next) => { if (!next) clearSecret(); }}><DialogContent showCloseButton={false}><DialogHeader><DialogTitle>일회성 임시 비밀번호</DialogTitle><DialogDescription>닫는 즉시 메모리에서 지워지며 다시 열 수 없습니다.</DialogDescription></DialogHeader><code className="select-all rounded bg-slate-950 p-3 text-center text-white">{temporaryPassword}</code><p aria-live="polite">{copyMessage}</p><DialogFooter><Button variant="outline" onClick={() => void copySecret()}>복사</Button><Button onClick={clearSecret}>비밀번호 확인 완료</Button></DialogFooter></DialogContent></Dialog>
   </section>;
 }
