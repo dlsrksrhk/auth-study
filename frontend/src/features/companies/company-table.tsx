@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -15,8 +15,22 @@ import { positionApi, type Position } from "@/features/positions/position-api";
 import { CompanyForm } from "./company-form";
 import { companyApi, type Company, type CompanyListParams, type CompanyStatus, type PageResponse } from "./company-api";
 import { isApiProblemError } from "@/lib/api/problem";
+import { parseListQuery } from "@/lib/pagination-query";
 
 const initialPage: PageResponse<Company> = { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 };
+const defaultPositionCodes = [
+  "ASSISTANT_MANAGER",
+  "DEPUTY_GENERAL_MANAGER",
+  "EMPLOYEE",
+  "GENERAL_MANAGER",
+  "MANAGER",
+] as const;
+
+type DefaultPositionCheck =
+  | { status: "loading"; company: Company }
+  | { status: "success"; company: Company; positions: Position[] }
+  | { status: "warning"; company: Company }
+  | null;
 
 export function CompanyTable() {
   const router = useRouter();
@@ -24,11 +38,14 @@ export function CompanyTable() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryString = searchParams.toString();
-  const page = Math.max(0, Number(searchParams.get("page") ?? 0) || 0);
-  const size = Math.min(100, Math.max(1, Number(searchParams.get("size") ?? 20) || 20));
-  const sort = (["code", "name", "status"].includes(searchParams.get("sort") ?? "") ? searchParams.get("sort") : "code") as CompanyListParams["sort"];
-  const status = (searchParams.get("status") || undefined) as CompanyStatus | undefined;
-  const querySearch = searchParams.get("search") ?? "";
+  const parsedQuery = useMemo(() => parseListQuery<CompanyListParams["sort"], CompanyStatus>(new URLSearchParams(queryString), {
+    defaultSort: "code",
+    sorts: ["code", "name", "status"],
+    enumKey: "status",
+    enumValues: ["ACTIVE", "INACTIVE"],
+  }), [queryString]);
+  const { page, size, sort, search: querySearch } = parsedQuery;
+  const status = parsedQuery.enumValue;
   const [searchDraft, setSearchDraft] = useState({ source: querySearch, value: querySearch });
   const search = searchDraft.source === querySearch ? searchDraft.value : querySearch;
   const [result, setResult] = useState(initialPage);
@@ -36,17 +53,23 @@ export function CompanyTable() {
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [editing, setEditing] = useState<Company | null | undefined>(undefined);
-  const [createdPositions, setCreatedPositions] = useState<{ company: Company; positions: Position[] } | null>(null);
+  const [defaultPositionCheck, setDefaultPositionCheck] = useState<DefaultPositionCheck>(null);
   const requestId = useRef(0);
 
   const replaceQuery = useCallback((changes: Record<string, string | null>) => {
-    const next = new URLSearchParams(queryString);
+    const next = new URLSearchParams(parsedQuery.canonical);
     Object.entries(changes).forEach(([key, value]) => {
       if (!value || (key === "page" && value === "0") || (key === "size" && value === "20") || (key === "sort" && value === "code")) next.delete(key);
       else next.set(key, value);
     });
     replace(`${pathname}${next.size ? `?${next}` : ""}`, { scroll: false });
-  }, [pathname, queryString, replace]);
+  }, [parsedQuery.canonical, pathname, replace]);
+
+  useEffect(() => {
+    if (!parsedQuery.needsReplace) return;
+    const canonical = parsedQuery.canonical.toString();
+    replace(`${pathname}${canonical ? `?${canonical}` : ""}`, { scroll: false });
+  }, [parsedQuery.canonical, parsedQuery.needsReplace, pathname, replace]);
 
   useEffect(() => {
     if (search === querySearch) return;
@@ -55,6 +78,7 @@ export function CompanyTable() {
   }, [querySearch, replaceQuery, search]);
 
   useEffect(() => {
+    if (parsedQuery.needsReplace) return;
     const id = ++requestId.current;
     const controller = new AbortController();
     queueMicrotask(() => {
@@ -77,13 +101,24 @@ export function CompanyTable() {
         if (id === requestId.current) setLoading(false);
       });
     return () => controller.abort();
-  }, [page, querySearch, reload, replaceQuery, size, sort, status]);
+  }, [page, parsedQuery.needsReplace, querySearch, reload, replaceQuery, size, sort, status]);
 
-  async function handleSaved(saved: Company) {
+  function handleSaved(saved: Company) {
     setReload((value) => value + 1);
     if (editing === null) {
-      const positions = await positionApi.list(saved.code, { page: 0, size: 20, sort: "displayOrder" });
-      setCreatedPositions({ company: saved, positions: positions.content });
+      window.dispatchEvent(new Event("auth-study:company-created"));
+      setDefaultPositionCheck({ status: "loading", company: saved });
+      void positionApi.list(saved.code, { page: 0, size: 20, sort: "displayOrder" })
+        .then((positions) => {
+          const actualCodes = positions.content.map((position) => position.code).sort();
+          const complete = positions.totalElements === 5
+            && actualCodes.length === 5
+            && actualCodes.every((code, index) => code === defaultPositionCodes[index]);
+          setDefaultPositionCheck(complete
+            ? { status: "success", company: saved, positions: positions.content }
+            : { status: "warning", company: saved });
+        })
+        .catch(() => setDefaultPositionCheck({ status: "warning", company: saved }));
     }
   }
 
@@ -98,12 +133,25 @@ export function CompanyTable() {
         <Button onClick={() => setEditing(null)}>회사 생성</Button>
       </div>
 
-      {createdPositions ? (
+      {defaultPositionCheck?.status === "loading" ? (
+        <Alert className="mt-6 border-slate-200 bg-white" aria-live="polite">
+          <AlertTitle>기본 직위를 확인하는 중입니다.</AlertTitle>
+          <AlertDescription>회사 생성은 완료되었습니다.</AlertDescription>
+        </Alert>
+      ) : defaultPositionCheck?.status === "success" ? (
         <Alert className="mt-6 border-teal-200 bg-teal-50" aria-live="polite">
           <AlertTitle>기본 직위 5개가 준비되었습니다.</AlertTitle>
           <AlertDescription>
-            <span className="mt-2 flex flex-wrap gap-2">{createdPositions.positions.map((position) => <Badge key={position.code} variant="secondary">{position.name}</Badge>)}</span>
-            <Button className="mt-3" render={<Link href={`/companies/${createdPositions.company.code}/positions`} />} size="sm" variant="outline">직위 관리</Button>
+            <span className="mt-2 flex flex-wrap gap-2">{defaultPositionCheck.positions.map((position) => <Badge key={position.code} variant="secondary">{position.name}</Badge>)}</span>
+            <Button className="mt-3" render={<Link href={`/companies/${defaultPositionCheck.company.code}/positions`} />} size="sm" variant="outline">직위 관리</Button>
+          </AlertDescription>
+        </Alert>
+      ) : defaultPositionCheck?.status === "warning" ? (
+        <Alert className="mt-6 border-amber-300 bg-amber-50" aria-live="polite">
+          <AlertTitle>회사는 생성되었지만 기본 직위 5개를 확인하지 못했습니다.</AlertTitle>
+          <AlertDescription>
+            회사 저장을 다시 실행할 필요는 없습니다. 직위 화면에서 현재 상태를 확인해 주세요.
+            <Button className="mt-3 block" render={<Link href={`/companies/${defaultPositionCheck.company.code}/positions`} />} size="sm" variant="outline">직위 관리</Button>
           </AlertDescription>
         </Alert>
       ) : null}

@@ -4,7 +4,7 @@ import { Suspense, useEffect } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { AdminHeader } from "@/components/layout/admin-header";
-import { resolveAdminRedirect } from "@/components/layout/admin-access";
+import { resolveAdminCompanyCode, resolveAdminRedirect } from "@/components/layout/admin-access";
 import { AdminSidebar } from "@/components/layout/admin-sidebar";
 import { CompanySwitcher } from "@/components/layout/company-switcher";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,7 +26,12 @@ function AdminLayoutContent({ children }: { children: React.ReactNode }) {
   const pathCompany = pathname.match(/^\/companies\/([^/]+)/)?.[1]?.toUpperCase() ?? null;
   const systemSelection = pathCompany ?? searchParams.get("companyCode")?.toUpperCase() ?? null;
   const actorCompany = auth.actor?.companyCode?.toUpperCase() ?? null;
-  const companyCode = auth.actor?.roles.includes("COMPANY_ADMIN") ? actorCompany : systemSelection;
+  const companyScope = resolveAdminCompanyCode({
+    roles: auth.actor?.roles ?? [],
+    actorCompanyCode: actorCompany,
+    urlCompanyCode: systemSelection,
+  });
+  const companyCode = companyScope.companyCode;
   const redirect = resolveAdminRedirect({
     status: auth.status,
     roles: auth.actor?.roles ?? [],
@@ -49,7 +54,7 @@ function AdminLayoutContent({ children }: { children: React.ReactNode }) {
         <AdminHeader
           companyControl={
             <CompanySwitcher
-              fixedCompanyCode={auth.actor.roles.includes("COMPANY_ADMIN") ? actorCompany : undefined}
+              fixedCompanyCode={companyScope.fixed ? actorCompany : undefined}
               pathname={pathname}
               selectedCompanyCode={companyCode}
             />

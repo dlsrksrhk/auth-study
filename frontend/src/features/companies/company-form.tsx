@@ -21,7 +21,7 @@ type Props = {
   company: Company | null;
   open: boolean;
   onOpenChange(open: boolean): void;
-  onSaved(company: Company): Promise<void> | void;
+  onSaved(company: Company): void;
 };
 
 type Fields = "code" | "name" | "emailDomain" | "status";
@@ -58,7 +58,7 @@ export function CompanyForm({ company, open, onOpenChange, onSaved }: Props) {
       const saved = company
         ? await companyApi.update(company.code, { name, status, version: company.version })
         : await companyApi.create({ code, name, emailDomain });
-      await onSaved(saved);
+      onSaved(saved);
       onOpenChange(false);
     } catch (cause) {
       if (isApiProblemError(cause)) {

@@ -158,4 +158,116 @@ describe("CompanyPage", () => {
     expect(screen.getByText(/trace-company-409/)).toBeVisible();
     await waitFor(() => expect(screen.getByLabelText("코드")).toHaveFocus());
   });
+
+  it.each([
+    ["page=Infinity", "", { page: "0", size: "20", sort: "code" }],
+    ["page=1e2", "", { page: "0", size: "20", sort: "code" }],
+    ["page=1.5", "", { page: "0", size: "20", sort: "code" }],
+    ["page=-1", "", { page: "0", size: "20", sort: "code" }],
+    ["page=2147483647&size=100", "size=100", { page: "0", size: "100", sort: "code" }],
+    ["size=101&sort=bogus&status=PAUSED", "", { page: "0", size: "20", sort: "code" }],
+  ] as const)("canonicalizes invalid query %s before issuing a request", async (invalidQuery, canonicalQuery, expectedRequest) => {
+    const captured: Record<string, string>[] = [];
+    currentQuery = invalidQuery;
+    server.use(
+      http.get("/api/v1/admin/companies", ({ request }) => {
+        captured.push(Object.fromEntries(new URL(request.url).searchParams));
+        return HttpResponse.json(emptyPage);
+      }),
+    );
+
+    const view = render(<CompanyPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/companies${canonicalQuery ? `?${canonicalQuery}` : ""}`, { scroll: false }));
+    expect(captured).toEqual([]);
+
+    currentQuery = canonicalQuery;
+    view.rerender(<CompanyPage />);
+    await waitFor(() => expect(captured).toEqual([expectedRequest]));
+  });
+
+  it("re-reads valid URL state during back and forward navigation", async () => {
+    const captured: Record<string, string>[] = [];
+    currentQuery = "page=2&size=50&sort=name&status=ACTIVE&search=acme";
+    server.use(
+      http.get("/api/v1/admin/companies", ({ request }) => {
+        captured.push(Object.fromEntries(new URL(request.url).searchParams));
+        return HttpResponse.json({ ...emptyPage, page: captured.length === 1 ? 2 : 1, size: 50 });
+      }),
+    );
+    const view = render(<CompanyPage />);
+    await waitFor(() => expect(captured).toHaveLength(1));
+    expect(screen.getByLabelText("회사 검색")).toHaveValue("acme");
+
+    currentQuery = "page=1&size=50&sort=name&status=INACTIVE&search=zen";
+    view.rerender(<CompanyPage />);
+    await waitFor(() => expect(captured).toHaveLength(2));
+    expect(captured[1]).toEqual({ page: "1", size: "50", sort: "name", status: "INACTIVE", search: "zen" });
+    expect(screen.getByLabelText("회사 검색")).toHaveValue("zen");
+  });
+
+  it.each([
+    ["zero positions", HttpResponse.json({ ...emptyPage, size: 20 })],
+    ["four positions", HttpResponse.json({ ...emptyPage, content: defaultPositions.slice(0, 4), totalElements: 4, totalPages: 1 })],
+    ["a verification failure", HttpResponse.json({
+      type: "about:blank", title: "Failed", status: 500, code: "INTERNAL", traceId: "trace-defaults", fieldErrors: [],
+    }, { status: 500 })],
+  ])("keeps a successful company create committed when default position verification returns %s", async (_label, positionsResponse) => {
+    let created = false;
+    server.use(
+      http.get("/api/v1/admin/companies", () => HttpResponse.json(created
+        ? { ...emptyPage, content: [company], totalElements: 1, totalPages: 1 }
+        : emptyPage)),
+      http.post("/api/v1/admin/companies", () => {
+        created = true;
+        return HttpResponse.json(company, { status: 201, headers: { Location: "/api/v1/admin/companies/ACME" } });
+      }),
+      http.get("/api/v1/admin/companies/ACME/positions", () => positionsResponse),
+    );
+
+    const user = userEvent.setup();
+    render(<CompanyPage />);
+    await screen.findByText("등록된 회사가 없습니다.");
+    await submitCompanyForm(user);
+
+    expect(await screen.findByRole("cell", { name: "ACME" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "회사 생성" })).not.toBeInTheDocument();
+    expect(await screen.findByText("회사는 생성되었지만 기본 직위 5개를 확인하지 못했습니다.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "저장" })).not.toBeInTheDocument();
+  });
+
+  it("closes the create form while default positions are still being verified", async () => {
+    let created = false;
+    let finishPositions!: () => void;
+    const positionsGate = new Promise<void>((resolve) => { finishPositions = resolve; });
+    server.use(
+      http.get("/api/v1/admin/companies", () => HttpResponse.json(created
+        ? { ...emptyPage, content: [company], totalElements: 1, totalPages: 1 }
+        : emptyPage)),
+      http.post("/api/v1/admin/companies", () => {
+        created = true;
+        return HttpResponse.json(company, { status: 201 });
+      }),
+      http.get("/api/v1/admin/companies/ACME/positions", async () => {
+        await positionsGate;
+        return HttpResponse.json({ ...emptyPage, content: defaultPositions, totalElements: 5, totalPages: 1 });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<CompanyPage />);
+    await screen.findByText("등록된 회사가 없습니다.");
+    await submitCompanyForm(user);
+
+    expect(await screen.findByText("기본 직위를 확인하는 중입니다.")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "회사 생성" })).not.toBeInTheDocument();
+    finishPositions();
+    expect(await screen.findByText("기본 직위 5개가 준비되었습니다.")).toBeVisible();
+  });
 });
+
+async function submitCompanyForm(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "회사 생성" }));
+  await user.type(screen.getByLabelText("코드"), "ACME");
+  await user.type(screen.getByLabelText("회사명"), "Acme");
+  await user.type(screen.getByLabelText("이메일 도메인"), "acme.example");
+  await user.click(screen.getByRole("button", { name: "저장" }));
+}

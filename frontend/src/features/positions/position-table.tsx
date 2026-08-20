@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { PageResponse } from "@/features/companies/company-api";
 import { isApiProblemError } from "@/lib/api/problem";
+import { parseListQuery } from "@/lib/pagination-query";
 import { PositionForm } from "./position-form";
 import { positionApi, type Position, type PositionListParams } from "./position-api";
 
@@ -23,11 +24,14 @@ export function PositionTable({ companyCode }: { companyCode: string }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryString = searchParams.toString();
-  const page = Math.max(0, Number(searchParams.get("page") ?? 0) || 0);
-  const size = Math.min(100, Math.max(1, Number(searchParams.get("size") ?? 20) || 20));
-  const sort = (["code", "name", "level", "displayOrder"].includes(searchParams.get("sort") ?? "") ? searchParams.get("sort") : "displayOrder") as PositionListParams["sort"];
-  const querySearch = searchParams.get("search") ?? "";
-  const activeParam = searchParams.get("active");
+  const parsedQuery = useMemo(() => parseListQuery<PositionListParams["sort"], "true" | "false">(new URLSearchParams(queryString), {
+    defaultSort: "displayOrder",
+    sorts: ["code", "name", "level", "displayOrder"],
+    enumKey: "active",
+    enumValues: ["true", "false"],
+  }), [queryString]);
+  const { page, size, sort, search: querySearch } = parsedQuery;
+  const activeParam = parsedQuery.enumValue;
   const active = activeParam === "true" ? true : activeParam === "false" ? false : undefined;
   const [searchDraft, setSearchDraft] = useState({ source: querySearch, value: querySearch });
   const search = searchDraft.source === querySearch ? searchDraft.value : querySearch;
@@ -39,13 +43,19 @@ export function PositionTable({ companyCode }: { companyCode: string }) {
   const requestId = useRef(0);
 
   const replaceQuery = useCallback((changes: Record<string, string | null>) => {
-    const next = new URLSearchParams(queryString);
+    const next = new URLSearchParams(parsedQuery.canonical);
     Object.entries(changes).forEach(([key, value]) => {
       if (!value || (key === "page" && value === "0") || (key === "size" && value === "20") || (key === "sort" && value === "displayOrder")) next.delete(key);
       else next.set(key, value);
     });
     replace(`${pathname}${next.size ? `?${next}` : ""}`, { scroll: false });
-  }, [pathname, queryString, replace]);
+  }, [parsedQuery.canonical, pathname, replace]);
+
+  useEffect(() => {
+    if (!parsedQuery.needsReplace) return;
+    const canonical = parsedQuery.canonical.toString();
+    replace(`${pathname}${canonical ? `?${canonical}` : ""}`, { scroll: false });
+  }, [parsedQuery.canonical, parsedQuery.needsReplace, pathname, replace]);
 
   useEffect(() => {
     if (search === querySearch) return;
@@ -54,6 +64,7 @@ export function PositionTable({ companyCode }: { companyCode: string }) {
   }, [querySearch, replaceQuery, search]);
 
   useEffect(() => {
+    if (parsedQuery.needsReplace) return;
     const id = ++requestId.current;
     const controller = new AbortController();
     queueMicrotask(() => {
@@ -74,16 +85,10 @@ export function PositionTable({ companyCode }: { companyCode: string }) {
       })
       .finally(() => id === requestId.current && setLoading(false));
     return () => controller.abort();
-  }, [active, canonicalCode, page, querySearch, reload, replaceQuery, size, sort]);
+  }, [active, canonicalCode, page, parsedQuery.needsReplace, querySearch, reload, replaceQuery, size, sort]);
 
-  function handleSaved(saved: Position) {
-    setResult((current) => ({
-      ...current,
-      content: current.content.some((item) => item.code === saved.code)
-        ? current.content.map((item) => item.code === saved.code ? saved : item)
-        : [...current.content, saved],
-      totalElements: current.content.some((item) => item.code === saved.code) ? current.totalElements : current.totalElements + 1,
-    }));
+  function handleSaved() {
+    setReload((value) => value + 1);
   }
 
   return (
