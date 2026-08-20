@@ -35,10 +35,18 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
   const [notice, setNotice] = useState("");
   const requestId = useRef(0);
   const mounted = useRef(true);
+  const lifecycleEpoch = useRef(0);
   const secretOperations = useAdminSecretOperations();
   let canonicalCompany = "", canonicalUser = "";
   try { canonicalCompany = decodeURIComponent(resourceCode(companyCode, "회사 코드")); canonicalUser = decodeURIComponent(resourceCode(userCode, "사용자 코드")); } catch { /* rendered below */ }
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    const epoch = ++lifecycleEpoch.current;
+    return () => {
+      if (lifecycleEpoch.current === epoch) lifecycleEpoch.current += 1;
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!canonicalCompany || !canonicalUser) return;
@@ -69,8 +77,13 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
     catch (cause) { showMutationError(cause); } finally { setPending(false); }
   }
   async function resetPassword() {
-    const completed = await secretOperations.resetPassword(canonicalCompany, canonicalUser);
-    if (mounted.current && completed) setConfirmAccountAction(null);
+    const lifecycle = lifecycleEpoch.current;
+    const completed = await secretOperations.resetPassword(canonicalCompany, canonicalUser, user?.loginEmail);
+    if (mounted.current && lifecycleEpoch.current === lifecycle && completed) {
+      setConfirmAccountAction(null);
+      setNotice("임시 비밀번호를 재발급했습니다.");
+      setReload((value) => value + 1);
+    }
   }
   async function changeStatus() {
     if (!user || !confirmStatus) return; setPending(true); setError(null); setTraceId(null);
@@ -85,9 +98,10 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
   const systemAdmin = actorRoles.includes("SYSTEM_ADMIN");
   const targetCompanyAdmin = user.roles.includes("COMPANY_ADMIN");
   const mayResetPassword = systemAdmin || !targetCompanyAdmin;
-  const accountPending = pending || secretOperations.pending === "reset";
+  const secretOperationPending = Boolean(secretOperations.pending);
+  const accountPending = pending || secretOperationPending;
   return <section aria-labelledby="user-detail-title" className="mx-auto max-w-7xl">
-    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="font-mono text-xs font-semibold text-teal-700">{canonicalCompany} / {canonicalUser}</p><h1 className="mt-2 text-3xl font-semibold" id="user-detail-title">{user.name}</h1><p className="mt-2 text-sm text-slate-600">프로필, 계정, 상태와 복수 소속을 관리합니다.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditing(true)}>프로필 수정</Button>{mayResetPassword ? <Button disabled={pending} variant="outline" onClick={() => setConfirmAccountAction("reset")}>임시 비밀번호 재발급</Button> : null}{systemAdmin ? targetCompanyAdmin ? <Button disabled={pending} variant="outline" onClick={() => setConfirmAccountAction("revoke")}>회사 관리자 회수</Button> : <Button disabled={pending} onClick={() => setConfirmAccountAction("grant")}>회사 관리자 지정</Button> : null}</div></div>
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="font-mono text-xs font-semibold text-teal-700">{canonicalCompany} / {canonicalUser}</p><h1 className="mt-2 text-3xl font-semibold" id="user-detail-title">{user.name}</h1><p className="mt-2 text-sm text-slate-600">프로필, 계정, 상태와 복수 소속을 관리합니다.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditing(true)}>프로필 수정</Button>{mayResetPassword ? <Button disabled={pending || secretOperationPending} variant="outline" onClick={() => setConfirmAccountAction("reset")}>임시 비밀번호 재발급</Button> : null}{systemAdmin ? targetCompanyAdmin ? <Button disabled={pending} variant="outline" onClick={() => setConfirmAccountAction("revoke")}>회사 관리자 회수</Button> : <Button disabled={pending} onClick={() => setConfirmAccountAction("grant")}>회사 관리자 지정</Button> : null}</div></div>
     {notice ? <p aria-live="polite" className="mt-4 text-sm text-teal-700">{notice}</p> : null}
     {error ? <Alert className="mt-5" aria-live="assertive" variant="destructive"><AlertTitle>{error}</AlertTitle><AlertDescription>{traceId ? `추적 ID: ${traceId}` : null}</AlertDescription></Alert> : null}
     <div className="mt-6 grid gap-4 lg:grid-cols-2">

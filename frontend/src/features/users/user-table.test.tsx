@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { server } from "@/test/setup";
 import { UserTable } from "./user-table";
+import { UserDetail } from "./user-detail";
 import { AdminSecretOperationProvider } from "./admin-secret-operation-provider";
 
 const replace = vi.fn();
@@ -30,6 +31,17 @@ function listHandlers() {
 }
 
 function renderAdmin(ui: React.ReactNode) { return render(<AdminSecretOperationProvider>{ui}</AdminSecretOperationProvider>); }
+
+async function completeCreateForm(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText("사용자 코드"), "U001");
+  await user.type(screen.getByLabelText("사번"), "E001");
+  await user.type(screen.getByLabelText("이름"), "홍길동");
+  await user.type(screen.getByLabelText("로그인 이메일"), "u001@acme.test");
+  await user.type(screen.getByLabelText("전화번호"), "010");
+  await user.type(screen.getByLabelText("입사일"), "2026-08-20");
+  await user.type(screen.getByLabelText("근무지"), "서울");
+  await user.selectOptions(screen.getByLabelText("직위"), "EMPLOYEE");
+}
 
 it("keeps the create form mounted through the one-time password step then clears it before parent close", async () => {
   listHandlers();
@@ -123,6 +135,75 @@ it("does not mistake a later external query for an earlier trimmed self commit",
   expect(input).toHaveFocus();
 });
 
+it.each([
+  { label: "상태", value: "LOCKED", query: "search=a&status=LOCKED", expected: "/companies/ACME/users?search=ab&status=LOCKED" },
+  { label: "정렬", value: "name", query: "search=a&sort=name", expected: "/companies/ACME/users?search=ab&sort=name" },
+  { label: "페이지 크기", value: "50", query: "search=a&size=50", expected: "/companies/ACME/users?search=ab&size=50" },
+])("merges a pending search into the latest $label query without losing focus", async ({ label, value, query, expected }) => {
+  currentQuery = "search=a";
+  listHandlers();
+  const view = renderAdmin(<UserTable companyCode="ACME" />);
+  const input = await screen.findByLabelText("사용자 검색");
+  input.focus();
+  vi.useFakeTimers();
+  try {
+    fireEvent.change(input, { target: { value: "ab" } });
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    currentQuery = query;
+    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+    replace.mockClear();
+    expect(input).toHaveValue("ab");
+    expect(input).toHaveFocus();
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(replace).toHaveBeenCalledWith(expected, { scroll: false });
+    expect(input).toHaveValue("ab");
+    expect(input).toHaveFocus();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("merges a filter intent into a pending search even before the URL navigation resolves", async () => {
+  currentQuery = "search=a";
+  listHandlers();
+  renderAdmin(<UserTable companyCode="ACME" />);
+  const input = await screen.findByLabelText("사용자 검색");
+  vi.useFakeTimers();
+  try {
+    fireEvent.change(input, { target: { value: "ab" } });
+    fireEvent.change(screen.getByLabelText("상태"), { target: { value: "LOCKED" } });
+    replace.mockClear();
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab&status=LOCKED", { scroll: false });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("cancels a pending search when external navigation changes search", async () => {
+  currentQuery = "search=a";
+  listHandlers();
+  const view = renderAdmin(<UserTable companyCode="ACME" />);
+  const input = await screen.findByLabelText("사용자 검색");
+  input.focus();
+  vi.useFakeTimers();
+  try {
+    fireEvent.change(input, { target: { value: "ab" } });
+    currentQuery = "search=back";
+    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+    replace.mockClear();
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(input).toHaveValue("back");
+    expect(input).toHaveFocus();
+    expect(replace).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("keeps a delayed committed create alive when the user page route child unmounts", async () => {
   listHandlers();
   const user = userEvent.setup();
@@ -155,4 +236,75 @@ it("keeps a delayed committed create alive when the user page route child unmoun
   expect(requestSignal?.aborted).toBe(false);
   release?.();
   expect(await screen.findByText("MustNotSurface123!")).toBeVisible();
+});
+
+it("blocks reset while a create is pending across a route switch and preserves the create target", async () => {
+  listHandlers();
+  const user = userEvent.setup();
+  let releaseCreate: (() => void) | undefined;
+  let resetCalls = 0;
+  server.use(
+    http.post("/api/v1/admin/companies/ACME/users", async () => { await new Promise<void>((resolve) => { releaseCreate = resolve; }); return HttpResponse.json({ user: createdUser, temporaryPassword: "CreateWins123!" }, { status: 201 }); }),
+    http.get("/api/v1/admin/companies/ACME/users/U001", () => HttpResponse.json(createdUser)),
+    http.get("/api/v1/admin/companies/ACME/departments", () => HttpResponse.json({ content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 })),
+    http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({ content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 })),
+    http.post("/api/v1/admin/companies/ACME/users/U001/temporary-password", () => { resetCalls += 1; return HttpResponse.json({ temporaryPassword: "WrongReset123!" }); }),
+  );
+  function Routes() {
+    const [route, setRoute] = useState<"users" | "detail">("users");
+    return <AdminSecretOperationProvider><button onClick={() => setRoute(route === "users" ? "detail" : "users")}>관리 route 전환</button>{route === "users" ? <UserTable companyCode="ACME" /> : <UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />}</AdminSecretOperationProvider>;
+  }
+  render(<Routes />);
+  await screen.findByText("등록된 사용자가 없습니다.");
+  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+  await completeCreateForm(user);
+  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+  await waitFor(() => expect(releaseCreate).toBeDefined());
+  fireEvent.click(screen.getByText("관리 route 전환"));
+
+  const reset = await screen.findByRole("button", { name: "임시 비밀번호 재발급" });
+  expect(reset).toBeDisabled();
+  await user.click(reset);
+  expect(resetCalls).toBe(0);
+  expect(screen.getByRole("status")).toHaveTextContent("사용자 생성 작업을 처리 중입니다");
+  expect(screen.getByRole("status")).toHaveTextContent("ACME / U001");
+  releaseCreate?.();
+  expect(await screen.findByText("CreateWins123!")).toBeVisible();
+  expect(screen.getByRole("dialog")).toHaveTextContent("U001");
+  expect(screen.getByRole("dialog")).toHaveTextContent("u001@acme.test");
+});
+
+it("blocks create while a reset is pending across a route switch and preserves the reset target", async () => {
+  listHandlers();
+  const user = userEvent.setup();
+  let releaseReset: (() => void) | undefined;
+  let createCalls = 0;
+  server.use(
+    http.get("/api/v1/admin/companies/ACME/users/U001", () => HttpResponse.json(createdUser)),
+    http.get("/api/v1/admin/companies/ACME/departments", () => HttpResponse.json({ content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 })),
+    http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({ content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 })),
+    http.post("/api/v1/admin/companies/ACME/users/U001/temporary-password", async () => { await new Promise<void>((resolve) => { releaseReset = resolve; }); return HttpResponse.json({ temporaryPassword: "ResetWins123!" }); }),
+    http.post("/api/v1/admin/companies/ACME/users", () => { createCalls += 1; return HttpResponse.json({ user: createdUser, temporaryPassword: "WrongCreate123!" }, { status: 201 }); }),
+  );
+  function Routes() {
+    const [route, setRoute] = useState<"users" | "detail">("detail");
+    return <AdminSecretOperationProvider><button onClick={() => setRoute(route === "users" ? "detail" : "users")}>관리 route 전환</button>{route === "users" ? <UserTable companyCode="ACME" /> : <UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />}</AdminSecretOperationProvider>;
+  }
+  render(<Routes />);
+  await user.click(await screen.findByRole("button", { name: "임시 비밀번호 재발급" }));
+  await user.click(screen.getByRole("button", { name: "재발급 확인" }));
+  await waitFor(() => expect(releaseReset).toBeDefined());
+  fireEvent.click(screen.getByText("관리 route 전환"));
+
+  await screen.findByText("등록된 사용자가 없습니다.");
+  const create = screen.getByRole("button", { name: "사용자 생성" });
+  expect(create).toBeDisabled();
+  await user.click(create);
+  expect(createCalls).toBe(0);
+  expect(screen.getByRole("status")).toHaveTextContent("임시 비밀번호 재발급 작업을 처리 중입니다");
+  expect(screen.getByRole("status")).toHaveTextContent("ACME / U001");
+  releaseReset?.();
+  expect(await screen.findByText("ResetWins123!")).toBeVisible();
+  expect(screen.getByRole("dialog")).toHaveTextContent("U001");
+  expect(screen.getByRole("dialog")).toHaveTextContent("u001@acme.test");
 });

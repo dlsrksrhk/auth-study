@@ -2,7 +2,7 @@ import { HttpResponse, http } from "msw";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 
 import { server } from "@/test/setup";
 import type { Department } from "@/features/departments/department-api";
@@ -108,6 +108,49 @@ it("shows a creation password once and clears it permanently when the dialog clo
   await user.click(screen.getByRole("button", { name: "비밀번호 확인 완료" }));
   expect(screen.queryByText("OnlyOnce1234!")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /다시 보기/ })).not.toBeInTheDocument();
+});
+
+it("commits a Strict Mode UserForm create continuation exactly once", async () => {
+  const user = userEvent.setup();
+  const onOpenChange = vi.fn();
+  const onRefresh = vi.fn();
+  server.use(http.post("/api/v1/admin/companies/ACME/users", () => HttpResponse.json({ user: userRecord, temporaryPassword: "StrictCreate123!" }, { status: 201 })));
+  render(<StrictMode><AdminSecretOperationProvider><UserForm companyCode="ACME" onRefresh={onRefresh} open positions={[{ id: 5, companyId: 7, code: "EMPLOYEE", name: "사원", level: 10, displayOrder: 10, active: true, version: 1, createdAt: "", updatedAt: "" }]} onOpenChange={onOpenChange} /></AdminSecretOperationProvider></StrictMode>);
+  await user.type(screen.getByLabelText("사용자 코드"), "U001");
+  await user.type(screen.getByLabelText("사번"), "E001");
+  await user.type(screen.getByLabelText("이름"), "홍길동");
+  await user.type(screen.getByLabelText("로그인 이메일"), "u001@acme.test");
+  await user.type(screen.getByLabelText("전화번호"), "010");
+  await user.type(screen.getByLabelText("입사일"), "2026-08-20");
+  await user.type(screen.getByLabelText("근무지"), "서울");
+  await user.selectOptions(screen.getByLabelText("직위"), "EMPLOYEE");
+  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+
+  expect(await screen.findByText("StrictCreate123!")).toBeVisible();
+  await waitFor(() => expect(onOpenChange).toHaveBeenCalledTimes(1));
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+  expect(onRefresh).toHaveBeenCalledTimes(1);
+});
+
+it("commits a Strict Mode UserDetail reset continuation and refetch exactly once", async () => {
+  const user = userEvent.setup();
+  let detailCalls = 0;
+  server.use(
+    http.get("/api/v1/admin/companies/ACME/users/U001", () => { detailCalls += 1; return HttpResponse.json(userRecord); }),
+    http.get("/api/v1/admin/companies/ACME/positions", () => HttpResponse.json({ content: [{ id: 5, companyId: 7, code: "EMPLOYEE", name: "사원", level: 10, displayOrder: 10, active: true, version: 1, createdAt: "", updatedAt: "" }], page: 0, size: 100, totalElements: 1, totalPages: 1 })),
+    http.get("/api/v1/admin/companies/ACME/departments", () => HttpResponse.json({ content: departments, page: 0, size: 100, totalElements: 2, totalPages: 1 })),
+    http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({ content: memberships, page: 0, size: 100, totalElements: 2, totalPages: 1 })),
+    http.post("/api/v1/admin/companies/ACME/users/U001/temporary-password", () => HttpResponse.json({ temporaryPassword: "StrictReset123!" })),
+  );
+  render(<StrictMode><AdminSecretOperationProvider><UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" /></AdminSecretOperationProvider></StrictMode>);
+  await user.click(await screen.findByRole("button", { name: "임시 비밀번호 재발급" }));
+  const beforeReset = detailCalls;
+  await user.click(screen.getByRole("button", { name: "재발급 확인" }));
+
+  expect(await screen.findByText("StrictReset123!")).toBeVisible();
+  await waitFor(() => expect(detailCalls).toBe(beforeReset + 1));
+  expect(screen.queryByText("임시 비밀번호를 재발급할까요?")).not.toBeInTheDocument();
+  expect(screen.getByText("임시 비밀번호를 재발급했습니다.")).toBeVisible();
 });
 
 it("renders an XSS-shaped name as text and surfaces peer-admin 403 from role-sensitive controls", async () => {

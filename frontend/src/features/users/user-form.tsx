@@ -26,32 +26,44 @@ export function UserForm({ companyCode, user, positions, open, onOpenChange, onR
   const firstRef = useRef<HTMLInputElement>(null);
   const mutation = useRef<AbortController | null>(null);
   const mounted = useRef(true);
+  const lifecycleEpoch = useRef(0);
   const secretOperations = useAdminSecretOperations();
 
   useEffect(() => {
     if (!open) return;
     requestAnimationFrame(() => firstRef.current?.focus());
   }, [open]);
-  useEffect(() => () => { mounted.current = false; mutation.current?.abort(); }, []);
+  useEffect(() => {
+    mounted.current = true;
+    const epoch = ++lifecycleEpoch.current;
+    return () => {
+      if (lifecycleEpoch.current === epoch) lifecycleEpoch.current += 1;
+      mounted.current = false;
+      mutation.current?.abort();
+    };
+  }, []);
 
   function field<K extends keyof Draft>(key: K, value: Draft[K]) { setDraft((old) => ({ ...old, [key]: value })); }
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setError(null); setTraceId(null);
+    const lifecycle = lifecycleEpoch.current;
+    const isCurrentLifecycle = () => mounted.current && lifecycleEpoch.current === lifecycle;
     try {
       if (user) {
         mutation.current?.abort(); const controller = new AbortController(); mutation.current = controller; setPending(true);
         await userApi.update(companyCode, user.code, { name: draft.name, phone: draft.phone, hiredAt: draft.hiredAt, workplace: draft.workplace, profileImageUrl: draft.profileImageUrl, positionCode: draft.positionCode, version: user.version }, controller.signal);
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || !isCurrentLifecycle()) return;
         onOpenChange(false); onRefresh();
         if (mutation.current === controller && !controller.signal.aborted) setPending(false);
       } else {
         const completed = await secretOperations.createUser(companyCode, draft);
-        if (!mounted.current || !completed) return;
+        if (!isCurrentLifecycle() || !completed) return;
         setDraft(blank);
         onOpenChange(false);
         onRefresh();
       }
     } catch (cause) {
+      if (!isCurrentLifecycle()) return;
       const controller = mutation.current;
       if (controller?.signal.aborted) return;
       if (isApiProblemError(cause)) {
@@ -66,7 +78,7 @@ export function UserForm({ companyCode, user, positions, open, onOpenChange, onR
     }
   }
   const selectablePositions = positions.filter((position) => position.active || position.id === user?.positionId);
-  const operationPending = pending || (!user && secretOperations.pending === "create");
+  const operationPending = pending || (!user && Boolean(secretOperations.pending));
 
   return <Dialog open={open} onOpenChange={(next) => !operationPending && onOpenChange(next)}><DialogContent className="sm:max-w-xl" showCloseButton={!operationPending}><DialogHeader><DialogTitle>{user ? "사용자 프로필 수정" : "사용자 생성"}</DialogTitle><DialogDescription>로그인 계정과 HR 프로필에 사용할 정보를 입력합니다.</DialogDescription></DialogHeader><form aria-describedby={error ? "user-form-error" : undefined} onSubmit={submit}>
       {error ? <Alert id="user-form-error" aria-live="assertive" variant="destructive"><AlertTitle>{error}</AlertTitle><AlertDescription>{traceId ? `추적 ID: ${traceId}` : null}</AlertDescription></Alert> : null}
