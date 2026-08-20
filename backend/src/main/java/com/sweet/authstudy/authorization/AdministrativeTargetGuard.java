@@ -8,6 +8,8 @@ import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class AdministrativeTargetGuard {
@@ -17,8 +19,9 @@ public class AdministrativeTargetGuard {
         this.accountRepository = accountRepository;
     }
 
+    @Transactional(propagation = Propagation.MANDATORY)
     public Account requireMayMutateUser(AuthenticatedAccount actor, long targetUserId) {
-        Account target = accountRepository.findByUserId(targetUserId)
+        Account target = accountRepository.findByUserIdForUpdate(targetUserId)
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
         if (actor == null) {
             throw new ApiException(ErrorCode.UNAUTHENTICATED, "Authentication is required.");
