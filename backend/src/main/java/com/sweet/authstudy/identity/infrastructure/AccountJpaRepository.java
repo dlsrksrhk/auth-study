@@ -14,6 +14,10 @@ interface AccountJpaRepository extends JpaRepository<AccountJpaEntity, Long> {
 
     Optional<AccountJpaEntity> findByUserId(long userId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from AccountJpaEntity a where a.companyId = :companyId order by a.id")
+    List<AccountJpaEntity> findAllByCompanyIdForUpdate(@Param("companyId") long companyId);
+
     List<AccountJpaEntity> findAllByUserIdIn(Collection<Long> userIds);
 
     Optional<AccountJpaEntity> findByCompanyIdAndLoginEmailIgnoreCase(long companyId, String loginEmail);

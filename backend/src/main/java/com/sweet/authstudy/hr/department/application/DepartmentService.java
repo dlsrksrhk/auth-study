@@ -7,7 +7,10 @@ import static com.sweet.authstudy.hr.department.application.DepartmentCommands.U
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 
+import com.sweet.authstudy.audit.application.AuditActions;
+import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
@@ -34,16 +37,18 @@ public class DepartmentService {
     private final MembershipRepository membershipRepository;
     private final Clock clock;
     private final TenantGuard tenantGuard;
+    private final AuditService auditService;
 
     public DepartmentService(
             DepartmentRepository departmentRepository,
             CompanyRepository companyRepository,
             MembershipRepository membershipRepository, TenantGuard tenantGuard,
-            Clock clock) {
+            AuditService auditService, Clock clock) {
         this.departmentRepository = departmentRepository;
         this.companyRepository = companyRepository;
         this.membershipRepository = membershipRepository;
         this.tenantGuard = tenantGuard;
+        this.auditService = auditService;
         this.clock = clock;
     }
 
@@ -62,7 +67,10 @@ public class DepartmentService {
         Long parentId = resolveActiveParent(company.id(), command.parentCode());
         Department department = Department.create(
                 company.id(), parentId, code, normalizeRequired(command.name()), clock.instant());
-        return DepartmentView.from(save(department));
+        Department saved = save(department);
+        auditService.record(actor, AuditActions.DEPARTMENT_CREATE, "DEPARTMENT", saved.id(), company.id(),
+                Map.of("code", saved.code(), "status", saved.status().name()));
+        return DepartmentView.from(saved);
     }
 
     @Transactional
@@ -74,11 +82,20 @@ public class DepartmentService {
         tenantGuard.requireCompanyAccess(actor, company.id());
         requireActive(company);
         Department department = findDepartment(company.id(), command.code());
-        requireVersion(department, command.version());
-        Long parentId = resolveActiveParent(company.id(), command.newParentCode());
-        rejectCycle(department, parentId);
-        department.move(parentId, clock.instant());
-        return DepartmentView.from(save(department));
+        try {
+            requireVersion(department, command.version());
+            Long parentId = resolveActiveParent(company.id(), command.newParentCode());
+            rejectCycle(department, parentId);
+            department.move(parentId, clock.instant());
+            Department saved = save(department);
+            auditService.record(actor, AuditActions.DEPARTMENT_MOVE, "DEPARTMENT",
+                    saved.id(), company.id(), Map.of("code", saved.code()));
+            return DepartmentView.from(saved);
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, AuditActions.DEPARTMENT_MOVE, "DEPARTMENT",
+                    department.id(), company.id(), Map.of("code", department.code()), failure);
+            throw failure;
+        }
     }
 
     @Transactional
@@ -90,28 +107,40 @@ public class DepartmentService {
         Company company = findLockedCompany(command.companyCode());
         tenantGuard.requireCompanyAccess(actor, company.id());
         Department department = findDepartment(company.id(), command.code());
-        requireVersion(department, command.version());
-        if (command.status() == DepartmentStatus.ACTIVE && company.status() != CompanyStatus.ACTIVE) {
-            throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
-        }
-        if (command.status() == DepartmentStatus.ACTIVE && department.parentDepartmentId() != null) {
-            Department parent = departmentRepository.findById(department.parentDepartmentId())
-                    .orElseThrow(() -> new ApiException(
-                            ErrorCode.RESOURCE_NOT_FOUND, "Parent department was not found."));
-            if (parent.companyId() != company.id() || parent.status() != DepartmentStatus.ACTIVE) {
-                throw new ApiException(ErrorCode.INVALID_STATE, "Parent department is inactive.");
+        DepartmentStatus previousStatus = department.status();
+        try {
+            requireVersion(department, command.version());
+            if (command.status() == DepartmentStatus.ACTIVE && company.status() != CompanyStatus.ACTIVE) {
+                throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
             }
-        }
-        if (command.status() == DepartmentStatus.INACTIVE) {
-            if (departmentRepository.existsActiveChild(department.id())) {
-                throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active child.");
+            if (command.status() == DepartmentStatus.ACTIVE && department.parentDepartmentId() != null) {
+                Department parent = departmentRepository.findById(department.parentDepartmentId())
+                        .orElseThrow(() -> new ApiException(
+                                ErrorCode.RESOURCE_NOT_FOUND, "Parent department was not found."));
+                if (parent.companyId() != company.id() || parent.status() != DepartmentStatus.ACTIVE) {
+                    throw new ApiException(ErrorCode.INVALID_STATE, "Parent department is inactive.");
+                }
             }
-            if (membershipRepository.existsActiveByDepartmentId(department.id())) {
-                throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active membership.");
+            if (command.status() == DepartmentStatus.INACTIVE) {
+                if (departmentRepository.existsActiveChild(department.id())) {
+                    throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active child.");
+                }
+                if (membershipRepository.existsActiveByDepartmentId(department.id())) {
+                    throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active membership.");
+                }
             }
+            department.changeStatus(command.status(), clock.instant());
+            Department saved = save(department);
+            auditService.record(actor, AuditActions.DEPARTMENT_STATUS_CHANGE, "DEPARTMENT",
+                    saved.id(), company.id(), Map.of("code", saved.code(),
+                            "status", saved.status().name(), "previousStatus", previousStatus.name()));
+            return DepartmentView.from(saved);
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, AuditActions.DEPARTMENT_STATUS_CHANGE, "DEPARTMENT",
+                    department.id(), company.id(), Map.of("code", department.code(),
+                            "previousStatus", previousStatus.name()), failure);
+            throw failure;
         }
-        department.changeStatus(command.status(), clock.instant());
-        return DepartmentView.from(save(department));
     }
 
     @Transactional
@@ -122,22 +151,35 @@ public class DepartmentService {
         Company company = findLockedCompany(command.companyCode());
         tenantGuard.requireCompanyAccess(actor, company.id());
         Department department = findDepartment(company.id(), command.code());
-        requireVersion(department, command.version());
-        Long parentId = resolveActiveParent(company.id(), command.parentCode());
-        rejectCycle(department, parentId);
-        if (command.status() == DepartmentStatus.ACTIVE && company.status() != CompanyStatus.ACTIVE) {
-            throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
-        }
-        if (command.status() == DepartmentStatus.INACTIVE) {
-            if (departmentRepository.existsActiveChild(department.id())) {
-                throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active child.");
+        DepartmentStatus previousStatus = department.status();
+        String action = previousStatus == command.status()
+                ? AuditActions.DEPARTMENT_UPDATE : AuditActions.DEPARTMENT_STATUS_CHANGE;
+        try {
+            requireVersion(department, command.version());
+            Long parentId = resolveActiveParent(company.id(), command.parentCode());
+            rejectCycle(department, parentId);
+            if (command.status() == DepartmentStatus.ACTIVE && company.status() != CompanyStatus.ACTIVE) {
+                throw new ApiException(ErrorCode.INVALID_STATE, "Company is inactive.");
             }
-            if (membershipRepository.existsActiveByDepartmentId(department.id())) {
-                throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active membership.");
+            if (command.status() == DepartmentStatus.INACTIVE) {
+                if (departmentRepository.existsActiveChild(department.id())) {
+                    throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active child.");
+                }
+                if (membershipRepository.existsActiveByDepartmentId(department.id())) {
+                    throw new ApiException(ErrorCode.INVALID_STATE, "Department has an active membership.");
+                }
             }
+            department.update(normalizeRequired(command.name()), parentId, command.status(), clock.instant());
+            Department saved = save(department);
+            auditService.record(actor, action, "DEPARTMENT", saved.id(), company.id(),
+                    Map.of("code", saved.code(), "status", saved.status().name(),
+                            "previousStatus", previousStatus.name()));
+            return DepartmentView.from(saved);
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, action, "DEPARTMENT", department.id(), company.id(),
+                    Map.of("code", department.code(), "previousStatus", previousStatus.name()), failure);
+            throw failure;
         }
-        department.update(normalizeRequired(command.name()), parentId, command.status(), clock.instant());
-        return DepartmentView.from(save(department));
     }
 
     @Transactional(readOnly = true)

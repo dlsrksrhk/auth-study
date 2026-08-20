@@ -15,6 +15,8 @@ public interface AccountRepository {
 
     Optional<Account> findByUserId(long userId);
 
+    List<Account> findAllByCompanyIdForUpdate(long companyId);
+
     List<Account> findAllByUserIds(Collection<Long> userIds);
 
     Optional<Account> findCompanyAccount(long companyId, String loginEmail);

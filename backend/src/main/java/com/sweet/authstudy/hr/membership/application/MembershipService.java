@@ -5,7 +5,10 @@ import static com.sweet.authstudy.hr.membership.application.MembershipCommands.U
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 
+import com.sweet.authstudy.audit.application.AuditActions;
+import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.authorization.AdministrativeTargetGuard;
 import com.sweet.authstudy.hr.company.domain.Company;
@@ -40,6 +43,7 @@ public class MembershipService {
     private final Clock clock;
     private final TenantGuard tenantGuard;
     private final AdministrativeTargetGuard targetGuard;
+    private final AuditService auditService;
 
     public MembershipService(
             MembershipRepository membershipRepository,
@@ -47,6 +51,7 @@ public class MembershipService {
             UserRepository userRepository,
             DepartmentRepository departmentRepository, TenantGuard tenantGuard,
             AdministrativeTargetGuard targetGuard,
+            AuditService auditService,
             Clock clock) {
         this.membershipRepository = membershipRepository;
         this.companyRepository = companyRepository;
@@ -54,6 +59,7 @@ public class MembershipService {
         this.departmentRepository = departmentRepository;
         this.tenantGuard = tenantGuard;
         this.targetGuard = targetGuard;
+        this.auditService = auditService;
         this.clock = clock;
     }
 
@@ -73,7 +79,12 @@ public class MembershipService {
         DepartmentMembership membership = DepartmentMembership.create(
                 company.id(), user.id(), department.id(), command.role(), command.primary(),
                 command.startedAt(), clock.instant());
-        return MembershipView.from(save(membership));
+        DepartmentMembership saved = save(membership);
+        auditService.record(actor, AuditActions.MEMBERSHIP_CREATE, "MEMBERSHIP",
+                saved.id(), company.id(), Map.of("membershipId", saved.id(),
+                        "userCode", user.code(), "departmentCode", department.code(),
+                        "role", saved.role().name(), "primary", saved.primary()));
+        return MembershipView.from(saved);
     }
 
     @Transactional
@@ -87,14 +98,26 @@ public class MembershipService {
         HrUser user = findUser(company.id(), command.userCode());
         targetGuard.requireMayMutateUser(actor, user.id());
         DepartmentMembership membership = findMembership(command.membershipId());
-        requireOwnership(membership, company, user);
-        requireVersion(membership, command.version());
-        requireActive(membership);
-        Department department = findDepartment(membership.departmentId());
-        requireAssignable(user, department);
-        rejectUpdateConflicts(user, membership, command.role(), command.primary());
-        membership.update(command.role(), command.primary(), clock.instant());
-        return MembershipView.from(save(membership));
+        try {
+            requireOwnership(membership, company, user);
+            requireVersion(membership, command.version());
+            requireActive(membership);
+            Department department = findDepartment(membership.departmentId());
+            requireAssignable(user, department);
+            rejectUpdateConflicts(user, membership, command.role(), command.primary());
+            membership.update(command.role(), command.primary(), clock.instant());
+            DepartmentMembership saved = save(membership);
+            auditService.record(actor, AuditActions.MEMBERSHIP_UPDATE, "MEMBERSHIP",
+                    saved.id(), company.id(), Map.of("membershipId", saved.id(),
+                            "userCode", user.code(), "departmentCode", department.code(),
+                            "role", saved.role().name(), "primary", saved.primary()));
+            return MembershipView.from(saved);
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, AuditActions.MEMBERSHIP_UPDATE, "MEMBERSHIP",
+                    membership.id(), company.id(), Map.of("membershipId", membership.id(),
+                            "userCode", user.code()), failure);
+            throw failure;
+        }
     }
 
     @Transactional
@@ -105,15 +128,26 @@ public class MembershipService {
         HrUser user = findUser(company.id(), userCode);
         targetGuard.requireMayMutateUser(actor, user.id());
         DepartmentMembership membership = findMembership(membershipId);
-        requireOwnership(membership, company, user);
-        requireVersion(membership, version);
-        requireActive(membership);
-        Department department = findDepartment(membership.departmentId());
-        requireDepartmentOwnership(company, department);
-        rejectRemovingPrimaryFromActiveUser(user, membership);
-        var now = clock.instant();
-        membership.end(now, now);
-        return MembershipView.from(save(membership));
+        try {
+            requireOwnership(membership, company, user);
+            requireVersion(membership, version);
+            requireActive(membership);
+            Department department = findDepartment(membership.departmentId());
+            requireDepartmentOwnership(company, department);
+            rejectRemovingPrimaryFromActiveUser(user, membership);
+            var now = clock.instant();
+            membership.end(now, now);
+            DepartmentMembership saved = save(membership);
+            auditService.record(actor, AuditActions.MEMBERSHIP_END, "MEMBERSHIP",
+                    saved.id(), company.id(), Map.of("membershipId", saved.id(),
+                            "userCode", user.code(), "departmentCode", department.code()));
+            return MembershipView.from(saved);
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, AuditActions.MEMBERSHIP_END, "MEMBERSHIP",
+                    membership.id(), company.id(), Map.of("membershipId", membership.id(),
+                            "userCode", user.code()), failure);
+            throw failure;
+        }
     }
 
     @Transactional(readOnly = true)

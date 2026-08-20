@@ -46,6 +46,12 @@ public class AccountRepositoryAdapter implements AccountRepository {
     }
 
     @Override
+    public List<Account> findAllByCompanyIdForUpdate(long companyId) {
+        return repository.findAllByCompanyIdForUpdate(companyId).stream()
+                .map(AccountJpaEntity::toDomain).toList();
+    }
+
+    @Override
     public List<Account> findAllByUserIds(Collection<Long> userIds) {
         return repository.findAllByUserIdIn(userIds).stream().map(AccountJpaEntity::toDomain).toList();
     }

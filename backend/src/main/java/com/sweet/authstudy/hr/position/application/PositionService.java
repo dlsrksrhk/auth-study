@@ -5,7 +5,10 @@ import static com.sweet.authstudy.hr.position.application.PositionCommands.Updat
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 
+import com.sweet.authstudy.audit.application.AuditActions;
+import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
@@ -26,13 +29,15 @@ public class PositionService {
     private final CompanyRepository companyRepository;
     private final Clock clock;
     private final TenantGuard tenantGuard;
+    private final AuditService auditService;
 
     public PositionService(
             PositionRepository positionRepository, CompanyRepository companyRepository,
-            TenantGuard tenantGuard, Clock clock) {
+            TenantGuard tenantGuard, AuditService auditService, Clock clock) {
         this.positionRepository = positionRepository;
         this.companyRepository = companyRepository;
         this.tenantGuard = tenantGuard;
+        this.auditService = auditService;
         this.clock = clock;
     }
 
@@ -52,7 +57,10 @@ public class PositionService {
                 command.displayOrder(),
                 true,
                 clock.instant());
-        return PositionView.from(positionRepository.save(position));
+        Position saved = positionRepository.save(position);
+        auditService.record(actor, AuditActions.POSITION_CREATE, "POSITION", saved.id(), company.id(),
+                Map.of("code", saved.code(), "active", saved.active()));
+        return PositionView.from(saved);
     }
 
     @Transactional
@@ -61,16 +69,29 @@ public class PositionService {
         Company company = findCompany(normalizeCode(companyCode));
         tenantGuard.requireCompanyAccess(actor, company.id());
         Position position = findPosition(company.id(), normalizeCode(code));
-        if (position.version() != command.version()) {
-            throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "Position version does not match.");
+        boolean previousActive = position.active();
+        String action = previousActive == command.active()
+                ? AuditActions.POSITION_UPDATE : AuditActions.POSITION_STATUS_CHANGE;
+        try {
+            if (position.version() != command.version()) {
+                throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "Position version does not match.");
+            }
+            position.update(
+                    normalizeRequiredValue(command.name()),
+                    command.level(),
+                    command.displayOrder(),
+                    command.active(),
+                    clock.instant());
+            Position saved = positionRepository.save(position);
+            auditService.record(actor, action, "POSITION", saved.id(), company.id(),
+                    Map.of("code", saved.code(), "active", saved.active(),
+                            "previousActive", previousActive));
+            return PositionView.from(saved);
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, action, "POSITION", position.id(), company.id(),
+                    Map.of("code", position.code(), "previousActive", previousActive), failure);
+            throw failure;
         }
-        position.update(
-                normalizeRequiredValue(command.name()),
-                command.level(),
-                command.displayOrder(),
-                command.active(),
-                clock.instant());
-        return PositionView.from(positionRepository.save(position));
     }
 
     @Transactional(readOnly = true)

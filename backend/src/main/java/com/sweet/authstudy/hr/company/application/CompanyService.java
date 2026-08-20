@@ -5,12 +5,16 @@ import static com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateC
 
 import java.time.Clock;
 import java.util.Locale;
+import java.util.Map;
 
+import com.sweet.authstudy.audit.application.AuditActions;
+import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.hr.position.application.PositionService;
+import com.sweet.authstudy.identity.application.AccountService;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
@@ -27,14 +31,19 @@ public class CompanyService {
     private final CompanyRepository companyRepository;
     private final PositionService positionService;
     private final TenantGuard tenantGuard;
+    private final AccountService accountService;
+    private final AuditService auditService;
     private final Clock clock;
 
     public CompanyService(
             CompanyRepository companyRepository, PositionService positionService,
-            TenantGuard tenantGuard, Clock clock) {
+            TenantGuard tenantGuard, AccountService accountService,
+            AuditService auditService, Clock clock) {
         this.companyRepository = companyRepository;
         this.positionService = positionService;
         this.tenantGuard = tenantGuard;
+        this.accountService = accountService;
+        this.auditService = auditService;
         this.clock = clock;
     }
 
@@ -49,18 +58,38 @@ public class CompanyService {
 
         Company saved = companyRepository.save(Company.create(code, name, domain, clock.instant()));
         positionService.createDefaults(actor, saved.id());
+        auditService.record(actor, AuditActions.COMPANY_CREATE, "COMPANY", saved.id(), saved.id(),
+                Map.of("code", saved.code(), "status", saved.status().name()));
         return CompanyView.from(saved);
     }
 
     @Transactional
     public CompanyView update(AuthenticatedAccount actor, String code, UpdateCompanyCommand command) {
         tenantGuard.requireSystemAdmin(actor);
-        Company company = findCompany(normalizeCode(code));
-        if (company.version() != command.version()) {
-            throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "Company version does not match.");
+        Company identified = findCompany(normalizeCode(code));
+        Company company = companyRepository.findLockedById(identified.id())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
+        CompanyStatus previousStatus = company.status();
+        String action = previousStatus == command.status()
+                ? AuditActions.COMPANY_UPDATE : AuditActions.COMPANY_STATUS_CHANGE;
+        try {
+            if (company.version() != command.version()) {
+                throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "Company version does not match.");
+            }
+            company.update(normalizeRequiredValue(command.name()), requireStatus(command.status()), clock.instant());
+            Company saved = companyRepository.save(company);
+            if (previousStatus != CompanyStatus.INACTIVE && saved.status() == CompanyStatus.INACTIVE) {
+                accountService.revokeAllRefreshTokensForCompany(saved.id());
+            }
+            auditService.record(actor, action, "COMPANY", saved.id(), saved.id(),
+                    Map.of("code", saved.code(), "status", saved.status().name(),
+                            "previousStatus", previousStatus.name()));
+            return CompanyView.from(saved);
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, action, "COMPANY", company.id(), company.id(),
+                    Map.of("code", company.code(), "previousStatus", previousStatus.name()), failure);
+            throw failure;
         }
-        company.update(normalizeRequiredValue(command.name()), requireStatus(command.status()), clock.instant());
-        return CompanyView.from(companyRepository.save(company));
     }
 
     @Transactional(readOnly = true)

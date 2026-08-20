@@ -9,11 +9,14 @@ import static com.sweet.authstudy.hr.user.application.UserViews.UserPage;
 import java.time.Clock;
 import java.util.Locale;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.authorization.AdministrativeTargetGuard;
+import com.sweet.authstudy.audit.application.AuditActions;
+import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
@@ -48,6 +51,7 @@ public class UserService {
     private final AccountService accountService;
     private final TenantGuard tenantGuard;
     private final AdministrativeTargetGuard targetGuard;
+    private final AuditService auditService;
     private final Clock clock;
 
     public UserService(
@@ -61,6 +65,7 @@ public class UserService {
             AccountService accountService,
             TenantGuard tenantGuard,
             AdministrativeTargetGuard targetGuard,
+            AuditService auditService,
             Clock clock) {
         this.companyRepository = companyRepository;
         this.positionRepository = positionRepository;
@@ -72,6 +77,7 @@ public class UserService {
         this.accountService = accountService;
         this.tenantGuard = tenantGuard;
         this.targetGuard = targetGuard;
+        this.auditService = auditService;
         this.clock = clock;
     }
 
@@ -118,6 +124,9 @@ public class UserService {
                 loginEmail,
                 passwordEncoder.encode(temporaryPassword),
                 clock.instant()));
+        auditService.record(actor, AuditActions.USER_CREATE, "USER", savedUser.id(), company.id(),
+                Map.of("code", savedUser.code(), "status", savedUser.status().name(),
+                        "positionCode", position.code()));
         return new CreatedUserView(UserViews.UserView.from(savedUser, loginEmail), temporaryPassword);
     }
 
@@ -132,15 +141,29 @@ public class UserService {
         HrUser user = userRepository.findByCompanyIdAndCode(company.id(), normalizeCode(userCode))
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User was not found."));
         Account targetAccount = targetGuard.requireMayMutateUser(actor, user.id());
-        if (user.version() != version) {
-            throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "User version does not match.");
+        UserStatus previousStatus = user.status();
+        try {
+            if (user.version() != version) {
+                throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "User version does not match.");
+            }
+            if (status == UserStatus.ACTIVE) {
+                requireActivationReady(company, user);
+            }
+            user.changeStatus(status, clock.instant());
+            HrUser saved = userRepository.save(user);
+            if (status == UserStatus.LOCKED || status == UserStatus.RESIGNED) {
+                accountService.revokeAllRefreshTokens(targetAccount.id());
+            }
+            auditService.record(actor, AuditActions.USER_STATUS_CHANGE, "USER", saved.id(), company.id(),
+                    Map.of("code", saved.code(), "status", saved.status().name(),
+                            "previousStatus", previousStatus.name()));
+            return UserView.from(saved, targetAccount.loginEmail());
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, AuditActions.USER_STATUS_CHANGE, "USER",
+                    user.id(), company.id(), Map.of("code", user.code(),
+                            "previousStatus", previousStatus.name()), failure);
+            throw failure;
         }
-        if (status == UserStatus.ACTIVE) {
-            requireActivationReady(company, user);
-        }
-        user.changeStatus(status, clock.instant());
-        HrUser saved = userRepository.save(user);
-        return UserView.from(saved, targetAccount.loginEmail());
     }
 
     @Transactional
@@ -154,20 +177,28 @@ public class UserService {
         requireActive(company);
         HrUser user = findUser(company.id(), userCode);
         Account targetAccount = targetGuard.requireMayMutateUser(actor, user.id());
-        if (user.version() != command.version()) {
-            throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "User version does not match.");
+        try {
+            if (user.version() != command.version()) {
+                throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "User version does not match.");
+            }
+            Position position = positionRepository
+                    .findByCompanyIdAndCode(company.id(), normalizeCode(command.positionCode()))
+                    .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Position was not found."));
+            if (!position.active()) {
+                throw new ApiException(ErrorCode.INVALID_STATE, "Position is inactive.");
+            }
+            user.updateProfile(normalizeRequired(command.name()), normalizeRequired(command.phone()),
+                    command.hiredAt(), normalizeRequired(command.workplace()),
+                    normalizeOptional(command.profileImageUrl()), position.id(), clock.instant());
+            HrUser saved = userRepository.save(user);
+            auditService.record(actor, AuditActions.USER_UPDATE, "USER", saved.id(), company.id(),
+                    Map.of("code", saved.code(), "positionCode", position.code()));
+            return UserView.from(saved, targetAccount.loginEmail());
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, AuditActions.USER_UPDATE, "USER",
+                    user.id(), company.id(), Map.of("code", user.code()), failure);
+            throw failure;
         }
-        Position position = positionRepository
-                .findByCompanyIdAndCode(company.id(), normalizeCode(command.positionCode()))
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Position was not found."));
-        if (!position.active()) {
-            throw new ApiException(ErrorCode.INVALID_STATE, "Position is inactive.");
-        }
-        user.updateProfile(normalizeRequired(command.name()), normalizeRequired(command.phone()),
-                command.hiredAt(), normalizeRequired(command.workplace()),
-                normalizeOptional(command.profileImageUrl()), position.id(), clock.instant());
-        HrUser saved = userRepository.save(user);
-        return UserView.from(saved, targetAccount.loginEmail());
     }
 
     @Transactional(readOnly = true)
@@ -205,7 +236,16 @@ public class UserService {
         requireActive(company);
         HrUser user = findUser(company.id(), userCode);
         Account account = targetGuard.requireMayMutateUser(actor, user.id());
-        return accountService.resetTemporaryPassword(account.id());
+        try {
+            String temporaryPassword = accountService.resetTemporaryPassword(account.id());
+            auditService.record(actor, AuditActions.USER_TEMPORARY_PASSWORD_RESET, "USER",
+                    user.id(), company.id(), Map.of("code", user.code()));
+            return temporaryPassword;
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, AuditActions.USER_TEMPORARY_PASSWORD_RESET, "USER",
+                    user.id(), company.id(), Map.of("code", user.code()), failure);
+            throw failure;
+        }
     }
 
     @Transactional
@@ -216,7 +256,15 @@ public class UserService {
         HrUser user = findUser(company.id(), userCode);
         Account account = accountRepository.findByUserId(user.id())
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
-        accountService.assignCompanyAdmin(actor, account.id());
+        try {
+            accountService.assignCompanyAdmin(actor, account.id());
+            auditService.record(actor, AuditActions.COMPANY_ADMIN_GRANT, "USER", user.id(), company.id(),
+                    Map.of("code", user.code(), "role", "COMPANY_ADMIN"));
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, AuditActions.COMPANY_ADMIN_GRANT, "USER",
+                    user.id(), company.id(), Map.of("code", user.code(), "role", "COMPANY_ADMIN"), failure);
+            throw failure;
+        }
     }
 
     @Transactional
@@ -227,7 +275,15 @@ public class UserService {
         HrUser user = findUser(company.id(), userCode);
         Account account = accountRepository.findByUserId(user.id())
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
-        accountService.revokeCompanyAdmin(actor, account.id());
+        try {
+            accountService.revokeCompanyAdmin(actor, account.id());
+            auditService.record(actor, AuditActions.COMPANY_ADMIN_REVOKE, "USER", user.id(), company.id(),
+                    Map.of("code", user.code(), "role", "COMPANY_ADMIN"));
+        } catch (ApiException failure) {
+            auditService.recordFailure(actor, AuditActions.COMPANY_ADMIN_REVOKE, "USER",
+                    user.id(), company.id(), Map.of("code", user.code(), "role", "COMPANY_ADMIN"), failure);
+            throw failure;
+        }
     }
 
     private void requireActivationReady(Company company, HrUser user) {
