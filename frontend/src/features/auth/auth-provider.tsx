@@ -132,40 +132,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
-    const safeAnonymous = authSession.clear();
     const operation = ++operationEpoch.current;
+    const safeAnonymous = authSession.clear();
     restoredActor = null;
     setActor(null);
     setStatus("loading");
     try {
-      const token = await authApi.login(email, password);
-      assertCurrent(operationEpoch.current, operation);
+      return await authApi.login(
+        email,
+        password,
+        () => operationEpoch.current === operation,
+        async (token) => {
+          assertCurrent(operationEpoch.current, operation);
 
-      if (token.mustChangePassword) {
-        const committed = authSession.compareAndSet(
-          safeAnonymous.generation,
-          token.accessToken,
-          "passwordChangeRequired",
-          "interactive",
-        );
-        if (!committed) throw new StaleAuthOperationError();
-        setStatus("passwordChangeRequired");
-        return { mustChangePassword: true };
-      }
+          if (token.mustChangePassword) {
+            const committed = authSession.compareAndSet(
+              safeAnonymous.generation,
+              token.accessToken,
+              "passwordChangeRequired",
+              "interactive",
+            );
+            if (!committed) throw new StaleAuthOperationError();
+            setStatus("passwordChangeRequired");
+            return { mustChangePassword: true };
+          }
 
-      const currentActor = await authApi.me(token.accessToken);
-      assertCurrent(operationEpoch.current, operation);
-      const committed = authSession.compareAndSet(
-        safeAnonymous.generation,
-        token.accessToken,
-        "authenticated",
-        "interactive",
+          const currentActor = await authApi.me(token.accessToken);
+          assertCurrent(operationEpoch.current, operation);
+          const committed = authSession.compareAndSet(
+            safeAnonymous.generation,
+            token.accessToken,
+            "authenticated",
+            "interactive",
+          );
+          if (!committed) throw new StaleAuthOperationError();
+          restoredActor = { actor: currentActor, generation: committed.generation };
+          setActor(currentActor);
+          setStatus("authenticated");
+          return { mustChangePassword: false };
+        },
       );
-      if (!committed) throw new StaleAuthOperationError();
-      restoredActor = { actor: currentActor, generation: committed.generation };
-      setActor(currentActor);
-      setStatus("authenticated");
-      return { mustChangePassword: false };
     } catch (error) {
       if (operationEpoch.current === operation) {
         authSession.clearIfCurrent(safeAnonymous.generation);

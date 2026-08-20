@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -194,7 +194,7 @@ describe("AuthProvider", () => {
     expect(meCalls).toBe(0);
   });
 
-  it("keeps the interactive login when it finishes before bootstrap restore", async () => {
+  it("keeps the interactive login authoritative when queued behind bootstrap restore", async () => {
     const user = userEvent.setup();
     const finishRefresh = deferred<void>();
     const refreshStarted = deferred<void>();
@@ -217,11 +217,9 @@ describe("AuthProvider", () => {
     render(<AuthProvider><Probe /></AuthProvider>);
     await refreshStarted.promise;
     await user.click(screen.getByRole("button", { name: "선택 계정 로그인" }));
-    expect(await screen.findByText("chosen@acme.example")).toBeInTheDocument();
-
     await act(async () => finishRefresh.resolve());
-    await waitForMicrotasks();
-    expect(screen.getByText("chosen@acme.example")).toBeInTheDocument();
+
+    expect(await screen.findByText("chosen@acme.example")).toBeInTheDocument();
     expect(screen.queryByText("restored@auth-study.local")).toBeNull();
     expect(authSession.get()).toMatchObject({ accessToken: "chosen-token" });
   });
@@ -255,9 +253,8 @@ describe("AuthProvider", () => {
     render(<AuthProvider><Probe /></AuthProvider>);
     await refreshStarted.promise;
     await user.click(screen.getByRole("button", { name: "선택 계정 로그인" }));
-    await loginStarted.promise;
     await act(async () => finishRefresh.resolve());
-    await waitForMicrotasks();
+    await loginStarted.promise;
     await act(async () => finishLogin.resolve());
 
     expect(await screen.findByText("chosen@acme.example")).toBeInTheDocument();
@@ -267,10 +264,18 @@ describe("AuthProvider", () => {
 
   it("rolls back a login token when loading the actor fails", async () => {
     const user = userEvent.setup();
+    const cookieJar = new FakeRefreshCookieJar();
+    const logoutAuthorizations: Array<string | null> = [];
     server.use(
       http.post(`${origin}/api/v1/auth/refresh`, () => new HttpResponse(null, { status: 401 })),
-      http.post(`${origin}/api/v1/auth/login`, () => HttpResponse.json(token("orphan-token"))),
+      http.post(`${origin}/api/v1/auth/login`, () =>
+        cookieJar.loginResponse("orphan-token", "orphan-family"),
+      ),
       http.get(`${origin}/api/v1/auth/me`, () => new HttpResponse(null, { status: 500 })),
+      http.post(`${origin}/api/v1/auth/logout`, ({ request }) => {
+        logoutAuthorizations.push(request.headers.get("Authorization"));
+        return cookieJar.logoutResponse();
+      }),
     );
 
     render(<AuthProvider><Probe /></AuthProvider>);
@@ -280,6 +285,132 @@ describe("AuthProvider", () => {
 
     expect(screen.getByText("anonymous")).toBeInTheDocument();
     expect(authSession.get()).toMatchObject({ accessToken: null, mode: "anonymous" });
+    await waitFor(() => expect(cookieJar.value).toBeNull());
+    expect(logoutAuthorizations).toEqual(["Bearer orphan-token"]);
+  });
+
+  it("stays locally anonymous when provisional cookie cleanup also fails", async () => {
+    const user = userEvent.setup();
+    let cleanupCalls = 0;
+    server.use(
+      http.post(`${origin}/api/v1/auth/refresh`, () => new HttpResponse(null, { status: 401 })),
+      http.post(`${origin}/api/v1/auth/login`, () => HttpResponse.json(token("orphan-token"))),
+      http.get(`${origin}/api/v1/auth/me`, () =>
+        HttpResponse.json(
+          {
+            type: "about:blank",
+            title: "Actor lookup failed",
+            status: 500,
+            detail: "Could not load the actor.",
+            code: "ME_FAILED",
+            traceId: "trace-me-failed",
+            fieldErrors: [],
+          },
+          { status: 500 },
+        ),
+      ),
+      http.post(`${origin}/api/v1/auth/logout`, ({ request }) => {
+        expect(request.headers.get("Authorization")).toBe("Bearer orphan-token");
+        cleanupCalls += 1;
+        return new HttpResponse(null, { status: 503 });
+      }),
+    );
+
+    render(<AuthProvider><Probe /></AuthProvider>);
+    expect(await screen.findByText("anonymous")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "선택 계정 로그인" }));
+
+    await waitFor(() => expect(cleanupCalls).toBe(1));
+    expect(screen.getByText("anonymous")).toBeInTheDocument();
+    expect(authSession.get()).toMatchObject({ accessToken: null, mode: "anonymous" });
+  });
+
+  it("cleans a late login cookie before a newer logout can finish", async () => {
+    const user = userEvent.setup();
+    const cookieJar = new FakeRefreshCookieJar();
+    const loginStarted = deferred<void>();
+    const finishLogin = deferred<void>();
+    const logoutAuthorizations: Array<string | null> = [];
+    server.use(
+      http.post(`${origin}/api/v1/auth/refresh`, () => new HttpResponse(null, { status: 401 })),
+      http.post(`${origin}/api/v1/auth/login`, async () => {
+        loginStarted.resolve();
+        await finishLogin.promise;
+        return cookieJar.loginResponse("late-login-token", "late-family");
+      }),
+      http.post(`${origin}/api/v1/auth/logout`, ({ request }) => {
+        logoutAuthorizations.push(request.headers.get("Authorization"));
+        return cookieJar.logoutResponse();
+      }),
+    );
+
+    render(<AuthProvider><Probe /></AuthProvider>);
+    expect(await screen.findByText("anonymous")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "선택 계정 로그인" }));
+    await loginStarted.promise;
+    await user.click(screen.getByRole("button", { name: "로그아웃" }));
+    finishLogin.resolve();
+
+    await waitFor(() => expect(logoutAuthorizations).toContain("Bearer late-login-token"));
+    expect(cookieJar.value).toBeNull();
+    expect(screen.getByText("anonymous")).toBeInTheDocument();
+    expect(authSession.get()).toMatchObject({ accessToken: null, mode: "anonymous" });
+  });
+
+  it("skips a stale queued login before the network request after logout supersedes it", async () => {
+    const user = userEvent.setup();
+    const refreshStarted = deferred<void>();
+    const finishRefresh = deferred<void>();
+    const finishLogin = deferred<void>();
+    const cookieJar = new FakeRefreshCookieJar("bootstrap-family");
+    let loginCalls = 0;
+    server.use(
+      http.post(`${origin}/api/v1/auth/refresh`, async () => {
+        refreshStarted.resolve();
+        await finishRefresh.promise;
+        return new HttpResponse(null, { status: 401 });
+      }),
+      http.post(`${origin}/api/v1/auth/login`, async () => {
+        loginCalls += 1;
+        await finishLogin.promise;
+        return cookieJar.loginResponse("stale-login-token", "stale-login-family");
+      }),
+      http.post(`${origin}/api/v1/auth/logout`, () => cookieJar.logoutResponse()),
+    );
+
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await refreshStarted.promise;
+    await user.click(screen.getByRole("button", { name: "선택 계정 로그인" }));
+    await user.click(screen.getByRole("button", { name: "로그아웃" }));
+    finishRefresh.resolve();
+    finishLogin.resolve();
+
+    await waitFor(() => expect(cookieJar.value).toBeNull());
+    expect(loginCalls).toBe(0);
+    expect(screen.getByText("anonymous")).toBeInTheDocument();
+  });
+
+  it("allows a new login started after logout to become authoritative", async () => {
+    const user = userEvent.setup();
+    const cookieJar = new FakeRefreshCookieJar("old-family");
+    server.use(
+      http.post(`${origin}/api/v1/auth/refresh`, () => new HttpResponse(null, { status: 401 })),
+      http.post(`${origin}/api/v1/auth/logout`, () => cookieJar.logoutResponse()),
+      http.post(`${origin}/api/v1/auth/login`, () =>
+        cookieJar.loginResponse("chosen-token", "chosen-family"),
+      ),
+      http.get(`${origin}/api/v1/auth/me`, () => HttpResponse.json(actor("chosen@acme.example"))),
+    );
+
+    render(<AuthProvider><Probe /></AuthProvider>);
+    expect(await screen.findByText("anonymous")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "로그아웃" }));
+    await waitFor(() => expect(cookieJar.value).toBeNull());
+    await user.click(screen.getByRole("button", { name: "선택 계정 로그인" }));
+
+    expect(await screen.findByText("chosen@acme.example")).toBeInTheDocument();
+    expect(cookieJar.value).toBe("chosen-family");
+    expect(authSession.get()).toMatchObject({ accessToken: "chosen-token" });
   });
 });
 
@@ -317,4 +448,29 @@ async function waitForMicrotasks() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+class FakeRefreshCookieJar {
+  constructor(public value: string | null = null) {}
+
+  loginResponse(accessToken: string, refreshFamily: string) {
+    const setCookie = `AUTH_REFRESH=${refreshFamily}; Path=/api/v1/auth; HttpOnly; SameSite=Strict`;
+    this.applySetCookie(setCookie);
+    return HttpResponse.json(token(accessToken), { headers: { "Set-Cookie": setCookie } });
+  }
+
+  logoutResponse() {
+    const setCookie = "AUTH_REFRESH=; Path=/api/v1/auth; Max-Age=0; HttpOnly; SameSite=Strict";
+    this.applySetCookie(setCookie);
+    return new HttpResponse(null, { status: 204, headers: { "Set-Cookie": setCookie } });
+  }
+
+  private applySetCookie(setCookie: string) {
+    if (/Max-Age=0/i.test(setCookie)) {
+      this.value = null;
+      return;
+    }
+    const cookieValue = setCookie.split(";", 1)[0]?.split("=", 2)[1];
+    this.value = cookieValue || null;
+  }
 }

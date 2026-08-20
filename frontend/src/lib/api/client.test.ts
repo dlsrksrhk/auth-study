@@ -250,6 +250,62 @@ describe("apiClient", () => {
     expect(maxActiveRefreshes).toBe(1);
     expect(webLocks.requestedNames).toEqual([AUTH_OPERATION_LOCK_NAME, AUTH_OPERATION_LOCK_NAME]);
   });
+
+  it("cleans a failed provisional login without reacquiring the named lock or clearing a newer session", async () => {
+    const webLocks = new FakeWebLocks();
+    const session = createMemoryAuthSession();
+    const actorRequestStarted = deferred<void>();
+    const finishActorRequest = deferred<void>();
+    const logoutAuthorizations: Array<string | null> = [];
+    server.use(
+      http.post(`${origin}/api/v1/auth/login`, () =>
+        HttpResponse.json({
+          accessToken: "provisional-login",
+          accessTokenExpiresAt: "2026-08-20T01:00:00Z",
+          mustChangePassword: false,
+        }),
+      ),
+      http.get(`${origin}/api/v1/auth/me`, async () => {
+        actorRequestStarted.resolve();
+        await finishActorRequest.promise;
+        return HttpResponse.json(
+          {
+            type: "about:blank",
+            title: "Actor lookup failed",
+            status: 500,
+            detail: "Could not load the actor.",
+            code: "ME_FAILED",
+            traceId: "trace-me-failed",
+            fieldErrors: [],
+          },
+          { status: 500 },
+        );
+      }),
+      http.post(`${origin}/api/v1/auth/logout`, ({ request }) => {
+        logoutAuthorizations.push(request.headers.get("Authorization"));
+        return new HttpResponse(null, { status: 503 });
+      }),
+    );
+    const client = createApiClient({ session, authLock: createAuthOperationLock(webLocks) });
+
+    const login = client.runLoginTransaction(
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "admin@example.com", password: "Password1234!" }),
+      },
+      () => true,
+      (token) => client.requestWithAccessToken("/api/v1/auth/me", token.accessToken),
+    );
+    await actorRequestStarted.promise;
+    session.set("newer-login", "authenticated");
+    finishActorRequest.resolve();
+
+    await expect(login).rejects.toMatchObject({ status: 500, code: "ME_FAILED" });
+    expect(session.get()).toMatchObject({ accessToken: "newer-login", mode: "authenticated" });
+    expect(logoutAuthorizations).toEqual(["Bearer provisional-login"]);
+    expect(webLocks.requestedNames).toEqual([AUTH_OPERATION_LOCK_NAME]);
+  });
 });
 
 function deferred<T>() {

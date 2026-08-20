@@ -14,15 +14,20 @@ export type Actor = {
 };
 
 export const authApi = {
-  login: (email: string, password: string) =>
-    apiClient.request<TokenResponse>(
-      "/api/v1/auth/login",
+  login: <T>(
+    email: string,
+    password: string,
+    isCurrent: () => boolean,
+    complete: (token: TokenResponse) => Promise<T>,
+  ) =>
+    apiClient.runLoginTransaction(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       },
-      { authenticate: false, refreshOnUnauthorized: false },
+      isCurrent,
+      complete,
     ),
   refresh: () => apiClient.refreshAccessToken(),
   me: (accessToken?: string) =>

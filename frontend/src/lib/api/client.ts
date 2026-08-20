@@ -224,11 +224,41 @@ export function createApiClient(options: ApiClientOptions = {}) {
     return valueFrom<T>(await send(path, init, accessToken, true));
   }
 
+  async function runLoginTransaction<T>(
+    init: RequestInit,
+    isCurrent: () => boolean,
+    complete: (token: TokenResponse) => Promise<T>,
+  ): Promise<T> {
+    if (!isCurrent()) throw new StaleAuthOperationError();
+    return lock.runExclusive(async () => {
+      if (!isCurrent()) throw new StaleAuthOperationError();
+      let provisionalToken: TokenResponse | null = null;
+      try {
+        provisionalToken = await request<TokenResponse>(
+          "/api/v1/auth/login",
+          init,
+          { authenticate: false, refreshOnUnauthorized: false },
+        );
+        if (!isCurrent()) throw new StaleAuthOperationError();
+        return await complete(provisionalToken);
+      } catch (error) {
+        if (provisionalToken && !provisionalToken.mustChangePassword) {
+          try {
+            await rawLogout(provisionalToken.accessToken);
+          } catch {
+            // Preserve the login/actor failure; local session ownership is handled by the caller.
+          }
+        }
+        throw error;
+      }
+    });
+  }
+
   async function logout(accessToken: string | null): Promise<void> {
     return lock.runExclusive(() => rawLogout(accessToken));
   }
 
-  return { request, requestWithAccessToken, refreshAccessToken, logout };
+  return { request, requestWithAccessToken, runLoginTransaction, refreshAccessToken, logout };
 }
 
 export const apiClient = createApiClient();
