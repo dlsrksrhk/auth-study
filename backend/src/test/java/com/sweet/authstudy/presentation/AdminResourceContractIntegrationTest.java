@@ -18,6 +18,7 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 import com.jayway.jsonpath.JsonPath;
+import jakarta.persistence.EntityManagerFactory;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
@@ -43,6 +44,7 @@ import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.hibernate.SessionFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -69,6 +71,7 @@ class AdminResourceContractIntegrationTest {
     @Autowired JwtTokenService jwtTokenService;
     @Autowired PasswordEncoder passwordEncoder;
     @Autowired Clock clock;
+    @Autowired EntityManagerFactory entityManagerFactory;
 
     private Account system;
     private AuthenticatedAccount systemActor;
@@ -254,6 +257,44 @@ class AdminResourceContractIntegrationTest {
     }
 
     @Test
+    void user_list_loads_account_roles_in_a_constant_number_of_statements() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String oneCode = ("O" + suffix).toUpperCase();
+        String manyCode = ("M" + suffix).toUpperCase();
+        createCompany(oneCode, "one-" + suffix + ".roles.example");
+        createCompany(manyCode, "many-" + suffix + ".roles.example");
+        createUser(oneCode, "U001", "E-ONE", "one@one-" + suffix + ".roles.example");
+        for (int index = 1; index <= 4; index++) {
+            createUser(manyCode, "U00" + index, "E-MANY-" + index,
+                    "many" + index + "@many-" + suffix + ".roles.example");
+        }
+        mvc.perform(put("/api/v1/admin/companies/{companyCode}/users/U002/admin-role", manyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isNoContent());
+
+        var statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+        statistics.setStatisticsEnabled(true);
+        statistics.clear();
+        mvc.perform(get("/api/v1/admin/companies/{companyCode}/users", oneCode)
+                        .param("page", "0").param("size", "20").param("sort", "code")
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].roles[0]").value("USER"));
+        long oneUserStatements = statistics.getPrepareStatementCount();
+
+        statistics.clear();
+        mvc.perform(get("/api/v1/admin/companies/{companyCode}/users", manyCode)
+                        .param("page", "0").param("size", "20").param("sort", "code")
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(4))
+                .andExpect(jsonPath("$.content[1].code").value("U002"))
+                .andExpect(jsonPath("$.content[1].roles", org.hamcrest.Matchers.hasItems("USER", "COMPANY_ADMIN")));
+        long manyUserStatements = statistics.getPrepareStatementCount();
+
+        assertThat(manyUserStatements).isEqualTo(oneUserStatements);
+    }
+
+    @Test
     void unsafe_code_is_rejected_by_the_application_service_too() {
         assertThatThrownBy(() -> companyService.create(systemActor,
                 new CreateCompanyCommand(" BAD/CODE ", "Bad", UUID.randomUUID() + ".example")))
@@ -329,6 +370,16 @@ class AdminResourceContractIntegrationTest {
                         .header(AUTHORIZATION, "Bearer " + systemToken).contentType(APPLICATION_JSON)
                         .content("{\"code\":\"" + code + "\",\"name\":\"Resources\","
                                 + "\"emailDomain\":\"" + domain + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    private void createUser(String companyCode, String code, String employeeNumber, String email) throws Exception {
+        mvc.perform(post("/api/v1/admin/companies/{companyCode}/users", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken).contentType(APPLICATION_JSON)
+                        .content("{\"code\":\"" + code + "\",\"employeeNumber\":\"" + employeeNumber + "\","
+                                + "\"name\":\"Role User\",\"loginEmail\":\"" + email + "\","
+                                + "\"phone\":\"010-0000-0000\",\"hiredAt\":\"2026-08-20\","
+                                + "\"workplace\":\"Seoul\",\"positionCode\":\"EMPLOYEE\"}"))
                 .andExpect(status().isCreated());
     }
 }

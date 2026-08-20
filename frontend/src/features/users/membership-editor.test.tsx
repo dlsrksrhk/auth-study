@@ -1,13 +1,15 @@
 import { HttpResponse, http } from "msw";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
+import { useState } from "react";
 
 import { server } from "@/test/setup";
 import type { Department } from "@/features/departments/department-api";
 import { MembershipEditor } from "./membership-editor";
 import { UserDetail } from "./user-detail";
 import { UserForm } from "./user-form";
+import { AdminSecretOperationProvider } from "./admin-secret-operation-provider";
 
 const departments: Department[] = [
   { id: 1, companyId: 7, parentDepartmentId: null, code: "DEV", name: "개발", status: "ACTIVE", version: 1, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:00Z" },
@@ -18,6 +20,8 @@ const memberships = [
   { id: 31, companyId: 7, userId: 10, departmentId: 1, role: "MEMBER", primary: false, startedAt: "2026-08-20T00:00:00Z", endedAt: null, version: 2 },
   { id: 32, companyId: 7, userId: 10, departmentId: 2, role: "DEPUTY_HEAD", primary: false, startedAt: "2026-08-20T00:00:00Z", endedAt: null, version: 1 },
 ] as const;
+
+function renderAdmin(ui: React.ReactNode) { return render(<AdminSecretOperationProvider>{ui}</AdminSecretOperationProvider>); }
 
 it("requires exactly one active primary membership and active position before activation", async () => {
   const user = userEvent.setup();
@@ -90,7 +94,7 @@ it("shows a creation password once and clears it permanently when the dialog clo
     expect(await request.json()).toEqual({ code: "U001", employeeNumber: "E001", name: "홍길동", loginEmail: "u001@acme.test", phone: "010", hiredAt: "2026-08-20", workplace: "서울", profileImageUrl: "", positionCode: "EMPLOYEE" });
     return HttpResponse.json({ user: userRecord, temporaryPassword: "OnlyOnce1234!" }, { status: 201 });
   }));
-  render(<UserForm companyCode="ACME" onRefresh={() => undefined} open positions={[{ id: 5, companyId: 7, code: "EMPLOYEE", name: "사원", level: 10, displayOrder: 10, active: true, version: 1, createdAt: "", updatedAt: "" }]} onOpenChange={() => undefined} />);
+  renderAdmin(<UserForm companyCode="ACME" onRefresh={() => undefined} open positions={[{ id: 5, companyId: 7, code: "EMPLOYEE", name: "사원", level: 10, displayOrder: 10, active: true, version: 1, createdAt: "", updatedAt: "" }]} onOpenChange={() => undefined} />);
   await user.type(screen.getByLabelText("사용자 코드"), "u001");
   await user.type(screen.getByLabelText("사번"), "E001");
   await user.type(screen.getByLabelText("이름"), "홍길동");
@@ -116,7 +120,7 @@ it("renders an XSS-shaped name as text and surfaces peer-admin 403 from role-sen
     http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({ content: memberships, page: 0, size: 100, totalElements: 2, totalPages: 1 })),
     http.post("/api/v1/admin/companies/ACME/users/U001/temporary-password", () => HttpResponse.json({ type: "about:blank", title: "Forbidden", detail: "관리자 계정은 시스템 관리자만 변경할 수 있습니다.", status: 403, code: "FORBIDDEN", traceId: "peer-admin-403", fieldErrors: [] }, { status: 403 })),
   );
-  render(<UserDetail actorRoles={["COMPANY_ADMIN"]} companyCode="ACME" userCode="U001" />);
+  renderAdmin(<UserDetail actorRoles={["COMPANY_ADMIN"]} companyCode="ACME" userCode="U001" />);
   expect((await screen.findAllByText(xssName))[0]).toBeVisible();
   expect(document.querySelector("img")).toBeNull();
   expect(screen.queryByRole("button", { name: "회사 관리자 지정" })).not.toBeInTheDocument();
@@ -139,7 +143,7 @@ it("shows exactly one truthful admin role action, confirms session revocation, a
     http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({ content: memberships, page: 0, size: 100, totalElements: 2, totalPages: 1 })),
     http.put("/api/v1/admin/companies/ACME/users/U001/admin-role", () => { grantCalls += 1; companyAdmin = true; return new HttpResponse(null, { status: 204 }); }),
   );
-  render(<UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />);
+  renderAdmin(<UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />);
 
   expect(await screen.findByRole("button", { name: "회사 관리자 지정" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "회사 관리자 회수" })).not.toBeInTheDocument();
@@ -160,9 +164,38 @@ it("hides password reset from a company admin targeting a peer company admin", a
     http.get("/api/v1/admin/companies/ACME/departments", () => HttpResponse.json({ content: departments, page: 0, size: 100, totalElements: 2, totalPages: 1 })),
     http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({ content: memberships, page: 0, size: 100, totalElements: 2, totalPages: 1 })),
   );
-  render(<UserDetail actorRoles={["COMPANY_ADMIN"]} companyCode="ACME" userCode="U001" />);
+  renderAdmin(<UserDetail actorRoles={["COMPANY_ADMIN"]} companyCode="ACME" userCode="U001" />);
   expect(await screen.findByRole("heading", { name: "홍길동", level: 1 })).toBeVisible();
   expect(screen.queryByRole("button", { name: "임시 비밀번호 재발급" })).not.toBeInTheDocument();
+});
+
+it("keeps an actual reset request and one-time secret across a detail route child switch", async () => {
+  const user = userEvent.setup();
+  let requestSignal: AbortSignal | undefined;
+  let release: (() => void) | undefined;
+  server.use(
+    http.get("/api/v1/admin/companies/ACME/users/U001", () => HttpResponse.json(userRecord)),
+    http.get("/api/v1/admin/companies/ACME/positions", () => HttpResponse.json({ content: [{ id: 5, companyId: 7, code: "EMPLOYEE", name: "사원", level: 10, displayOrder: 10, active: true, version: 1, createdAt: "", updatedAt: "" }], page: 0, size: 100, totalElements: 1, totalPages: 1 })),
+    http.get("/api/v1/admin/companies/ACME/departments", () => HttpResponse.json({ content: departments, page: 0, size: 100, totalElements: 2, totalPages: 1 })),
+    http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({ content: memberships, page: 0, size: 100, totalElements: 2, totalPages: 1 })),
+    http.post("/api/v1/admin/companies/ACME/users/U001/temporary-password", async ({ request }) => {
+      requestSignal = request.signal;
+      await new Promise<void>((resolve) => { release = resolve; });
+      return HttpResponse.json({ temporaryPassword: "ResetAfterRoute123!" });
+    }),
+  );
+  function Routes() {
+    const [route, setRoute] = useState<"detail" | "departments">("detail");
+    return <AdminSecretOperationProvider><button type="button" onClick={() => setRoute("departments")}>부서 route로 이동</button>{route === "detail" ? <UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" /> : <p>부서 route 화면</p>}</AdminSecretOperationProvider>;
+  }
+  render(<Routes />);
+  await user.click(await screen.findByRole("button", { name: "임시 비밀번호 재발급" }));
+  await user.click(screen.getByRole("button", { name: "재발급 확인" }));
+  await waitFor(() => expect(requestSignal).toBeDefined());
+  fireEvent.click(screen.getByText("부서 route로 이동"));
+  expect(requestSignal?.aborted).toBe(false);
+  act(() => release?.());
+  expect(await screen.findByText("ResetAfterRoute123!")).toBeVisible();
 });
 
 it("loads every position and membership page before resolving current position, primary, and history", async () => {
@@ -187,7 +220,7 @@ it("loads every position and membership page before resolving current position, 
     }),
   );
 
-  render(<UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />);
+  renderAdmin(<UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />);
   expect(await screen.findByText("현재 직위 (CURRENT)")).toBeVisible();
   expect(screen.getByRole("region", { name: "종료된 소속 이력" })).toHaveTextContent("종료");
   await user.click(screen.getByRole("button", { name: "사용자 활성화" }));
@@ -210,7 +243,7 @@ it("closes a stale user form and refetches the latest profile/version after an o
       return HttpResponse.json({ type: "about:blank", title: "Conflict", detail: "User version does not match.", status: 409, code: "OPTIMISTIC_LOCK_CONFLICT", traceId: "user-stale", fieldErrors: [] }, { status: 409 });
     }),
   );
-  render(<UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />);
+  renderAdmin(<UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />);
   await user.click(await screen.findByRole("button", { name: "프로필 수정" }));
   await user.clear(screen.getByLabelText("이름"));
   await user.type(screen.getByLabelText("이름"), "내 수정");

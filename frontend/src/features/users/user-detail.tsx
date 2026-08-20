@@ -15,6 +15,7 @@ import { resourceCode } from "@/lib/resource-code";
 import { MembershipEditor } from "./membership-editor";
 import { userApi, type Membership, type User, type UserStatus } from "./user-api";
 import { UserForm } from "./user-form";
+import { useAdminSecretOperations } from "./admin-secret-operation-provider";
 
 type Props = { companyCode: string; userCode: string; actorRoles: Role[] };
 
@@ -31,12 +32,13 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
   const [pending, setPending] = useState(false);
   const [confirmStatus, setConfirmStatus] = useState<UserStatus | null>(null);
   const [confirmAccountAction, setConfirmAccountAction] = useState<"reset" | "grant" | "revoke" | null>(null);
-  const [temporaryPassword, setTemporaryPassword] = useState("");
-  const [copyMessage, setCopyMessage] = useState("");
   const [notice, setNotice] = useState("");
   const requestId = useRef(0);
+  const mounted = useRef(true);
+  const secretOperations = useAdminSecretOperations();
   let canonicalCompany = "", canonicalUser = "";
   try { canonicalCompany = decodeURIComponent(resourceCode(companyCode, "회사 코드")); canonicalUser = decodeURIComponent(resourceCode(userCode, "사용자 코드")); } catch { /* rendered below */ }
+  useEffect(() => () => { mounted.current = false; }, []);
 
   useEffect(() => {
     if (!canonicalCompany || !canonicalUser) return;
@@ -67,17 +69,14 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
     catch (cause) { showMutationError(cause); } finally { setPending(false); }
   }
   async function resetPassword() {
-    setPending(true); setError(null); setTraceId(null);
-    try { const result = await userApi.resetPassword(canonicalCompany, canonicalUser); setConfirmAccountAction(null); setTemporaryPassword(result.temporaryPassword); }
-    catch (cause) { showMutationError(cause); } finally { setPending(false); }
+    const completed = await secretOperations.resetPassword(canonicalCompany, canonicalUser);
+    if (mounted.current && completed) setConfirmAccountAction(null);
   }
   async function changeStatus() {
     if (!user || !confirmStatus) return; setPending(true); setError(null); setTraceId(null);
     try { await userApi.changeStatus(canonicalCompany, canonicalUser, confirmStatus, user.version); setConfirmStatus(null); setReload((value) => value + 1); }
     catch (cause) { showMutationError(cause); } finally { setPending(false); }
   }
-  function clearSecret() { setTemporaryPassword((secret) => secret ? "".padEnd(secret.length, "\0") : ""); queueMicrotask(() => setTemporaryPassword("")); setCopyMessage(""); }
-  async function copySecret() { try { await navigator.clipboard.writeText(temporaryPassword); setCopyMessage("임시 비밀번호를 복사했습니다."); } catch { setCopyMessage("직접 선택해 복사해 주세요."); } }
 
   if (!canonicalCompany || !canonicalUser) return <section><h1 className="text-3xl font-semibold">사용자 상세</h1><p aria-live="assertive" className="mt-6 rounded-xl border bg-white p-8 text-red-700">회사 또는 사용자 코드가 올바르지 않습니다.</p></section>;
   if (loading) return <div aria-busy="true"><span className="sr-only">사용자 상세를 불러오는 중입니다.</span><Skeleton className="h-96 w-full" /></div>;
@@ -86,6 +85,7 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
   const systemAdmin = actorRoles.includes("SYSTEM_ADMIN");
   const targetCompanyAdmin = user.roles.includes("COMPANY_ADMIN");
   const mayResetPassword = systemAdmin || !targetCompanyAdmin;
+  const accountPending = pending || secretOperations.pending === "reset";
   return <section aria-labelledby="user-detail-title" className="mx-auto max-w-7xl">
     <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="font-mono text-xs font-semibold text-teal-700">{canonicalCompany} / {canonicalUser}</p><h1 className="mt-2 text-3xl font-semibold" id="user-detail-title">{user.name}</h1><p className="mt-2 text-sm text-slate-600">프로필, 계정, 상태와 복수 소속을 관리합니다.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditing(true)}>프로필 수정</Button>{mayResetPassword ? <Button disabled={pending} variant="outline" onClick={() => setConfirmAccountAction("reset")}>임시 비밀번호 재발급</Button> : null}{systemAdmin ? targetCompanyAdmin ? <Button disabled={pending} variant="outline" onClick={() => setConfirmAccountAction("revoke")}>회사 관리자 회수</Button> : <Button disabled={pending} onClick={() => setConfirmAccountAction("grant")}>회사 관리자 지정</Button> : null}</div></div>
     {notice ? <p aria-live="polite" className="mt-4 text-sm text-teal-700">{notice}</p> : null}
@@ -99,8 +99,7 @@ export function UserDetail({ companyCode, userCode, actorRoles }: Props) {
     </div>
     {editing ? <UserForm companyCode={canonicalCompany} onConflict={(latestTraceId) => { setNotice("다른 관리자가 수정했습니다. 최신 사용자 정보를 다시 불러왔습니다."); setTraceId(latestTraceId); setReload((value) => value + 1); }} onOpenChange={setEditing} onRefresh={() => setReload((value) => value + 1)} open positions={positions} user={user} /> : null}
     <Dialog open={Boolean(confirmStatus)} onOpenChange={(next) => !pending && !next && setConfirmStatus(null)}><DialogContent showCloseButton={!pending}><DialogHeader><DialogTitle>사용자 상태를 {confirmStatus === "LOCKED" ? "잠금" : "퇴사"}으로 변경할까요?</DialogTitle><DialogDescription>로그인과 활성 Refresh Token에 즉시 영향을 줍니다. 서버가 현재 버전을 다시 확인합니다.</DialogDescription></DialogHeader><DialogFooter><Button disabled={pending} variant="outline" onClick={() => setConfirmStatus(null)}>취소</Button><Button disabled={pending} variant="destructive" onClick={() => void changeStatus()}>{pending ? "처리 중" : "상태 변경"}</Button></DialogFooter></DialogContent></Dialog>
-    <Dialog open={Boolean(confirmAccountAction)} onOpenChange={(next) => !pending && !next && setConfirmAccountAction(null)}><DialogContent showCloseButton={!pending}><DialogHeader><DialogTitle>{confirmAccountAction === "reset" ? "임시 비밀번호를 재발급할까요?" : `회사 관리자 권한을 ${confirmAccountAction === "grant" ? "지정" : "회수"}할까요?`}</DialogTitle><DialogDescription>완료하면 해당 계정의 현재 로그인 세션의 Refresh Token이 폐기됩니다.</DialogDescription></DialogHeader><DialogFooter><Button disabled={pending} variant="outline" onClick={() => setConfirmAccountAction(null)}>취소</Button><Button disabled={pending} onClick={() => confirmAccountAction === "reset" ? void resetPassword() : void roleAction(confirmAccountAction!)}>{pending ? "처리 중" : confirmAccountAction === "reset" ? "재발급 확인" : "권한 변경 확인"}</Button></DialogFooter></DialogContent></Dialog>
-    <Dialog open={Boolean(temporaryPassword)} onOpenChange={(next) => { if (!next) clearSecret(); }}><DialogContent showCloseButton={false}><DialogHeader><DialogTitle>일회성 임시 비밀번호</DialogTitle><DialogDescription>닫는 즉시 메모리에서 지워지며 다시 열 수 없습니다.</DialogDescription></DialogHeader><code className="select-all rounded bg-slate-950 p-3 text-center text-white">{temporaryPassword}</code><p aria-live="polite">{copyMessage}</p><DialogFooter><Button variant="outline" onClick={() => void copySecret()}>복사</Button><Button onClick={clearSecret}>비밀번호 확인 완료</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={Boolean(confirmAccountAction)} onOpenChange={(next) => !accountPending && !next && setConfirmAccountAction(null)}><DialogContent showCloseButton={!accountPending}><DialogHeader><DialogTitle>{confirmAccountAction === "reset" ? "임시 비밀번호를 재발급할까요?" : `회사 관리자 권한을 ${confirmAccountAction === "grant" ? "지정" : "회수"}할까요?`}</DialogTitle><DialogDescription>완료하면 해당 계정의 현재 로그인 세션의 Refresh Token이 폐기됩니다.</DialogDescription></DialogHeader><DialogFooter><Button disabled={accountPending} variant="outline" onClick={() => setConfirmAccountAction(null)}>취소</Button><Button disabled={accountPending} onClick={() => confirmAccountAction === "reset" ? void resetPassword() : void roleAction(confirmAccountAction!)}>{accountPending ? "처리 중" : confirmAccountAction === "reset" ? "재발급 확인" : "권한 변경 확인"}</Button></DialogFooter></DialogContent></Dialog>
   </section>;
 }
 

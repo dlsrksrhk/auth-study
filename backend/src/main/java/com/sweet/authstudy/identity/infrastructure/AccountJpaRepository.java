@@ -18,7 +18,9 @@ interface AccountJpaRepository extends JpaRepository<AccountJpaEntity, Long> {
     @Query("select a from AccountJpaEntity a where a.companyId = :companyId order by a.id")
     List<AccountJpaEntity> findAllByCompanyIdForUpdate(@Param("companyId") long companyId);
 
-    List<AccountJpaEntity> findAllByUserIdIn(Collection<Long> userIds);
+    @Query("select distinct a from AccountJpaEntity a left join fetch a.roles "
+            + "where a.userId in :userIds order by a.id")
+    List<AccountJpaEntity> findAllByUserIdIn(@Param("userIds") Collection<Long> userIds);
 
     Optional<AccountJpaEntity> findByCompanyIdAndLoginEmailIgnoreCase(long companyId, String loginEmail);
 

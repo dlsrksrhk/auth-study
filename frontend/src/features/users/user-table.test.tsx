@@ -1,10 +1,12 @@
 import { HttpResponse, http } from "msw";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
+import { useState } from "react";
 
 import { server } from "@/test/setup";
 import { UserTable } from "./user-table";
+import { AdminSecretOperationProvider } from "./admin-secret-operation-provider";
 
 const replace = vi.fn();
 let currentQuery = "";
@@ -27,6 +29,8 @@ function listHandlers() {
   );
 }
 
+function renderAdmin(ui: React.ReactNode) { return render(<AdminSecretOperationProvider>{ui}</AdminSecretOperationProvider>); }
+
 it("keeps the create form mounted through the one-time password step then clears it before parent close", async () => {
   listHandlers();
   const user = userEvent.setup();
@@ -34,7 +38,7 @@ it("keeps the create form mounted through the one-time password step then clears
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   server.use(http.post("/api/v1/admin/companies/ACME/users", () => HttpResponse.json({ user: createdUser, temporaryPassword: "ParentLives123!" }, { status: 201 })));
 
-  render(<UserTable companyCode="ACME" />);
+  renderAdmin(<UserTable companyCode="ACME" />);
   await screen.findByText("등록된 사용자가 없습니다.");
   await user.click(screen.getByRole("button", { name: "사용자 생성" }));
   await user.type(screen.getByLabelText("사용자 코드"), "U001");
@@ -57,22 +61,32 @@ it("keeps the create form mounted through the one-time password step then clears
   expect(screen.getByRole("dialog", { name: "사용자 생성" })).toBeVisible();
 });
 
-it("resets the search draft when browser navigation returns to an earlier query", async () => {
+it("keeps the same focused search input through self commit and external back navigation", async () => {
   currentQuery = "search=a";
   listHandlers();
   const user = userEvent.setup();
-  const view = render(<UserTable companyCode="ACME" />);
+  const view = renderAdmin(<UserTable companyCode="ACME" />);
   await screen.findByText("등록된 사용자가 없습니다.");
-  await user.type(screen.getByLabelText("사용자 검색"), "b");
-  expect(screen.getByLabelText("사용자 검색")).toHaveValue("ab");
+  const input = screen.getByLabelText("사용자 검색");
+  await user.click(input);
+  await user.type(input, "b");
+  expect(input).toHaveValue("ab");
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab", { scroll: false }));
 
   currentQuery = "search=ab";
-  view.rerender(<UserTable companyCode="ACME" />);
-  await waitFor(() => expect(screen.getByLabelText("사용자 검색")).toHaveValue("ab"));
+  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+  expect(screen.getByLabelText("사용자 검색")).toBe(input);
+  expect(input).toHaveFocus();
+  await user.type(input, "c");
+  expect(input).toHaveValue("abc");
   currentQuery = "search=a";
-  view.rerender(<UserTable companyCode="ACME" />);
+  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
 
-  await waitFor(() => expect(screen.getByLabelText("사용자 검색")).toHaveValue("a"));
+  await waitFor(() => expect(input).toHaveValue("a"));
+  expect(screen.getByLabelText("사용자 검색")).toBe(input);
+  expect(input).toHaveFocus();
+  await user.type(input, "z");
+  expect(input).toHaveValue("az");
 });
 
 it("sends canonical server paging, search, status, and sort query values", async () => {
@@ -82,7 +96,7 @@ it("sends canonical server paging, search, status, and sort query values", async
     http.get("/api/v1/admin/companies/ACME/users", ({ request }) => { observed = new URL(request.url).searchParams.toString(); return HttpResponse.json({ content: [], page: 2, size: 50, totalElements: 0, totalPages: 0 }); }),
     http.get("/api/v1/admin/companies/ACME/positions", () => HttpResponse.json({ content: [position], page: 0, size: 100, totalElements: 1, totalPages: 1 })),
   );
-  render(<UserTable companyCode="ACME" />);
+  renderAdmin(<UserTable companyCode="ACME" />);
   await screen.findByText("등록된 사용자가 없습니다.");
   expect(observed).toBe("page=2&size=50&sort=name&search=kim&status=LOCKED");
   expect(screen.getByLabelText("사용자 검색")).toHaveValue("kim");
@@ -90,7 +104,26 @@ it("sends canonical server paging, search, status, and sort query values", async
   expect(screen.getByLabelText("정렬")).toHaveValue("name");
 });
 
-it("aborts a delayed create mutation when the page unmounts", async () => {
+it("does not mistake a later external query for an earlier trimmed self commit", async () => {
+  currentQuery = "search=a";
+  listHandlers();
+  const user = userEvent.setup();
+  const view = renderAdmin(<UserTable companyCode="ACME" />);
+  const input = await screen.findByLabelText("사용자 검색");
+  await user.click(input);
+  await user.type(input, " ");
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=a", { scroll: false }));
+
+  currentQuery = "search=b";
+  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+  await waitFor(() => expect(input).toHaveValue("b"));
+  currentQuery = "search=a";
+  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+  await waitFor(() => expect(input).toHaveValue("a"));
+  expect(input).toHaveFocus();
+});
+
+it("keeps a delayed committed create alive when the user page route child unmounts", async () => {
   listHandlers();
   const user = userEvent.setup();
   let requestSignal: AbortSignal | undefined;
@@ -100,7 +133,11 @@ it("aborts a delayed create mutation when the page unmounts", async () => {
     await new Promise<void>((resolve) => { release = resolve; });
     return HttpResponse.json({ user: createdUser, temporaryPassword: "MustNotSurface123!" }, { status: 201 });
   }));
-  const view = render(<UserTable companyCode="ACME" />);
+  function Routes() {
+    const [route, setRoute] = useState<"users" | "departments">("users");
+    return <AdminSecretOperationProvider><button type="button" onClick={() => setRoute("departments")}>부서 관리로 이동</button>{route === "users" ? <UserTable companyCode="ACME" /> : <p>부서 관리 route</p>}</AdminSecretOperationProvider>;
+  }
+  render(<Routes />);
   await screen.findByText("등록된 사용자가 없습니다.");
   await user.click(screen.getByRole("button", { name: "사용자 생성" }));
   await user.type(screen.getByLabelText("사용자 코드"), "U001");
@@ -113,7 +150,9 @@ it("aborts a delayed create mutation when the page unmounts", async () => {
   await user.selectOptions(screen.getByLabelText("직위"), "EMPLOYEE");
   await user.click(screen.getByRole("button", { name: "사용자 생성" }));
   await waitFor(() => expect(requestSignal).toBeDefined());
-  view.unmount();
-  expect(requestSignal?.aborted).toBe(true);
+  fireEvent.click(screen.getByText("부서 관리로 이동"));
+  expect(screen.getByText("부서 관리 route")).toBeVisible();
+  expect(requestSignal?.aborted).toBe(false);
   release?.();
+  expect(await screen.findByText("MustNotSurface123!")).toBeVisible();
 });

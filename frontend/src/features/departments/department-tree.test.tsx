@@ -1,5 +1,5 @@
 import { HttpResponse, http } from "msw";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 
@@ -133,7 +133,7 @@ it("closes a stale department form and refetches the latest version after an opt
 
   expect(await screen.findByText("다른 관리자가 수정해 최신 부서 정보를 다시 불러왔습니다.")).toBeVisible();
   expect(await screen.findByRole("treeitem", { name: "DEV 최신 개발" })).toBeVisible();
-  expect(screen.getByRole("treeitem", { name: "DEV 최신 개발" })).toHaveFocus();
+  await waitFor(() => expect(screen.getByRole("treeitem", { name: "DEV 최신 개발" })).toHaveFocus());
   expect(screen.queryByRole("dialog", { name: "DEV 수정" })).not.toBeInTheDocument();
   expect(listCalls).toBeGreaterThan(1);
 });

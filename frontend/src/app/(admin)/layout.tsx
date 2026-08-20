@@ -9,12 +9,15 @@ import { AdminSidebar } from "@/components/layout/admin-sidebar";
 import { CompanySwitcher } from "@/components/layout/company-switcher";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/features/auth/auth-provider";
+import { AdminSecretOperationProvider } from "@/features/users/admin-secret-operation-provider";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
-    <Suspense fallback={<AdminLoading />}>
-      <AdminLayoutContent>{children}</AdminLayoutContent>
-    </Suspense>
+    <AdminSecretOperationProvider>
+      <Suspense fallback={<AdminLoading />}>
+        <AdminLayoutContent>{children}</AdminLayoutContent>
+      </Suspense>
+    </AdminSecretOperationProvider>
   );
 }
 
