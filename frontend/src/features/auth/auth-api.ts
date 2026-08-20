@@ -1,12 +1,8 @@
-import { apiClient } from "@/lib/api/client";
+import { apiClient, type TokenResponse } from "@/lib/api/client";
 
 export type Role = "SYSTEM_ADMIN" | "COMPANY_ADMIN" | "USER";
 
-export type TokenResponse = {
-  accessToken: string;
-  accessTokenExpiresAt: string;
-  mustChangePassword: boolean;
-};
+export type { TokenResponse } from "@/lib/api/client";
 
 export type Actor = {
   accountId: number;
@@ -29,8 +25,11 @@ export const authApi = {
       { authenticate: false, refreshOnUnauthorized: false },
     ),
   refresh: () => apiClient.refreshAccessToken(),
-  me: () => apiClient.request<Actor>("/api/v1/auth/me"),
-  logout: () => apiClient.request<void>("/api/v1/auth/logout", { method: "POST" }),
+  me: (accessToken?: string) =>
+    accessToken
+      ? apiClient.requestWithAccessToken<Actor>("/api/v1/auth/me", accessToken)
+      : apiClient.request<Actor>("/api/v1/auth/me"),
+  logout: (accessToken: string | null) => apiClient.logout(accessToken),
   changePassword: (currentPassword: string, newPassword: string) =>
     apiClient.request<void>(
       "/api/v1/auth/password",

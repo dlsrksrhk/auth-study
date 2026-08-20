@@ -103,7 +103,12 @@ export default function LoginPage() {
                 <p id="password-error" className="text-sm text-destructive">{fieldErrors.password}</p>
               ) : null}
             </div>
-            <Button className="w-full" type="submit" disabled={submitting} aria-busy={submitting}>
+            <Button
+              className="w-full"
+              type="submit"
+              disabled={submitting || auth.status === "loading"}
+              aria-busy={submitting || auth.status === "loading"}
+            >
               {submitting ? "로그인 중…" : "로그인"}
             </Button>
           </form>

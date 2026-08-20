@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createApiClient } from "./client";
 import { createMemoryAuthSession } from "@/features/auth/auth-session";
+import {
+  AUTH_OPERATION_LOCK_NAME,
+  createAuthOperationLock,
+  type WebLockManagerLike,
+} from "@/features/auth/auth-operation-lock";
 import { server } from "@/test/setup";
 
 const origin = "http://localhost:3000";
@@ -126,7 +131,7 @@ describe("apiClient", () => {
     const client = createApiClient({ session });
 
     await expect(client.request("/api/protected")).rejects.toMatchObject({ status: 401 });
-    expect(session.get()).toEqual({ accessToken: null, mode: "anonymous" });
+    expect(session.get()).toMatchObject({ accessToken: null, mode: "anonymous" });
     expect(refreshCalls).toBe(1);
     expect(protectedCalls).toBe(2);
   });
@@ -142,4 +147,138 @@ describe("apiClient", () => {
     });
     expect(refreshCalls).toBe(0);
   });
+
+  it("does not let a retried 401 clear a newer login session", async () => {
+    const session = createMemoryAuthSession();
+    session.set("expired-access", "authenticated");
+    const retryStarted = deferred<void>();
+    const finishRetry = deferred<void>();
+    server.use(
+      http.get(`${origin}/api/protected`, async ({ request }) => {
+        if (request.headers.get("Authorization") === "Bearer fresh-access") {
+          retryStarted.resolve();
+          await finishRetry.promise;
+        }
+        return new HttpResponse(null, { status: 401 });
+      }),
+      http.post(`${origin}/api/v1/auth/refresh`, () =>
+        HttpResponse.json({
+          accessToken: "fresh-access",
+          accessTokenExpiresAt: "2026-08-20T01:00:00Z",
+          mustChangePassword: false,
+        }),
+      ),
+    );
+    const client = createApiClient({ session });
+    const request = client.request("/api/protected");
+    await retryStarted.promise;
+
+    session.set("new-login-token", "authenticated");
+    finishRetry.resolve();
+
+    await expect(request).rejects.toMatchObject({ status: 401 });
+    expect(session.get()).toMatchObject({
+      accessToken: "new-login-token",
+      mode: "authenticated",
+    });
+  });
+
+  it("does not let a failed refresh clear a newer login session", async () => {
+    const session = createMemoryAuthSession();
+    session.set("expired-access", "authenticated");
+    const refreshStarted = deferred<void>();
+    const finishRefresh = deferred<void>();
+    server.use(
+      http.get(`${origin}/api/protected`, () => new HttpResponse(null, { status: 401 })),
+      http.post(`${origin}/api/v1/auth/refresh`, async () => {
+        refreshStarted.resolve();
+        await finishRefresh.promise;
+        return new HttpResponse(null, { status: 401 });
+      }),
+    );
+    const client = createApiClient({ session });
+    const request = client.request("/api/protected");
+    await refreshStarted.promise;
+
+    session.set("new-login-token", "authenticated");
+    finishRefresh.resolve();
+
+    await expect(request).rejects.toMatchObject({ status: 401 });
+    expect(session.get()).toMatchObject({
+      accessToken: "new-login-token",
+      mode: "authenticated",
+    });
+  });
+
+  it("serializes refresh rotation across independent client contexts with the named Web Lock", async () => {
+    const webLocks = new FakeWebLocks();
+    const sessionA = createMemoryAuthSession();
+    const sessionB = createMemoryAuthSession();
+    sessionA.set("expired-a", "authenticated");
+    sessionB.set("expired-b", "authenticated");
+    let refreshNumber = 0;
+    let activeRefreshes = 0;
+    let maxActiveRefreshes = 0;
+    server.use(
+      http.get(`${origin}/api/protected`, ({ request }) =>
+        request.headers.get("Authorization")?.startsWith("Bearer fresh-")
+          ? HttpResponse.json({ ok: true })
+          : new HttpResponse(null, { status: 401 }),
+      ),
+      http.post(`${origin}/api/v1/auth/refresh`, async () => {
+        activeRefreshes += 1;
+        maxActiveRefreshes = Math.max(maxActiveRefreshes, activeRefreshes);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        activeRefreshes -= 1;
+        refreshNumber += 1;
+        return HttpResponse.json({
+          accessToken: `fresh-${refreshNumber}`,
+          accessTokenExpiresAt: "2026-08-20T01:00:00Z",
+          mustChangePassword: false,
+        });
+      }),
+    );
+    const clientA = createApiClient({ session: sessionA, authLock: createAuthOperationLock(webLocks) });
+    const clientB = createApiClient({ session: sessionB, authLock: createAuthOperationLock(webLocks) });
+
+    await Promise.all([
+      clientA.request("/api/protected"),
+      clientB.request("/api/protected"),
+    ]);
+
+    expect(refreshNumber).toBe(2);
+    expect(maxActiveRefreshes).toBe(1);
+    expect(webLocks.requestedNames).toEqual([AUTH_OPERATION_LOCK_NAME, AUTH_OPERATION_LOCK_NAME]);
+  });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+class FakeWebLocks implements WebLockManagerLike {
+  readonly requestedNames: string[] = [];
+  private tails = new Map<string, Promise<void>>();
+
+  async request<T>(name: string, callback: () => Promise<T>): Promise<T> {
+    this.requestedNames.push(name);
+    const previous = this.tails.get(name) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.tails.set(name, previous.catch(() => undefined).then(() => current));
+    await previous.catch(() => undefined);
+    try {
+      return await callback();
+    } finally {
+      release();
+    }
+  }
+}

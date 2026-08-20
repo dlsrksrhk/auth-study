@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,6 +56,29 @@ describe("LoginPage", () => {
     expect(sessionStorage.length).toBe(0);
   });
 
+  it("disables login submission while bootstrap authentication is loading", async () => {
+    let finishRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => {
+      finishRefresh = resolve;
+    });
+    server.use(
+      http.post(`${origin}/api/v1/auth/refresh`, async () => {
+        await refreshGate;
+        return new HttpResponse(null, { status: 401 });
+      }),
+    );
+
+    render(
+      <AuthProvider>
+        <LoginPage />
+      </AuthProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "로그인" })).toBeDisabled();
+    finishRefresh();
+    await waitFor(() => expect(screen.getByRole("button", { name: "로그인" })).toBeEnabled());
+  });
+
   it("maps field errors, exposes the trace id, and moves focus to the error summary", async () => {
     const user = userEvent.setup();
     server.use(
@@ -80,6 +103,7 @@ describe("LoginPage", () => {
       </AuthProvider>,
     );
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "로그인" })).toBeEnabled());
     await user.type(screen.getByLabelText("이메일"), "invalid");
     await user.type(screen.getByLabelText("비밀번호"), "wrong-password");
     await user.click(screen.getByRole("button", { name: "로그인" }));

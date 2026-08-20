@@ -1,11 +1,24 @@
-import { authSession, type MemoryAuthSession } from "@/features/auth/auth-session";
+import {
+  authOperationLock,
+  type AuthOperationLock,
+} from "@/features/auth/auth-operation-lock";
+import {
+  authSession,
+  type AuthSessionValue,
+  type MemoryAuthSession,
+} from "@/features/auth/auth-session";
 import { createSingleFlight } from "@/features/auth/single-flight-refresh";
 import { ApiProblemError, type ApiProblem } from "./problem";
 
-type TokenResponse = {
+export type TokenResponse = {
   accessToken: string;
   accessTokenExpiresAt: string;
   mustChangePassword: boolean;
+};
+
+export type RefreshCommit = {
+  token: TokenResponse;
+  session: AuthSessionValue;
 };
 
 type ApiRequestOptions = {
@@ -16,9 +29,17 @@ type ApiRequestOptions = {
 
 type ApiClientOptions = {
   session?: MemoryAuthSession;
+  authLock?: AuthOperationLock;
 };
 
 const passwordEndpoint = "/api/v1/auth/password";
+
+export class StaleAuthOperationError extends Error {
+  constructor() {
+    super("The authentication session changed while the request was in flight.");
+    this.name = "StaleAuthOperationError";
+  }
+}
 
 function absoluteUrl(path: string): string {
   if (/^https?:\/\//.test(path)) return path;
@@ -79,19 +100,73 @@ function ensureReplayable(body: BodyInit | null | undefined): void {
 
 export function createApiClient(options: ApiClientOptions = {}) {
   const session = options.session ?? authSession;
-  const runRefresh = createSingleFlight<TokenResponse>();
+  const lock = options.authLock ?? authOperationLock;
+  const runRefresh = createSingleFlight<RefreshCommit>();
 
-  async function refreshAccessToken(): Promise<TokenResponse> {
+  const send = (
+    path: string,
+    init: RequestInit,
+    accessToken: string | null,
+    authenticate: boolean,
+  ) => {
+    const headers = new Headers(init.headers);
+    if (!headers.has("Accept")) headers.set("Accept", "application/json");
+    if (authenticate && accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+    return fetch(absoluteUrl(path), {
+      ...init,
+      headers,
+      credentials: init.credentials ?? "same-origin",
+    });
+  };
+
+  async function rawLogout(accessToken: string | null): Promise<void> {
+    const response = await send(
+      "/api/v1/auth/logout",
+      { method: "POST" },
+      accessToken,
+      true,
+    );
+    return valueFrom<void>(response);
+  }
+
+  async function refreshAccessToken(
+    expectedSession: AuthSessionValue = session.get(),
+  ): Promise<RefreshCommit> {
     return runRefresh(async () => {
-      const response = await fetch(absoluteUrl("/api/v1/auth/refresh"), {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { Accept: "application/json" },
-      });
-      if (!response.ok) throw await problemFrom(response);
-      const token = await valueFrom<TokenResponse>(response);
-      session.set(token.accessToken, "authenticated");
-      return token;
+      if (!session.isCurrent(expectedSession.generation)) throw new StaleAuthOperationError();
+      try {
+        return await lock.runExclusive(async () => {
+          if (!session.isCurrent(expectedSession.generation)) throw new StaleAuthOperationError();
+          const response = await send(
+            "/api/v1/auth/refresh",
+            { method: "POST" },
+            null,
+            false,
+          );
+          if (!response.ok) throw await problemFrom(response);
+          const token = await valueFrom<TokenResponse>(response);
+          const committed = session.compareAndSet(
+            expectedSession.generation,
+            token.accessToken,
+            "authenticated",
+            "refresh",
+          );
+          if (!committed) {
+            if (session.get().mode === "anonymous") {
+              try {
+                await rawLogout(token.accessToken);
+              } catch {
+                // A stale refresh must never restore local auth; cookie cleanup is best-effort.
+              }
+            }
+            throw new StaleAuthOperationError();
+          }
+          return { token, session: committed };
+        });
+      } catch (error) {
+        session.clearIfCurrent(expectedSession.generation);
+        throw error;
+      }
     });
   }
 
@@ -119,36 +194,41 @@ export function createApiClient(options: ApiClientOptions = {}) {
       );
     }
 
-    const send = (accessToken: string | null) => {
-      const headers = new Headers(init.headers);
-      if (!headers.has("Accept")) headers.set("Accept", "application/json");
-      if (authenticate && accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-      return fetch(absoluteUrl(path), {
-        ...init,
-        headers,
-        credentials: init.credentials ?? "same-origin",
-      });
-    };
-
     const tokenUsed = authenticate ? initialSession.accessToken : null;
-    let response = await send(tokenUsed);
+    let response = await send(path, init, tokenUsed, authenticate);
     if (response.status !== 401 || !refreshOnUnauthorized) return valueFrom<T>(response);
     if (init.signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
 
-    try {
-      const latestToken = session.get().accessToken;
-      if (!latestToken || latestToken === tokenUsed) await refreshAccessToken();
-      response = await send(session.get().accessToken);
-    } catch (error) {
-      session.clear();
-      throw error;
+    let retrySession: AuthSessionValue;
+    const currentSession = session.get();
+    if (currentSession.generation !== initialSession.generation) {
+      if (!session.isRefreshSuccessorOf(initialSession.generation)) {
+        throw new StaleAuthOperationError();
+      }
+      retrySession = currentSession;
+    } else {
+      retrySession = (await refreshAccessToken(initialSession)).session;
     }
 
-    if (response.status === 401) session.clear();
+    response = await send(path, init, retrySession.accessToken, authenticate);
+    if (response.status === 401) session.clearIfCurrent(retrySession.generation);
     return valueFrom<T>(response);
   }
 
-  return { request, refreshAccessToken };
+  async function requestWithAccessToken<T>(
+    path: string,
+    accessToken: string,
+    init: RequestInit = {},
+  ): Promise<T> {
+    ensureReplayable(init.body);
+    return valueFrom<T>(await send(path, init, accessToken, true));
+  }
+
+  async function logout(accessToken: string | null): Promise<void> {
+    return lock.runExclusive(() => rawLogout(accessToken));
+  }
+
+  return { request, requestWithAccessToken, refreshAccessToken, logout };
 }
 
 export const apiClient = createApiClient();
