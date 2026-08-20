@@ -1,0 +1,25 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/auth_study
+    username: auth_study
+    password: auth_study
+
+app:
+  security:
+    jwt:
+      secret: wX9uFnX9dXni4q5HKQv7oiVQak9aTUGq6xov2mT2Dk8=
+      access-token-ttl: PT15M
+      refresh-token-ttl: P7D
+    refresh-cookie:
+      name: refresh_token
+      path: /api/v1/auth
+      secure: false
+      same-site: Strict
+    browser-origin: http://localhost:3000
+    login-lock:
+      max-failures: 5
+      lock-duration: PT15M
+    bootstrap-admin:
+      email: admin@auth-study.local
+      password: AuthStudy1234!
+      must-change-password: false

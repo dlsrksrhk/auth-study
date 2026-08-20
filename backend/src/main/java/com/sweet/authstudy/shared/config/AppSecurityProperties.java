@@ -1,0 +1,26 @@
+package com.sweet.authstudy.shared.config;
+
+import java.time.Duration;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties(prefix = "app.security")
+public record AppSecurityProperties(
+        Jwt jwt,
+        RefreshCookie refreshCookie,
+        LoginLock loginLock,
+        BootstrapAdmin bootstrapAdmin,
+        String browserOrigin) {
+
+    public record Jwt(String secret, Duration accessTokenTtl, Duration refreshTokenTtl) {
+    }
+
+    public record RefreshCookie(String name, String path, boolean secure, String sameSite) {
+    }
+
+    public record LoginLock(int maxFailures, Duration lockDuration) {
+    }
+
+    public record BootstrapAdmin(String email, String password, boolean mustChangePassword) {
+    }
+}
