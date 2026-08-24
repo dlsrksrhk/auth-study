@@ -14,7 +14,9 @@ import com.sweet.authstudy.identity.application.AuthenticationService;
 import com.sweet.authstudy.identity.application.CredentialAuthenticationResult;
 import com.sweet.authstudy.identity.application.CredentialAuthenticationService;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
 import com.sweet.authstudy.oauth.application.OAuthSubjectService;
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
@@ -55,6 +57,7 @@ public class IdpLoginController {
     private final OAuthSubjectService subjects;
     private final OAuthClientRepository clients;
     private final Clock clock;
+    private final OAuthProtocolEventService protocolEvents;
     private final SecureRandom random = new SecureRandom();
 
     public IdpLoginController(OAuthSecurityProperties properties,
@@ -62,13 +65,15 @@ public class IdpLoginController {
             AuthenticationService authenticationService,
             OAuthSubjectService subjects,
             OAuthClientRepository clients,
-            Clock clock) {
+            Clock clock,
+            OAuthProtocolEventService protocolEvents) {
         this.properties = properties;
         this.credentials = credentials;
         this.authenticationService = authenticationService;
         this.subjects = subjects;
         this.clients = clients;
         this.clock = clock;
+        this.protocolEvents = protocolEvents;
     }
 
     @GetMapping("/idp/login")
@@ -116,7 +121,13 @@ public class IdpLoginController {
                 subject.subject(), now);
         establishAuthentication(session, authentication, result.mustChangePassword(), now);
         addSessionCookie(response, properties, session.getId());
+        OAuthProtocolEventService.Context eventContext = new OAuthProtocolEventService.Context(
+                pendingClientId(session), subject.subject(), result.accountId(), result.companyId(), null);
+        protocolEvents.success(OAuthProtocolEvent.EventType.LOGIN_SUCCEEDED, eventContext,
+                OAuthProtocolEvent.Metadata.from(java.util.Map.of("endpoint", "LOGIN")));
         if (result.mustChangePassword()) {
+            protocolEvents.success(OAuthProtocolEvent.EventType.PASSWORD_CHANGE_REQUIRED, eventContext,
+                    OAuthProtocolEvent.Metadata.from(java.util.Map.of("endpoint", "PASSWORD")));
             return "redirect:/idp/password";
         }
         return "redirect:" + consumePendingUri(session);
@@ -174,6 +185,10 @@ public class IdpLoginController {
                 idp.accountId(), idp.companyId(), idp.userId(), idp.roles(), idp.sub(), idp.authenticatedAt());
         establishAuthentication(session, refreshed, false, now);
         addSessionCookie(response, properties, session.getId());
+        protocolEvents.success(OAuthProtocolEvent.EventType.PASSWORD_CHANGED,
+                new OAuthProtocolEventService.Context(pendingClientId(session), idp.sub(),
+                        idp.accountId(), idp.companyId(), null),
+                OAuthProtocolEvent.Metadata.from(java.util.Map.of("endpoint", "PASSWORD")));
         return "redirect:" + consumePendingUri(session);
     }
 
@@ -186,10 +201,29 @@ public class IdpLoginController {
     }
 
     private String failedLogin(HttpSession session, HttpServletResponse response, Model model) {
+        protocolEvents.failure(OAuthProtocolEvent.EventType.LOGIN_FAILED, pendingContext(session),
+                "login_failed", OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                        "endpoint", "LOGIN", "reason", "LOGIN_FAILED")));
         prepareLoginForm(session, model);
         model.addAttribute("error", GENERIC_LOGIN_ERROR);
         addSessionCookie(response, properties, session.getId());
         return "idp/login";
+    }
+
+    private OAuthProtocolEventService.Context pendingContext(HttpSession session) {
+        Object value = session.getAttribute(PENDING_AUTHORIZATION_ATTRIBUTE);
+        if (!(value instanceof PendingAuthorizationRequest pending)) {
+            return OAuthProtocolEventService.Context.empty();
+        }
+        return clients.findById(pending.registeredClientId())
+                .map(client -> new OAuthProtocolEventService.Context(
+                        client.clientId(), null, null, client.companyId(), null))
+                .orElseGet(OAuthProtocolEventService.Context::empty);
+    }
+
+    private String pendingClientId(HttpSession session) {
+        Object value = session.getAttribute(PENDING_AUTHORIZATION_ATTRIBUTE);
+        return value instanceof PendingAuthorizationRequest pending ? pending.clientId() : null;
     }
 
     private boolean pendingOwnershipMatches(HttpSession session, CredentialAuthenticationResult result) {

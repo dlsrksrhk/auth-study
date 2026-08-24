@@ -9,10 +9,13 @@ import java.util.Optional;
 import java.util.Set;
 
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.core.Authentication;
@@ -42,6 +45,8 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
     private final OAuth2TokenGenerator<? extends OAuth2Token> tokenGenerator;
     private final OAuthSecurityProperties properties;
     private final Clock clock;
+    private final OAuthClientRepository clients;
+    private final OAuthProtocolEventService protocolEvents;
 
     public OAuthRefreshTokenAuthenticationProvider(
             OAuthAuthorizationRepository authorizations,
@@ -49,11 +54,24 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
             OAuth2TokenGenerator<? extends OAuth2Token> tokenGenerator,
             OAuthSecurityProperties properties,
             Clock clock) {
+        this(authorizations, mapper, tokenGenerator, properties, clock, null, null);
+    }
+
+    public OAuthRefreshTokenAuthenticationProvider(
+            OAuthAuthorizationRepository authorizations,
+            OAuthAuthorizationMapper mapper,
+            OAuth2TokenGenerator<? extends OAuth2Token> tokenGenerator,
+            OAuthSecurityProperties properties,
+            Clock clock,
+            OAuthClientRepository clients,
+            OAuthProtocolEventService protocolEvents) {
         this.authorizations = authorizations;
         this.mapper = mapper;
         this.tokenGenerator = tokenGenerator;
         this.properties = properties;
         this.clock = clock;
+        this.clients = clients;
+        this.protocolEvents = protocolEvents;
     }
 
     @Override
@@ -63,15 +81,19 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
         OAuth2ClientAuthenticationToken clientPrincipal = authenticatedClient(grant);
         RegisteredClient registeredClient = clientPrincipal.getRegisteredClient();
         Instant exchangedAt = clock.instant();
+        String refreshHash = OAuthAuthorizationMapper.sha256(grant.getRefreshToken());
+        EventSnapshot eventSnapshot = eventSnapshot(refreshHash);
 
         OAuthAuthorizationRepository.RefreshRotation<GeneratedResponse> rotation =
                 authorizations.rotateRefreshAtomically(
-                        OAuthAuthorizationMapper.sha256(grant.getRefreshToken()), exchangedAt,
+                        refreshHash, exchangedAt,
                         locked -> generate(grant, clientPrincipal, registeredClient, locked, exchangedAt));
         if (rotation.status() != OAuthAuthorizationRepository.RefreshRotationStatus.ROTATED) {
+            recordFailure(rotation.status(), eventSnapshot);
             throw invalidGrant();
         }
         GeneratedResponse response = rotation.result().orElseThrow();
+        recordRefreshSuccess(eventSnapshot);
         return new OAuth2AccessTokenAuthenticationToken(
                 registeredClient, clientPrincipal, response.accessToken(), response.refreshToken());
     }
@@ -198,10 +220,54 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
                 OAuth2ErrorCodes.SERVER_ERROR, description, null));
     }
 
+    private EventSnapshot eventSnapshot(String refreshHash) {
+        if (protocolEvents == null || clients == null) return EventSnapshot.empty();
+        return authorizations.findByRefreshTokenHash(refreshHash)
+                .flatMap(refresh -> authorizations.findById(refresh.authorizationId()))
+                .flatMap(authorization -> clients.findById(authorization.registeredClientId())
+                        .map(client -> new EventSnapshot(
+                                new OAuthProtocolEventService.Context(client.clientId(), authorization.subject(),
+                                        authorization.principalAccountId(), authorization.companyId(),
+                                        authorization.id()), authorization.authorizedScopes())))
+                .orElseGet(EventSnapshot::empty);
+    }
+
+    private void recordRefreshSuccess(EventSnapshot snapshot) {
+        if (protocolEvents == null) return;
+        protocolEvents.success(OAuthProtocolEvent.EventType.TOKEN_REFRESHED, snapshot.context(),
+                refreshMetadata(snapshot, null));
+    }
+
+    private void recordFailure(OAuthAuthorizationRepository.RefreshRotationStatus status,
+            EventSnapshot snapshot) {
+        if (protocolEvents == null) return;
+        if (status == OAuthAuthorizationRepository.RefreshRotationStatus.REUSED) {
+            protocolEvents.failure(OAuthProtocolEvent.EventType.TOKEN_REUSE_DETECTED, snapshot.context(),
+                    "invalid_grant", refreshMetadata(snapshot, "TOKEN_REUSE"));
+        } else {
+            protocolEvents.failure(OAuthProtocolEvent.EventType.TOKEN_REFRESHED, snapshot.context(),
+                    "invalid_grant", refreshMetadata(snapshot, "INVALID_GRANT"));
+        }
+    }
+
+    private OAuthProtocolEvent.Metadata refreshMetadata(EventSnapshot snapshot, String reason) {
+        java.util.Map<String, Object> values = new java.util.LinkedHashMap<>();
+        values.put("endpoint", "TOKEN");
+        values.put("grant_type", "REFRESH_TOKEN");
+        if (!snapshot.scopes().isEmpty()) values.put("scopes", snapshot.scopes());
+        if (reason != null) values.put("reason", reason);
+        return OAuthProtocolEvent.Metadata.from(values);
+    }
+
     @Override
     public boolean supports(Class<?> authentication) {
         return OAuth2RefreshTokenAuthenticationToken.class.isAssignableFrom(authentication);
     }
 
     private record GeneratedResponse(OAuth2AccessToken accessToken, OAuth2RefreshToken refreshToken) { }
+    private record EventSnapshot(OAuthProtocolEventService.Context context, Set<String> scopes) {
+        private static EventSnapshot empty() {
+            return new EventSnapshot(OAuthProtocolEventService.Context.empty(), Set.of());
+        }
+    }
 }

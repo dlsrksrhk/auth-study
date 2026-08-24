@@ -49,4 +49,9 @@ public class OAuthClientRepositoryAdapter implements OAuthClientRepository {
                 .map(OAuthClientJpaEntity::toDomain)
                 .toList();
     }
+
+    @Override
+    public List<OAuthClient> findAll() {
+        return repository.findAll().stream().map(OAuthClientJpaEntity::toDomain).toList();
+    }
 }

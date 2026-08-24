@@ -48,6 +48,16 @@ interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizati
             update OAuthAuthorizationJpaEntity a
                set a.status = com.sweet.authstudy.oauth.domain.OAuthAuthorization.Status.REVOKED,
                    a.revocationReason = :reason, a.revokedAt = :at
+             where a.id = :authorizationId and a.revokedAt is null
+            """)
+    int revokeById(@Param("authorizationId") String authorizationId,
+            @Param("reason") String reason, @Param("at") Instant at);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update OAuthAuthorizationJpaEntity a
+               set a.status = com.sweet.authstudy.oauth.domain.OAuthAuthorization.Status.REVOKED,
+                   a.revocationReason = :reason, a.revokedAt = :at
              where a.principalAccountId = :accountId and a.revokedAt is null
             """)
     int revokeByAccountId(@Param("accountId") long accountId, @Param("reason") String reason,

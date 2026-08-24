@@ -11,6 +11,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
+import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
@@ -43,16 +46,30 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
     private final SpringOAuth2AuthorizationService authorizations;
     private final PasswordEncoder secretEncoder;
     private final Clock clock;
+    private final OAuthAuthorizationRepository domainAuthorizations;
+    private final OAuthProtocolEventService protocolEvents;
 
     public AtomicAuthorizationCodeClientAuthenticationProvider(
             RegisteredClientRepository registeredClients,
             SpringOAuth2AuthorizationService authorizations,
             PasswordEncoder secretEncoder,
             Clock clock) {
+        this(registeredClients, authorizations, secretEncoder, clock, null, null);
+    }
+
+    public AtomicAuthorizationCodeClientAuthenticationProvider(
+            RegisteredClientRepository registeredClients,
+            SpringOAuth2AuthorizationService authorizations,
+            PasswordEncoder secretEncoder,
+            Clock clock,
+            OAuthAuthorizationRepository domainAuthorizations,
+            OAuthProtocolEventService protocolEvents) {
         this.registeredClients = registeredClients;
         this.authorizations = authorizations;
         this.secretEncoder = secretEncoder;
         this.clock = clock;
+        this.domainAuthorizations = domainAuthorizations;
+        this.protocolEvents = protocolEvents;
     }
 
     @Override
@@ -75,6 +92,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
 
         String rawCode = text(parameters.get(OAuth2ParameterNames.CODE));
         if (!StringUtils.hasText(rawCode)) throwInvalidGrant("code");
+        EventSnapshot eventSnapshot = eventSnapshot(rawCode, clientId);
 
         String redirectUri = text(parameters.get(OAuth2ParameterNames.REDIRECT_URI));
         String verifier = text(parameters.get("code_verifier"));
@@ -112,6 +130,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                         != com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode.Consumption.CONSUMED
                 || consumption.exchangeResult().isEmpty()
                 || !consumption.exchangeResult().orElseThrow().valid()) {
+            recordCodeFailure(consumption, eventSnapshot);
             throwInvalidGrant("code_verifier");
         }
 
@@ -194,9 +213,48 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                 OAuth2ErrorCodes.INVALID_GRANT, "Invalid grant: " + parameter, null));
     }
 
+    private EventSnapshot eventSnapshot(String rawCode, String clientId) {
+        if (domainAuthorizations == null || protocolEvents == null) return EventSnapshot.empty();
+        return domainAuthorizations.findByCodeHash(OAuthAuthorizationMapper.sha256(rawCode))
+                .flatMap(code -> domainAuthorizations.findById(code.authorizationId()))
+                .map(authorization -> new EventSnapshot(
+                        new OAuthProtocolEventService.Context(clientId, authorization.subject(),
+                                authorization.principalAccountId(), authorization.companyId(),
+                                authorization.id()), authorization.authorizedScopes()))
+                .orElseGet(EventSnapshot::empty);
+    }
+
+    private void recordCodeFailure(
+            OAuthAuthorizationRepository.CodeConsumption<ExchangeValidation> consumption,
+            EventSnapshot snapshot) {
+        if (protocolEvents == null) return;
+        java.util.Map<String, Object> values = new java.util.LinkedHashMap<>();
+        values.put("endpoint", "TOKEN");
+        values.put("grant_type", "AUTHORIZATION_CODE");
+        if (!snapshot.scopes().isEmpty()) values.put("scopes", snapshot.scopes());
+        boolean replay = consumption != null && consumption.consumption()
+                        == com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode.Consumption.ALREADY_USED;
+        values.put("reason", replay ? "CODE_REPLAY" : "INVALID_GRANT");
+        OAuthProtocolEvent.Metadata metadata = OAuthProtocolEvent.Metadata.from(values);
+        if (replay) {
+            protocolEvents.failure(OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_REPLAY_REJECTED,
+                    snapshot.context(), "invalid_grant", metadata);
+        } else {
+            protocolEvents.failure(OAuthProtocolEvent.EventType.TOKEN_ISSUED,
+                    snapshot.context(), "invalid_grant", metadata);
+        }
+    }
+
     private record ExchangeValidation(
             boolean valid, OAuthAuthorization authorization, String authenticatedSecretHash,
             OAuthAuthorizationCodeExchangeBinding binding) { }
+
+    private record EventSnapshot(OAuthProtocolEventService.Context context,
+            java.util.Set<String> scopes) {
+        private static EventSnapshot empty() {
+            return new EventSnapshot(OAuthProtocolEventService.Context.empty(), java.util.Set.of());
+        }
+    }
 
     public static final class Converter implements AuthenticationConverter {
         @Override

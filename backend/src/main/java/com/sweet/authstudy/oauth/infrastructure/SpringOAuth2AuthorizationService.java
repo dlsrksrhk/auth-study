@@ -10,6 +10,8 @@ import java.util.function.Function;
 
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
+import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
@@ -48,22 +50,25 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     private final Clock clock;
     private final OAuthConsentDecisionCoordinator consentCoordinator;
     private final OAuthConsentDecisionContext consentDecisions;
+    private final OAuthProtocolEventService protocolEvents;
 
     public SpringOAuth2AuthorizationService(OAuthAuthorizationRepository authorizations,
             OAuthAuthorizationMapper mapper, Clock clock) {
-        this(authorizations, mapper, clock, null, null);
+        this(authorizations, mapper, clock, null, null, null);
     }
 
     @Autowired
     SpringOAuth2AuthorizationService(OAuthAuthorizationRepository authorizations,
             OAuthAuthorizationMapper mapper, Clock clock,
             OAuthConsentDecisionCoordinator consentCoordinator,
-            OAuthConsentDecisionContext consentDecisions) {
+            OAuthConsentDecisionContext consentDecisions,
+            OAuthProtocolEventService protocolEvents) {
         this.authorizations = authorizations;
         this.mapper = mapper;
         this.clock = clock;
         this.consentCoordinator = consentCoordinator;
         this.consentDecisions = consentDecisions;
+        this.protocolEvents = protocolEvents;
     }
 
     @Override
@@ -84,6 +89,7 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
                         != OAuthAuthorizationRepository.CodeFinalizationResult.FINALIZED) {
                     throwInvalidGrant();
                 }
+                recordCodeExchange(consumed.binding());
                 return;
             }
             OAuthConsentService.ApprovalDecision staged = consentDecisions == null
@@ -101,7 +107,8 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
                         new IllegalArgumentException("Consent persistence was not staged."));
             }
             OAuthAuthorization existing = authorizations.findById(authorization.getId()).orElse(null);
-            authorizations.save(mapper.toDomain(authorization, existing));
+            OAuthAuthorization saved = authorizations.save(mapper.toDomain(authorization, existing));
+            recordAuthorizationSave(authorization, saved);
         } catch (IllegalArgumentException exception) {
             if (codeFinalization) throwInvalidGrant();
             throw exception;
@@ -246,6 +253,42 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     private void throwInvalidGrant() {
         throw new OAuth2AuthenticationException(new OAuth2Error(
                 OAuth2ErrorCodes.INVALID_GRANT, "Invalid authorization code grant.", null));
+    }
+
+    private void recordAuthorizationSave(
+            org.springframework.security.oauth2.server.authorization.OAuth2Authorization source,
+            OAuthAuthorization saved) {
+        if (protocolEvents == null) return;
+        OAuth2AuthorizationRequest request = source.getAttribute(OAuth2AuthorizationRequest.class.getName());
+        String clientId = request == null ? null : request.getClientId();
+        OAuthProtocolEventService.Context context = new OAuthProtocolEventService.Context(
+                clientId, saved.subject(), saved.principalAccountId(), saved.companyId(), saved.id());
+        java.util.Set<String> eventScopes = saved.authorizedScopes().isEmpty() && request != null
+                ? request.getScopes() : saved.authorizedScopes();
+        OAuthProtocolEvent.Metadata metadata = OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                "endpoint", "AUTHORIZE", "response_type", "CODE",
+                "scopes", eventScopes, "redirect_validated", true));
+        if (source.getToken(
+                org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class) != null) {
+            protocolEvents.success(OAuthProtocolEvent.EventType.AUTHORIZATION_REQUESTED, context, metadata);
+            protocolEvents.success(OAuthProtocolEvent.EventType.CODE_ISSUED, context, metadata);
+        } else {
+            protocolEvents.success(OAuthProtocolEvent.EventType.AUTHORIZATION_REQUESTED, context, metadata);
+        }
+    }
+
+    private void recordCodeExchange(OAuthAuthorizationCodeExchangeBinding binding) {
+        if (protocolEvents == null) return;
+        authorizations.findById(binding.authorizationId()).ifPresent(authorization -> {
+            OAuthProtocolEventService.Context context = new OAuthProtocolEventService.Context(
+                    binding.authorizationRequest().clientId(), authorization.subject(),
+                    authorization.principalAccountId(), authorization.companyId(), authorization.id());
+            OAuthProtocolEvent.Metadata metadata = OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                    "endpoint", "TOKEN", "grant_type", "AUTHORIZATION_CODE",
+                    "scopes", authorization.authorizedScopes()));
+            protocolEvents.success(OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_EXCHANGED, context, metadata);
+            protocolEvents.success(OAuthProtocolEvent.EventType.TOKEN_ISSUED, context, metadata);
+        });
     }
 
     private OAuth2AuthorizationCodeRequestAuthenticationException authorizationRequestError(

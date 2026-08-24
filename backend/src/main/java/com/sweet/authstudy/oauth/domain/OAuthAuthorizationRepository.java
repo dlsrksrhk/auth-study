@@ -147,6 +147,8 @@ public interface OAuthAuthorizationRepository {
     OAuthAccessToken saveAccessToken(OAuthAccessToken token);
     OAuthRefreshToken saveRefreshToken(OAuthRefreshToken token);
     void remove(String authorizationId);
+    /** Revokes one RP grant, including every access token and refresh generation it owns. */
+    void revokeAuthorization(String authorizationId, Instant revokedAt);
     void revokeFamily(UUID familyId, Instant revokedAt);
     void lockByAccountId(long accountId);
     void lockByCompanyId(long companyId);

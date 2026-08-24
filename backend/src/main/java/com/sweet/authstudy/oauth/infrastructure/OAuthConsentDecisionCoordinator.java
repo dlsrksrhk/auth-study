@@ -9,6 +9,8 @@ import java.util.Set;
 import com.sweet.authstudy.oauth.application.IdpSessionStateService;
 import com.sweet.authstudy.oauth.application.OAuthConsentDecisionService;
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
+import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
@@ -35,11 +37,12 @@ public class OAuthConsentDecisionCoordinator implements OAuthConsentDecisionServ
     private final OAuthAuthorizationMapper mapper;
     private final Clock clock;
     private final EntityManager entityManager;
+    private final OAuthProtocolEventService protocolEvents;
 
     public OAuthConsentDecisionCoordinator(OAuthAuthorizationRepository authorizations,
             OAuthClientRepository clients, OAuthConsentRepository consents,
             IdpSessionStateService sessionStates, OAuthAuthorizationMapper mapper, Clock clock,
-            EntityManager entityManager) {
+            EntityManager entityManager, OAuthProtocolEventService protocolEvents) {
         this.authorizations = authorizations;
         this.clients = clients;
         this.consents = consents;
@@ -47,6 +50,7 @@ public class OAuthConsentDecisionCoordinator implements OAuthConsentDecisionServ
         this.mapper = mapper;
         this.clock = clock;
         this.entityManager = entityManager;
+        this.protocolEvents = protocolEvents;
     }
 
     @Transactional
@@ -82,6 +86,12 @@ public class OAuthConsentDecisionCoordinator implements OAuthConsentDecisionServ
         // Both flushes participate in this transaction: a failed code save rolls consent back.
         consents.save(consent);
         authorizations.save(completed);
+        OAuthProtocolEventService.Context eventContext = new OAuthProtocolEventService.Context(
+                decision.clientId(), decision.sub(), decision.accountId(), decision.companyId(), completed.id());
+        OAuthProtocolEvent.Metadata metadata = OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                "endpoint", "CONSENT", "scopes", decision.requestedScopes(), "redirect_validated", true));
+        protocolEvents.successAfterCommit(OAuthProtocolEvent.EventType.CONSENT_APPROVED, eventContext, metadata);
+        protocolEvents.successAfterCommit(OAuthProtocolEvent.EventType.CODE_ISSUED, eventContext, metadata);
     }
 
     @Transactional

@@ -13,4 +13,6 @@ public interface OAuthClientRepository {
     Optional<OAuthClient> findByClientId(String clientId);
 
     List<OAuthClient> findByCompanyId(long companyId);
+
+    default List<OAuthClient> findAll() { return List.of(); }
 }

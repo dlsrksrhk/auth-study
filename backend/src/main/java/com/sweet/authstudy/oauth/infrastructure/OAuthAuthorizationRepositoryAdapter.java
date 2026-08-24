@@ -419,6 +419,15 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
 
     @Override
     @Transactional
+    public void revokeAuthorization(String authorizationId, Instant revokedAt) {
+        lockGrantScopes(java.util.List.of(authorizationId));
+        accessTokens.revokeByAuthorizationId(authorizationId, revokedAt);
+        refreshTokens.revokeByAuthorizationId(authorizationId, revokedAt);
+        authorizations.revokeById(authorizationId, "RP_REVOKED", revokedAt);
+    }
+
+    @Override
+    @Transactional
     public void revokeFamily(UUID familyId, Instant revokedAt) {
         lockGrantScopes(refreshTokens.findAuthorizationIdsByFamilyId(familyId));
         refreshTokens.revokeFamily(familyId, revokedAt);

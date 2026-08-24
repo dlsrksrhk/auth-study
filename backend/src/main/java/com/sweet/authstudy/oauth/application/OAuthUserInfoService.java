@@ -7,7 +7,10 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -15,17 +18,33 @@ public final class OAuthUserInfoService {
 
     private final OAuthUserInfoClaimSource claimSource;
     private final Clock clock;
+    private final OAuthProtocolEventService protocolEvents;
 
     public OAuthUserInfoService(OAuthUserInfoClaimSource claimSource, Clock clock) {
+        this(claimSource, clock, null);
+    }
+
+    @Autowired
+    public OAuthUserInfoService(OAuthUserInfoClaimSource claimSource, Clock clock,
+            OAuthProtocolEventService protocolEvents) {
         this.claimSource = claimSource;
         this.clock = clock;
+        this.protocolEvents = protocolEvents;
     }
 
     public OAuthUserInfoView userInfo(Request request) {
         Objects.requireNonNull(request, "request");
-        OAuthUserInfoClaimSource.Snapshot snapshot = claimSource.load(request.rawAccessToken())
-                .orElseThrow(InvalidTokenException::new);
-        validate(request, snapshot, clock.instant());
+        OAuthUserInfoClaimSource.Snapshot snapshot = claimSource.load(request.rawAccessToken()).orElse(null);
+        if (snapshot == null) {
+            recordRejected(null);
+            throw new InvalidTokenException();
+        }
+        try {
+            validate(request, snapshot, clock.instant());
+        } catch (RuntimeException exception) {
+            recordRejected(snapshot);
+            throw exception;
+        }
 
         Set<String> scopes = snapshot.authorization().grantedScopes();
         Optional<OAuthUserInfoView.Profile> profile = scopes.contains("profile")
@@ -43,8 +62,10 @@ public final class OAuthUserInfoService {
         Optional<List<String>> roles = scopes.contains("hr.roles")
                 ? Optional.of(snapshot.account().roles().stream().sorted().toList())
                 : Optional.empty();
-        return new OAuthUserInfoView(
+        OAuthUserInfoView view = new OAuthUserInfoView(
                 snapshot.subject().subject(), profile, email, company, organization, roles);
+        recordSuccess(snapshot);
+        return view;
     }
 
     private void validate(Request request, OAuthUserInfoClaimSource.Snapshot snapshot, Instant now) {
@@ -128,6 +149,41 @@ public final class OAuthUserInfoService {
     private static OAuthUserInfoView.CodeName codeName(OAuthUserInfoClaimSource.Membership membership) {
         return new OAuthUserInfoView.CodeName(
                 membership.department().code(), membership.department().name());
+    }
+
+    private void recordSuccess(OAuthUserInfoClaimSource.Snapshot snapshot) {
+        if (protocolEvents == null) return;
+        protocolEvents.success(OAuthProtocolEvent.EventType.USERINFO_SERVED, eventContext(snapshot),
+                eventMetadata(snapshot, null));
+    }
+
+    private void recordRejected(OAuthUserInfoClaimSource.Snapshot snapshot) {
+        if (protocolEvents == null) return;
+        protocolEvents.denied(OAuthProtocolEvent.EventType.USERINFO_REJECTED,
+                snapshot == null ? OAuthProtocolEventService.Context.empty() : eventContext(snapshot),
+                "invalid_token", eventMetadata(snapshot, "INVALID_TOKEN"));
+    }
+
+    private OAuthProtocolEventService.Context eventContext(OAuthUserInfoClaimSource.Snapshot snapshot) {
+        UUID subject;
+        try {
+            subject = UUID.fromString(snapshot.subject().subject());
+        } catch (IllegalArgumentException exception) {
+            subject = null;
+        }
+        return new OAuthProtocolEventService.Context(snapshot.client().clientId(), subject,
+                snapshot.account().id(), snapshot.company().id(), snapshot.authorization().id());
+    }
+
+    private OAuthProtocolEvent.Metadata eventMetadata(
+            OAuthUserInfoClaimSource.Snapshot snapshot, String reason) {
+        java.util.Map<String, Object> values = new java.util.LinkedHashMap<>();
+        values.put("endpoint", "USERINFO");
+        if (snapshot != null && !snapshot.authorization().grantedScopes().isEmpty()) {
+            values.put("scopes", snapshot.authorization().grantedScopes());
+        }
+        if (reason != null) values.put("reason", reason);
+        return OAuthProtocolEvent.Metadata.from(values);
     }
 
     private long positiveLong(String value) {

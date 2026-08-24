@@ -2,6 +2,8 @@ package com.sweet.authstudy.oauth.presentation;
 
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
 import com.sweet.authstudy.oauth.application.OAuthConsentDecisionService;
+import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
@@ -22,12 +24,14 @@ public class IdpConsentController {
     private final OAuth2AuthorizationService authorizations;
     private final OAuthConsentService consents;
     private final OAuthConsentDecisionService decisionCoordinator;
+    private final OAuthProtocolEventService protocolEvents;
 
     public IdpConsentController(OAuth2AuthorizationService authorizations, OAuthConsentService consents,
-            OAuthConsentDecisionService decisionCoordinator) {
+            OAuthConsentDecisionService decisionCoordinator, OAuthProtocolEventService protocolEvents) {
         this.authorizations = authorizations;
         this.consents = consents;
         this.decisionCoordinator = decisionCoordinator;
+        this.protocolEvents = protocolEvents;
     }
 
     @GetMapping("/idp/consent")
@@ -60,6 +64,11 @@ public class IdpConsentController {
                     state, clientId, pending.request().getScopes(), idp.accountId(),
                     idp.companyId(), idp.userId(), idp.sub());
             decisionCoordinator.deny(decision);
+            protocolEvents.denied(OAuthProtocolEvent.EventType.CONSENT_DENIED,
+                    eventContext(decision, false), "access_denied",
+                    OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                            "endpoint", "CONSENT", "scopes", decision.requestedScopes(),
+                            "redirect_validated", true, "reason", "ACCESS_DENIED")));
         } catch (RuntimeException exception) {
             return stale(response, model);
         }
@@ -68,6 +77,13 @@ public class IdpConsentController {
         appendQuery(callback, "error", "access_denied");
         if (request.getState() != null) appendQuery(callback, "state", request.getState());
         return "redirect:" + callback;
+    }
+
+    private OAuthProtocolEventService.Context eventContext(
+            OAuthConsentService.ApprovalDecision decision, boolean includeAuthorization) {
+        return new OAuthProtocolEventService.Context(decision.clientId(), decision.sub(),
+                decision.accountId(), decision.companyId(),
+                includeAuthorization ? decision.authorizationId() : null);
     }
 
     private PendingView pending(String clientId, String state, Authentication authentication) {

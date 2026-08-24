@@ -13,6 +13,11 @@ interface OAuthAccessTokenJpaRepository extends JpaRepository<OAuthAccessTokenJp
     Optional<OAuthAccessTokenJpaEntity> findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(String authorizationId);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update OAuthAccessTokenJpaEntity t set t.revokedAt = :at "
+            + "where t.authorizationId = :authorizationId and t.revokedAt is null")
+    int revokeByAuthorizationId(@Param("authorizationId") String authorizationId, @Param("at") Instant at);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
             update oauth_access_token set revoked_at = :at
              where revoked_at is null and authorization_id in

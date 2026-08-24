@@ -11,15 +11,18 @@ import java.util.Set;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
 import com.sweet.authstudy.oauth.application.IdpSessionStateService;
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.oauth.infrastructure.OAuthClientSecretPasswordEncoder;
 import com.sweet.authstudy.oauth.infrastructure.OAuthAuthorizationMapper;
 import com.sweet.authstudy.oauth.infrastructure.OAuthRefreshTokenAuthenticationProvider;
+import com.sweet.authstudy.oauth.infrastructure.OAuthGrantRevocationAuthenticationProvider;
 import com.sweet.authstudy.oauth.infrastructure.OAuthTokenCustomizer;
 import com.sweet.authstudy.oauth.infrastructure.OidcUserInfoMapper;
 import com.sweet.authstudy.oauth.infrastructure.OidcUserInfoAuthorizationService;
@@ -27,6 +30,9 @@ import com.sweet.authstudy.oauth.infrastructure.AtomicAuthorizationCodeClientAut
 import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
 import com.sweet.authstudy.oauth.presentation.IdpLoginController;
 import com.sweet.authstudy.oauth.presentation.IdpSessionAuthentication;
+import com.sweet.authstudy.oauth.presentation.OAuthProtocolCorsConfigurationSource;
+import com.sweet.authstudy.oauth.presentation.OAuthProtocolErrorHandler;
+import com.sweet.authstudy.oauth.presentation.OidcLogoutSuccessHandler;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -48,6 +54,7 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Token;
 import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
@@ -69,6 +76,7 @@ import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.savedrequest.NullRequestCache;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -89,6 +97,8 @@ public class AuthorizationServerSecurityConfig {
             OAuthTokenCustomizer tokenCustomizer,
             IdpSessionStateService sessionStates,
             OAuthConsentService oauthConsents,
+            OAuthProtocolErrorHandler protocolErrors,
+            OAuthProtocolEventService protocolEvents,
             OidcUserInfoMapper userInfoMapper,
             OidcUserInfoAuthorizationService userInfoAuthorizations,
             Clock clock,
@@ -113,6 +123,8 @@ public class AuthorizationServerSecurityConfig {
                     jwtGenerator, new OAuth2AccessTokenGenerator(), new OAuth2RefreshTokenGenerator());
             OAuth2AuthorizationServerConfigurer authorizationServer =
                     OAuth2AuthorizationServerConfigurer.authorizationServer();
+            OidcLogoutSuccessHandler logoutHandler = new OidcLogoutSuccessHandler(
+                    oauthJwtDecoder, oauthClients, properties, protocolEvents);
             http.setSharedObject(JwtEncoder.class, oauthJwtEncoder);
             http.setSharedObject(JwtDecoder.class, oauthJwtDecoder);
             http.setSharedObject(OAuth2TokenGenerator.class, tokenGenerator);
@@ -141,12 +153,35 @@ public class AuthorizationServerSecurityConfig {
                                         .OAuth2RefreshTokenAuthenticationProvider.class::isInstance);
                         providers.add(0, new OAuthRefreshTokenAuthenticationProvider(
                                 oauthAuthorizations, authorizationMapper, tokenGenerator,
-                                properties, clock));
+                                properties, clock, oauthClients, protocolEvents));
                     }))
-                    .oidc(oidc -> oidc.userInfoEndpoint(userInfo -> userInfo
-                            .authenticationProvider(userInfoProvider)
-                            .userInfoMapper(userInfoMapper)
-                            .errorResponseHandler(AuthorizationServerSecurityConfig::writeInvalidToken)))
+                    .tokenRevocationEndpoint(endpoint -> endpoint.authenticationProviders(providers -> {
+                        providers.removeIf(org.springframework.security.oauth2.server.authorization.authentication
+                                .OAuth2TokenRevocationAuthenticationProvider.class::isInstance);
+                        providers.add(0, new OAuthGrantRevocationAuthenticationProvider(
+                                oauthAuthorizations, protocolEvents, clock));
+                    }))
+                    .oidc(oidc -> oidc
+                            .userInfoEndpoint(userInfo -> userInfo
+                                    .authenticationProvider(userInfoProvider)
+                                    .userInfoMapper(userInfoMapper)
+                                    .errorResponseHandler(AuthorizationServerSecurityConfig::writeInvalidToken))
+                            .logoutEndpoint(logout -> logout
+                                    .authenticationProviders(providers -> {
+                                        providers.removeIf(org.springframework.security.oauth2.server.authorization
+                                                .oidc.authentication.OidcLogoutAuthenticationProvider.class::isInstance);
+                                        providers.add(0, logoutHandler);
+                                    })
+                                    .logoutResponseHandler(logoutHandler)
+                                    .errorResponseHandler((request, response, exception) -> {
+                                        protocolEvents.failure(OAuthProtocolEvent.EventType.LOGOUT_COMPLETED,
+                                                OAuthProtocolEventService.Context.empty(), "invalid_request",
+                                                OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                                                        "endpoint", OAuthProtocolEvent.Endpoint.LOGOUT,
+                                                        "reason", OAuthProtocolEvent.FailureReason.INVALID_REQUEST,
+                                                        "http_status", 400)));
+                                        protocolErrors.renderLocal(request, response);
+                                    })))
                     .clientAuthentication(clientAuthentication -> clientAuthentication
                             .authenticationConverters(converters -> {
                                 if (authorizationService instanceof SpringOAuth2AuthorizationService) {
@@ -158,13 +193,30 @@ public class AuthorizationServerSecurityConfig {
                                 if (authorizationService instanceof SpringOAuth2AuthorizationService springService) {
                                     providers.add(0, new AtomicAuthorizationCodeClientAuthenticationProvider(
                                             registeredClients, springService,
-                                            new OAuthClientSecretPasswordEncoder(), clock));
+                                            new OAuthClientSecretPasswordEncoder(), clock,
+                                            oauthAuthorizations, protocolEvents));
                                 }
                                 providers.stream()
                                             .filter(ClientSecretAuthenticationProvider.class::isInstance)
                                             .map(ClientSecretAuthenticationProvider.class::cast)
                                             .forEach(provider -> provider.setPasswordEncoder(
                                                     new OAuthClientSecretPasswordEncoder()));
+                            })
+                            .errorResponseHandler((request, response, exception) -> {
+                                String errorCode = protocolErrorCode(exception);
+                                boolean revocation = "/oauth2/revoke".equals(request.getRequestURI());
+                                protocolEvents.failure(revocation
+                                                ? OAuthProtocolEvent.EventType.TOKEN_REVOKED
+                                                : OAuthProtocolEvent.EventType.TOKEN_ISSUED,
+                                        OAuthProtocolEventService.Context.empty(), errorCode,
+                                        OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                                                "endpoint", revocation
+                                                        ? OAuthProtocolEvent.Endpoint.REVOCATION
+                                                        : OAuthProtocolEvent.Endpoint.TOKEN,
+                                                "reason", protocolFailureReason(errorCode),
+                                                "http_status", OAuth2ErrorCodes.INVALID_CLIENT.equals(errorCode)
+                                                        ? 401 : 400)));
+                                writeProtocolError(response, errorCode);
                             })));
             http.oauth2ResourceServer(resourceServer -> resourceServer
                     .authenticationEntryPoint(AuthorizationServerSecurityConfig::writeInvalidToken)
@@ -172,15 +224,30 @@ public class AuthorizationServerSecurityConfig {
         }
 
         IdpBrowserRequestFilter browserRequestFilter = new IdpBrowserRequestFilter(
-                properties, oauthClients, sessionStates, oauthConsents, clock);
+                properties, oauthClients, sessionStates, oauthConsents, protocolErrors,
+                protocolEvents, clock);
+        OAuthProtocolCorsConfigurationSource protocolCors =
+                new OAuthProtocolCorsConfigurationSource(oauthClients, properties.issuer());
         return http.securityMatcher("/.well-known/**", "/oauth2/**", "/userinfo", "/connect/logout", "/idp/**")
-                .csrf(Customizer.withDefaults())
+                .cors(cors -> cors.configurationSource(protocolCors))
+                .csrf(csrf -> csrf.ignoringRequestMatchers(request ->
+                        "/oauth2/revoke".equals(request.getRequestURI())
+                                && request.getSession(false) == null
+                                && request.getHeader(HttpHeaders.AUTHORIZATION) != null
+                                && request.getHeader(HttpHeaders.AUTHORIZATION).startsWith("Basic ")))
+                .headers(headers -> headers
+                        .frameOptions(frame -> frame.deny())
+                        .referrerPolicy(referrer -> referrer.policy(
+                                ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(
+                                "default-src 'self'; base-uri 'none'; form-action 'self'; "
+                                        + "frame-ancestors 'none'; object-src 'none'")))
                 .requestCache(cache -> cache.requestCache(new NullRequestCache()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/idp/login", "/idp/error", "/idp/idp.css",
                                 "/.well-known/**", "/oauth2/token", "/oauth2/jwks",
-                                "/userinfo", "/connect/logout")
+                                "/oauth2/revoke", "/userinfo", "/connect/logout")
                         .permitAll()
                         .requestMatchers("/oauth2/authorize", "/idp/password", "/idp/consent/**")
                         .authenticated()
@@ -198,6 +265,38 @@ public class AuthorizationServerSecurityConfig {
         response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Bearer error=\"invalid_token\"");
         new OAuth2ErrorHttpMessageConverter().write(
                 error, MediaType.APPLICATION_JSON, new ServletServerHttpResponse(response));
+    }
+
+    private static String protocolErrorCode(AuthenticationException exception) {
+        if (exception instanceof OAuth2AuthenticationException oauth) {
+            return switch (oauth.getError().getErrorCode()) {
+                case OAuth2ErrorCodes.INVALID_CLIENT, OAuth2ErrorCodes.INVALID_GRANT,
+                        OAuth2ErrorCodes.INVALID_SCOPE, OAuth2ErrorCodes.INVALID_REQUEST ->
+                        oauth.getError().getErrorCode();
+                default -> OAuth2ErrorCodes.SERVER_ERROR;
+            };
+        }
+        return OAuth2ErrorCodes.SERVER_ERROR;
+    }
+
+    private static OAuthProtocolEvent.FailureReason protocolFailureReason(String errorCode) {
+        return switch (errorCode) {
+            case OAuth2ErrorCodes.INVALID_CLIENT -> OAuthProtocolEvent.FailureReason.INVALID_CLIENT;
+            case OAuth2ErrorCodes.INVALID_GRANT -> OAuthProtocolEvent.FailureReason.INVALID_GRANT;
+            case OAuth2ErrorCodes.INVALID_SCOPE -> OAuthProtocolEvent.FailureReason.INVALID_SCOPE;
+            case OAuth2ErrorCodes.INVALID_REQUEST -> OAuthProtocolEvent.FailureReason.INVALID_REQUEST;
+            default -> OAuthProtocolEvent.FailureReason.SERVER_ERROR;
+        };
+    }
+
+    private static void writeProtocolError(HttpServletResponse response, String errorCode) throws IOException {
+        response.setStatus(OAuth2ErrorCodes.INVALID_CLIENT.equals(errorCode)
+                ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_BAD_REQUEST);
+        if (OAuth2ErrorCodes.INVALID_CLIENT.equals(errorCode)) {
+            response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Basic");
+        }
+        new OAuth2ErrorHttpMessageConverter().write(new OAuth2Error(errorCode),
+                MediaType.APPLICATION_JSON, new ServletServerHttpResponse(response));
     }
 
     @Bean
@@ -229,16 +328,21 @@ public class AuthorizationServerSecurityConfig {
         private final OAuthClientRepository clients;
         private final IdpSessionStateService sessionStates;
         private final OAuthConsentService consents;
+        private final OAuthProtocolErrorHandler protocolErrors;
+        private final OAuthProtocolEventService protocolEvents;
         private final Clock clock;
         private final String issuerOrigin;
 
         private IdpBrowserRequestFilter(OAuthSecurityProperties properties,
                 OAuthClientRepository clients, IdpSessionStateService sessionStates,
-                OAuthConsentService consents, Clock clock) {
+                OAuthConsentService consents, OAuthProtocolErrorHandler protocolErrors,
+                OAuthProtocolEventService protocolEvents, Clock clock) {
             this.properties = properties;
             this.clients = clients;
             this.sessionStates = sessionStates;
             this.consents = consents;
+            this.protocolErrors = protocolErrors;
+            this.protocolEvents = protocolEvents;
             this.clock = clock;
             this.issuerOrigin = properties.issuer().getScheme() + "://" + properties.issuer().getAuthority();
         }
@@ -246,6 +350,13 @@ public class AuthorizationServerSecurityConfig {
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
                 throws ServletException, IOException {
+            if (isBrowserSessionRequest(request.getRequestURI())) {
+                response.setHeader("Referrer-Policy", "no-referrer");
+                response.setHeader("X-Frame-Options", "DENY");
+                response.setHeader("Content-Security-Policy",
+                        "default-src 'self'; base-uri 'none'; form-action 'self'; "
+                                + "frame-ancestors 'none'; object-src 'none'");
+            }
             if (requiresOriginCheck(request) && !issuerOrigin.equals(request.getHeader("Origin"))) {
                 response.sendError(HttpServletResponse.SC_FORBIDDEN);
                 return;
@@ -295,15 +406,17 @@ public class AuthorizationServerSecurityConfig {
                 }
             }
 
-            if (isAuthorizationGet(request) && !authenticated(authentication)) {
+            if (isAuthorizationGet(request)) {
                 IdpLoginController.PendingAuthorizationRequest pending = capture(request);
                 if (pending == null) {
                     IdpLoginController.clearPendingBrowserState(request.getSession(false));
-                    if (!hasSafeRegisteredRedirect(request)) {
-                        response.sendError(HttpServletResponse.SC_BAD_REQUEST);
+                    OAuthClient safeClient = safeRegisteredRedirectClient(request);
+                    recordAuthorizationFailure(safeClient, safeClient != null);
+                    if (safeClient == null) {
+                        protocolErrors.renderLocal(request, response);
                         return;
                     }
-                } else {
+                } else if (!authenticated(authentication)) {
                     var session = request.getSession(true);
                     IdpLoginController.clearPendingBrowserState(session);
                     session.setAttribute(IdpLoginController.PENDING_AUTHORIZATION_ATTRIBUTE, pending);
@@ -326,6 +439,7 @@ public class AuthorizationServerSecurityConfig {
             return switch (request.getRequestURI()) {
                 case "/idp/login", "/idp/password", "/idp/consent/deny",
                         "/oauth2/authorize", "/connect/logout" -> true;
+                case "/oauth2/revoke" -> request.getSession(false) != null;
                 default -> false;
             };
         }
@@ -441,18 +555,32 @@ public class AuthorizationServerSecurityConfig {
          * A malformed request with an exact registered callback belongs to SAS so it can return the
          * protocol error to that callback. Only an unknown client/redirect is rejected locally.
          */
-        private boolean hasSafeRegisteredRedirect(HttpServletRequest request) {
+        private OAuthClient safeRegisteredRedirectClient(HttpServletRequest request) {
             String clientId = one(request, "client_id");
             String redirectUri = one(request, "redirect_uri");
-            if (clientId == null || redirectUri == null) return false;
+            if (clientId == null || redirectUri == null) return null;
             OAuthClient client = clients.findByClientId(clientId)
                     .filter(candidate -> candidate.status() == OAuthClientStatus.ACTIVE)
                     .orElse(null);
             try {
-                return client != null && client.allowsRedirect(URI.create(redirectUri));
+                return client != null && client.allowsRedirect(URI.create(redirectUri)) ? client : null;
             } catch (IllegalArgumentException exception) {
-                return false;
+                return null;
             }
+        }
+
+        private void recordAuthorizationFailure(OAuthClient client, boolean redirectValidated) {
+            OAuthProtocolEventService.Context context = client == null
+                    ? OAuthProtocolEventService.Context.empty()
+                    : new OAuthProtocolEventService.Context(
+                            client.clientId(), null, null, client.companyId(), null);
+            protocolEvents.failure(OAuthProtocolEvent.EventType.AUTHORIZATION_REQUESTED,
+                    context, OAuth2ErrorCodes.INVALID_REQUEST,
+                    OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                            "endpoint", OAuthProtocolEvent.Endpoint.AUTHORIZE,
+                            "redirect_validated", redirectValidated,
+                            "reason", OAuthProtocolEvent.FailureReason.INVALID_REQUEST,
+                            "http_status", 400)));
         }
 
         private void appendQuery(StringBuilder uri, String name, String value) {

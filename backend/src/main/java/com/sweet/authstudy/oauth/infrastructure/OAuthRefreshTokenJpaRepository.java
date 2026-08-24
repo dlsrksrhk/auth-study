@@ -32,6 +32,11 @@ interface OAuthRefreshTokenJpaRepository extends JpaRepository<OAuthRefreshToken
     int revokeFamily(@Param("familyId") UUID familyId, @Param("at") Instant at);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update OAuthRefreshTokenJpaEntity t set t.revokedAt = :at "
+            + "where t.authorizationId = :authorizationId and t.revokedAt is null")
+    int revokeByAuthorizationId(@Param("authorizationId") String authorizationId, @Param("at") Instant at);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
             update oauth_refresh_token set revoked_at = :at
              where revoked_at is null and authorization_id in
