@@ -14,6 +14,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
+import com.sweet.authstudy.identity.domain.AccountRole;
+import com.sweet.authstudy.oauth.application.OAuthClientCommands;
+import com.sweet.authstudy.oauth.application.OAuthClientService;
 import com.sweet.authstudy.oauth.application.OAuthSubjectService;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
@@ -28,6 +32,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
@@ -49,6 +54,12 @@ class OAuthClientPersistenceIntegrationTest {
 
     @Autowired
     private OAuthSubjectService subjectService;
+
+    @Autowired
+    private OAuthClientService clientService;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
     @Test
     void migration_creates_oauth_client_table() {
@@ -160,6 +171,27 @@ class OAuthClientPersistenceIntegrationTest {
             assertThat(secret.secretHint()).isEqualTo("upbC");
             assertThat(secret.revokedAt()).isNull();
         });
+    }
+
+    @Test
+    void service_rotation_persists_one_new_active_secret_after_revoking_the_previous_one() {
+        insertCompany("ROTATE_SERVICE");
+        AuthenticatedAccount systemAdmin = new AuthenticatedAccount(
+                1L, null, null, Set.of(AccountRole.SYSTEM_ADMIN), false);
+        var command = new OAuthClientCommands.CreateClient(
+                "ROTATE_SERVICE", "Rotation client", false,
+                Set.of(URI.create("https://rp.example/callback")), Set.of(), Set.of("openid"),
+                OAuthClientTrust.CONSENT_REQUIRED);
+        var created = clientService.create(systemAdmin, command);
+
+        var rotated = clientService.rotateSecret(systemAdmin, created.client().clientId());
+
+        OAuthClient stored = clientRepository.findByClientId(created.client().clientId()).orElseThrow();
+        assertThat(stored.secrets()).hasSize(2);
+        assertThat(stored.secrets()).filteredOn(secret -> secret.revokedAt() == null)
+                .singleElement().satisfies(secret ->
+                        assertThat(passwordEncoder.matches(rotated.oneTimeSecret(), secret.secretHash())).isTrue());
+        assertThat(stored.secrets()).filteredOn(secret -> secret.revokedAt() != null).hasSize(1);
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.sweet.authstudy.oauth.domain;
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -146,6 +147,52 @@ public final class OAuthClient {
         Objects.requireNonNull(requested);
         String exactValue = requested.toString();
         return postLogoutRedirectUris.stream().anyMatch(uri -> uri.toString().equals(exactValue));
+    }
+
+    public void update(
+            String displayName,
+            OAuthClientStatus status,
+            OAuthClientTrust trust,
+            Set<URI> redirectUris,
+            Set<URI> postLogoutRedirectUris,
+            Set<String> scopes,
+            Instant now) {
+        this.displayName = Objects.requireNonNull(displayName);
+        this.status = Objects.requireNonNull(status);
+        this.trust = Objects.requireNonNull(trust);
+        this.redirectUris = validatedRedirects(redirectUris);
+        this.postLogoutRedirectUris = validatedRedirects(postLogoutRedirectUris);
+        this.scopes = validatedScopes(scopes);
+        this.updatedAt = Objects.requireNonNull(now);
+    }
+
+    public void rotateSecret(OAuthClientSecret replacement, Instant now) {
+        revokeActiveSecrets(now);
+        addSecret(replacement, now);
+    }
+
+    public void revokeActiveSecrets(Instant now) {
+        if (publicClient) {
+            throw new IllegalStateException("A public OAuth client has no secret.");
+        }
+        Instant rotationTime = Objects.requireNonNull(now);
+        secrets.stream()
+                .filter(secret -> secret.revokedAt() == null)
+                .forEach(secret -> secret.revoke(rotationTime));
+        updatedAt = rotationTime;
+    }
+
+    public void addSecret(OAuthClientSecret replacement, Instant now) {
+        if (publicClient) {
+            throw new IllegalStateException("A public OAuth client has no secret.");
+        }
+        if (secrets.stream().anyMatch(secret -> secret.revokedAt() == null)) {
+            throw new IllegalStateException("An active OAuth client secret already exists.");
+        }
+        Set<OAuthClientSecret> updatedSecrets = new HashSet<>(secrets);
+        updatedSecrets.add(Objects.requireNonNull(replacement));
+        secrets = Set.copyOf(updatedSecrets);
+        updatedAt = Objects.requireNonNull(now);
     }
 
     public Long id() { return id; }

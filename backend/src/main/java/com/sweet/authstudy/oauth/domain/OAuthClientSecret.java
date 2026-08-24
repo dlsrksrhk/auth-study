@@ -10,7 +10,7 @@ public final class OAuthClientSecret {
     private final String secretHint;
     private final Instant createdAt;
     private final Instant expiresAt;
-    private final Instant revokedAt;
+    private Instant revokedAt;
     private final long version;
 
     private OAuthClientSecret(
@@ -46,6 +46,12 @@ public final class OAuthClientSecret {
             long version) {
         return new OAuthClientSecret(
                 id, secretHash, secretHint, createdAt, expiresAt, revokedAt, version);
+    }
+
+    public void revoke(Instant now) {
+        if (revokedAt == null) {
+            revokedAt = Objects.requireNonNull(now);
+        }
     }
 
     public Long id() { return id; }
