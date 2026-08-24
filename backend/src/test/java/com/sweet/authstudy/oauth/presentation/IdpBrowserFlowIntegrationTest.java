@@ -482,7 +482,8 @@ class IdpBrowserFlowIntegrationTest {
     }
 
     @Test
-    void id_token_auth_time_is_the_original_idp_credential_time_during_later_sso() throws Exception {
+    void id_and_access_tokens_use_one_project_clock_instant_while_auth_time_stays_original()
+            throws Exception {
         Fixture fixture = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid"));
         MockHttpSession session = loginFor(fixture);
         for (int minutes : List.of(29, 58, 87, 116)) {
@@ -505,11 +506,15 @@ class IdpBrowserFlowIntegrationTest {
                         .param("redirect_uri", CALLBACK.toString())
                         .param("code_verifier", VERIFIER))
                 .andExpect(status().isOk()).andReturn();
-        String idToken = objectMapper.readTree(tokenResult.getResponse().getContentAsByteArray())
-                .path("id_token").asText();
-        String payload = new String(Base64.getUrlDecoder().decode(idToken.split("\\.")[1]),
-                StandardCharsets.UTF_8);
-        assertThat(objectMapper.readTree(payload).path("auth_time").asLong())
+        var tokens = objectMapper.readTree(tokenResult.getResponse().getContentAsByteArray());
+        var idClaims = jwtClaims(tokens.path("id_token").asText());
+        var accessClaims = jwtClaims(tokens.path("access_token").asText());
+        long issuedAt = BASE_TIME.plus(Duration.ofHours(2)).getEpochSecond();
+        assertThat(idClaims.path("iat").asLong()).isEqualTo(issuedAt);
+        assertThat(accessClaims.path("iat").asLong()).isEqualTo(issuedAt);
+        assertThat(idClaims.path("exp").asLong()).isEqualTo(issuedAt + 300);
+        assertThat(accessClaims.path("exp").asLong()).isEqualTo(issuedAt + 300);
+        assertThat(idClaims.path("auth_time").asLong())
                 .isEqualTo(BASE_TIME.getEpochSecond());
         assertThat(jdbcClient.sql("select authenticated_at from oauth_authorization where id = (select authorization_id from oauth_authorization_code where code_hash = :hash)")
                 .param("hash", sha256(code)).query(Instant.class).single()).isEqualTo(BASE_TIME);
@@ -1185,6 +1190,11 @@ class IdpBrowserFlowIntegrationTest {
             }
         }
         return null;
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode jwtClaims(String token) throws Exception {
+        return objectMapper.readTree(new String(
+                Base64.getUrlDecoder().decode(token.split("\\.")[1]), StandardCharsets.UTF_8));
     }
 
     private static String challenge(String verifier) {

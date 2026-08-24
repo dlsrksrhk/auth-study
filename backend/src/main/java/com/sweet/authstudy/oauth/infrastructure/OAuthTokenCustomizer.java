@@ -1,5 +1,6 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,19 +19,26 @@ import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 
 @Component
 public class OAuthTokenCustomizer implements OAuth2TokenCustomizer<JwtEncodingContext> {
 
+    private static final String ISSUANCE_INSTANT_ATTRIBUTE =
+            OAuthTokenCustomizer.class.getName() + ".ISSUANCE_INSTANT";
+
     private final OAuthAuthorizationRepository authorizations;
     private final OAuthSubjectService subjects;
     private final OAuthSecurityProperties properties;
+    private final Clock clock;
 
     public OAuthTokenCustomizer(OAuthAuthorizationRepository authorizations, OAuthSubjectService subjects,
-            OAuthSecurityProperties properties) {
+            OAuthSecurityProperties properties, Clock clock) {
         this.authorizations = authorizations;
         this.subjects = subjects;
         this.properties = properties;
+        this.clock = clock;
     }
 
     @Override
@@ -46,7 +54,7 @@ public class OAuthTokenCustomizer implements OAuth2TokenCustomizer<JwtEncodingCo
 
     private void customizeIdToken(JwtEncodingContext context) {
         OAuthAuthorization authorization = authorization(context);
-        Instant issuedAt = issuedAt(context);
+        Instant issuedAt = issuanceInstant();
         Map<String, Object> claims = new LinkedHashMap<>();
         claims.put("iss", properties.issuer().toString());
         claims.put("sub", subject(authorization));
@@ -63,7 +71,7 @@ public class OAuthTokenCustomizer implements OAuth2TokenCustomizer<JwtEncodingCo
     private void customizeAccessToken(JwtEncodingContext context) {
         OAuthAuthorization authorization = authorization(context);
         JwtClaimsSet existing = context.getClaims().build();
-        Instant issuedAt = issuedAt(context);
+        Instant issuedAt = issuanceInstant();
         String jti = existing.getId() == null ? UUID.randomUUID().toString() : existing.getId();
         String scopes = context.getAuthorizedScopes().stream().sorted().collect(Collectors.joining(" "));
         Map<String, Object> claims = new LinkedHashMap<>();
@@ -90,9 +98,13 @@ public class OAuthTokenCustomizer implements OAuth2TokenCustomizer<JwtEncodingCo
         return subjects.getOrCreate(authorization.principalAccountId()).subject().toString();
     }
 
-    private Instant issuedAt(JwtEncodingContext context) {
-        Instant issuedAt = context.getClaims().build().getIssuedAt();
-        if (issuedAt == null) throw new IllegalStateException("OAuth token issued-at is required.");
+    private Instant issuanceInstant() {
+        RequestAttributes request = RequestContextHolder.getRequestAttributes();
+        if (request == null) return clock.instant();
+        Object existing = request.getAttribute(ISSUANCE_INSTANT_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
+        if (existing instanceof Instant issuedAt) return issuedAt;
+        Instant issuedAt = clock.instant();
+        request.setAttribute(ISSUANCE_INSTANT_ATTRIBUTE, issuedAt, RequestAttributes.SCOPE_REQUEST);
         return issuedAt;
     }
 

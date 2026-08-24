@@ -16,6 +16,7 @@ import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountStatus;
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
@@ -31,6 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRepository {
 
+    /** Maximum time from token issuance to the atomic finalization commit. */
+    private static final Duration TOKEN_FINALIZATION_WINDOW = Duration.ofSeconds(30);
+
     private final OAuthAuthorizationJpaRepository authorizations;
     private final OAuthAuthorizationCodeJpaRepository codes;
     private final OAuthAccessTokenJpaRepository accessTokens;
@@ -39,11 +43,13 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     private final CompanyRepository companies;
     private final AccountRepository accounts;
     private final UserRepository users;
+    private final OAuthSecurityProperties properties;
 
     public OAuthAuthorizationRepositoryAdapter(OAuthAuthorizationJpaRepository authorizations,
             OAuthAuthorizationCodeJpaRepository codes, OAuthAccessTokenJpaRepository accessTokens,
             OAuthRefreshTokenJpaRepository refreshTokens, OAuthClientJpaRepository clients,
-            CompanyRepository companies, AccountRepository accounts, UserRepository users) {
+            CompanyRepository companies, AccountRepository accounts, UserRepository users,
+            OAuthSecurityProperties properties) {
         this.authorizations = authorizations;
         this.codes = codes;
         this.accessTokens = accessTokens;
@@ -52,6 +58,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
         this.companies = companies;
         this.accounts = accounts;
         this.users = users;
+        this.properties = properties;
     }
 
     @Override
@@ -193,21 +200,18 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                                 && (secret.expiresAt() == null || secret.expiresAt().isAfter(finalizedAt)));
         boolean openid = authorization.authorizedScopes().contains("openid");
         OAuthAuthorizationRepository.IdTokenCandidate idToken = finalization.idTokenCandidate();
-        Duration idTokenIssueDelay = idToken == null ? null
-                : Duration.between(finalization.accessToken().issuedAt(), idToken.issuedAt());
+        boolean accessTokenTimeValid = validTokenTime(
+                finalization.accessToken().issuedAt(), finalization.accessToken().expiresAt(),
+                properties.accessTokenTtl(), code.usedAt(), finalizedAt, authorization.expiresAt());
         boolean idTokenValid = openid
                 ? idToken != null
                     && code.usedAt() != null
                     && authorization.idTokenEvidence().isEmpty()
                     && authorization.subject().toString().equals(idToken.subject())
                     && idToken.audiences().equals(java.util.Set.of(client.clientId()))
-                    && !idTokenIssueDelay.isNegative()
-                    && idTokenIssueDelay.compareTo(Duration.ofSeconds(5)) <= 0
-                    && Duration.between(idToken.issuedAt(), idToken.expiresAt()).equals(
-                            Duration.between(finalization.accessToken().issuedAt(),
-                                    finalization.accessToken().expiresAt()))
-                    && idToken.expiresAt().isAfter(finalizedAt)
-                    && !idToken.expiresAt().isAfter(authorization.expiresAt())
+                    && idToken.issuedAt().equals(finalization.accessToken().issuedAt())
+                    && validTokenTime(idToken.issuedAt(), idToken.expiresAt(), properties.idTokenTtl(),
+                            code.usedAt(), finalizedAt, authorization.expiresAt())
                 : idToken == null && authorization.idTokenEvidence().isEmpty();
         return code.usedAt() != null
                 && authorization.id().equals(finalization.consumedBinding().authorizationId())
@@ -218,6 +222,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 && authorization.activeAt(finalizedAt)
                 && principalActive
                 && secretActive
+                && accessTokenTimeValid
                 && idTokenValid
                 && request != null
                 && client.allowsRedirect(URI.create(request.redirectUri()))
@@ -231,6 +236,17 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 && authorization.id().equals(finalization.accessToken().authorizationId())
                 && (finalization.refreshToken() == null
                     || authorization.id().equals(finalization.refreshToken().authorizationId()));
+    }
+
+    private boolean validTokenTime(Instant issuedAt, Instant expiresAt, Duration timeToLive,
+            Instant consumedAt, Instant finalizedAt, Instant authorizationExpiresAt) {
+        return consumedAt != null
+                && !issuedAt.isBefore(consumedAt)
+                && !issuedAt.isAfter(finalizedAt)
+                && !issuedAt.isBefore(finalizedAt.minus(TOKEN_FINALIZATION_WINDOW))
+                && expiresAt.equals(issuedAt.plus(timeToLive))
+                && expiresAt.isAfter(finalizedAt)
+                && !expiresAt.isAfter(authorizationExpiresAt);
     }
 
     private boolean lockAndValidatePrincipal(

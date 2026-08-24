@@ -45,8 +45,12 @@ BASE는 `142aeb2d512cf785aeaef8233f13f76e4cac8719`입니다. 구현 및 이 보�
     만들지 않습니다. 실제 OIDC code finalization 때만 raw token 없이 ID token issued/expires evidence를 V8에
     원자적으로 기록합니다. UserInfo 전용 access-token lookup만 evidence와 현재 persisted opaque subject가 모두
     일치할 때 emitted token이 아닌 최소 typed `OidcIdToken` metadata를 메모리에 복원합니다.
-  - finalization은 실제 `OidcIdToken` 후보의 opaque subject, exact client audience, access token과의 발급 시간/TTL,
-    authorization expiry를 검증하며 openid가 없으면 후보/evidence도 없어야 합니다.
+  - `OAuthTokenCustomizer`는 SAS의 system `Instant.now()`를 신뢰하지 않고 injected project `Clock`의 한 시각을
+    token HTTP request attribute에 고정해 ID/access `iat`를 exact 동일하게 만들고 각각 configured 5분 TTL로
+    `exp`를 설정합니다.
+  - finalization은 실제 `OidcIdToken` 후보의 opaque subject, exact client audience, ID/access exact `iat`,
+    code consume ≤ `iat` ≤ finalization, 최대 30초의 발급→원자적 저장 구간, 각 configured TTL과 authorization
+    lifetime을 검증하며 openid가 없으면 후보/evidence도 없어야 합니다.
   - authorization-server chain에 OAuth RS256 decoder를 명시해 application API의 `@Primary` HR HS256 decoder와
     격리했습니다. 모든 bearer/mapper 실패는 oracle 없는 `401`, exact
     `WWW-Authenticate: Bearer error="invalid_token"`, `{"error":"invalid_token"}`로 응답합니다.
@@ -79,8 +83,9 @@ semantics와 Task 8 ID/access claim allowlist를 유지했습니다.
   `id_token_issued_at`, `id_token_expires_at`뿐이며 raw ID token 컬럼/값은 없습니다.
 - relevant 첫 실행에서 Task 9 고정 `Clock`과 SAS 1.5.8 `JwtGenerator`의 직접 `Instant.now()` 사용 때문에
   `auth_time` SSO 테스트가 token 400으로 RED였습니다. candidate time은 동일 응답의 access token 대비
-  0~5초 발급 지연, 동일 TTL, finalization/authorization expiry를 검증하도록 바꿨고 기존 Task 9 의미와
-  wrong-time candidate 거부를 함께 GREEN으로 복원했습니다.
+  0~5초 발급 지연, 동일 TTL, finalization/authorization expiry를 검증하도록 임시로 바꿔 기존 Task 9 의미와
+  wrong-time candidate 거부를 GREEN으로 복원했습니다. 이 상대 비교의 한계는 round 2에서 authoritative
+  project Clock 정책으로 대체했습니다.
 
 ### I3 — 승인된 exact profile matrix
 
@@ -89,6 +94,31 @@ semantics와 Task 8 ID/access claim allowlist를 유지했습니다.
 - GREEN: application snapshot에서 HR user code 자체를 제거하고 typed profile과 protocol mapper를 name-only로
   축소했습니다. HTTP 테스트는 모든 scope 단독/조합에서 exact claim set을 확인하며 user code와 employee number,
   numeric/internal ID를 재귀적으로 거부합니다.
+
+## Review fix round 2/5 — authoritative token issuance clock
+
+### 정책
+
+- ID/access 발급 시각의 유일한 기준은 injected project `Clock`입니다. 첫 JWT customization이 request scope에
+  한 `Instant`를 기록하고 같은 token 응답의 ID/access가 이를 공유하므로 두 `iat`는 exact 같습니다.
+- ID/access `exp`는 각각 그 `iat`에 configured `idTokenTtl`/`accessTokenTtl`을 더한 값이어야 하며 현재 설정은
+  둘 다 5분입니다.
+- finalization은 각 `iat`가 code consumption보다 이르거나 finalization보다 미래면 거부합니다. 정상적인 서명과
+  저장 지연에는 30초의 one-sided window를 허용하고, `iat < finalizedAt - 30s`는 거부합니다. 두 `exp`는
+  finalization 이후이면서 authorization lifetime 안이어야 합니다.
+
+### 엄격 TDD RED → GREEN
+
+- 실제 Task 9 authorize→token 테스트가 ID/access `iat == BASE_TIME + 2h`, 두 `exp == iat + 300s`, 기존
+  `auth_time == BASE_TIME`을 요구하도록 먼저 바뀌었습니다. 기존 customizer는 SAS system time을 읽어서
+  project-clock `iat` assertion이 RED였습니다.
+- persistence table test에서 ID/access를 함께 finalization 미래로 이동, consumption 이전으로 이동,
+  consumption 이후지만 30초 window 밖으로 이동한 세 경우가 기존 relative-only 검증에서 `FINALIZED`되어
+  assertion RED였습니다. consumption 10초 뒤 발급하고 10초 뒤 finalize하는 기존 5초 초과 정상 경우는
+  허용됨을 함께 고정했습니다.
+- 별도 TTL RED에서 access만 299초, ID만 299초, 둘 다 같은 299초 TTL인 세 경우가 exact configured TTL 검증을
+  제거한 상태에서 모두 `FINALIZED`되어 실패했습니다. configured TTL 검증 복원 후 모두 `INVALID`입니다.
+- subject/audience/TTL mismatch는 각 단일 차원만 잘못된 fixture로 분리했습니다.
 
 ## 엄격 TDD 증거
 
@@ -148,6 +178,20 @@ revocation·expiry, authorization client/subject/account, access-token authoriza
 
 ## GREEN / 검증 증거
 
+Round 2 fresh focused (persistence/token/UserInfo + Task 8/9):
+
+`./gradlew.bat test --rerun-tasks --tests "*OAuthAuthorizationPersistenceIntegrationTest" --tests "*SpringOAuth2AuthorizationServiceTest" --tests "*AuthorizationCodePkceIntegrationTest" --tests "*OidcDiscoveryAndTokenContractIntegrationTest" --tests "*OAuthSigningKeyPersistenceIntegrationTest" --tests "*OAuthSigningKeySourceTest" --tests "*OidcUserInfoIntegrationTest" --tests "*OAuthUserInfoServiceTest" --tests "*IdpBrowserFlowIntegrationTest" --tests "*OAuthSecurityPropertiesTest" --console=plain --no-daemon`
+
+- `BUILD SUCCESSFUL in 1m 44s`
+- JUnit XML: 205 tests, 0 failures, 0 errors, 0 skipped
+
+Round 2 fresh full backend:
+
+`./gradlew.bat test --rerun-tasks --console=plain --no-daemon`
+
+- `BUILD SUCCESSFUL in 4m 3s`
+- JUnit XML: 405 tests, 0 failures, 0 errors, 0 skipped
+
 Round 1 fresh focused/relevant (Task 7/8/9, UserInfo, persistence, HR/web, module boundary):
 
 `./gradlew.bat test --rerun-tasks --tests "*OAuthUserInfoServiceTest" --tests "*OidcUserInfoIntegrationTest" --tests "*SpringOAuth2AuthorizationServiceTest" --tests "*OAuthAuthorizationPersistenceIntegrationTest" --tests "*AuthorizationCodePkceIntegrationTest" --tests "*OidcDiscoveryAndTokenContractIntegrationTest" --tests "*IdpBrowserFlowIntegrationTest" --tests "*SecurityChainIsolationIntegrationTest" --tests "*AuthenticationIntegrationTest" --tests "*ModuleBoundaryTest" --tests "*OAuthSigningKeyPersistenceIntegrationTest" --tests "*OAuthSigningKeySourceTest" --tests "*OAuthSecurityPropertiesTest" --console=plain --no-daemon`
@@ -206,6 +250,9 @@ Static verification:
 - persisted raw ID token을 새로 저장하거나 numeric principal을 `sub`로 대체하지 않았습니다. 재구성 metadata는
   실제 발급 evidence가 있는 UserInfo 전용 provider lookup의 in-memory protocol object일 뿐 response/persistence에는
   노출되지 않습니다. 공용 authorization reconstruction은 evidence가 있어도 synthetic ID token을 붙이지 않습니다.
+- SAS default claim clock은 customizer의 project-clock allowlist rewrite로 대체됩니다. 같은 request의 ID/access는
+  exact 같은 `iat`를 가지며, finalization은 상대 drift가 아니라 consumption/finalization 양쪽 authoritative
+  boundary와 configured TTL을 각각 검증합니다.
 
 ## 우려와 의도적 경계
 
@@ -214,4 +261,6 @@ Static verification:
 - organization은 현재 domain 의미에 맞게 `endedAt`이 없는 membership만 active로 취급합니다.
 - UserInfo의 RS256 decoder 명시는 OIDC chain에만 적용되며 기존 `/api/v1/**` HR HS256 token chain을 변경하지
   않습니다.
+- token finalization window 30초는 실제 signing/serialization/DB commit 지연을 위한 명시적 상한입니다. 이
+  구간을 넘긴 응답은 fail-closed `invalid_grant`이고 새 authorization-code 교환이 필요합니다.
 - refresh token rotation/revocation endpoint, protocol audit event, public-RP CORS는 후속 Task 11/12 범위입니다.
