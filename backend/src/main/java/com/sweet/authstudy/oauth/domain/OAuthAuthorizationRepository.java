@@ -18,11 +18,28 @@ public interface OAuthAuthorizationRepository {
     record LockedCodeExchange(
             OAuthAuthorizationCode code,
             OAuthAuthorization authorization,
-            OAuthClient client) {
+            OAuthClient client,
+            boolean principalActive) {
         public LockedCodeExchange {
             java.util.Objects.requireNonNull(code, "code");
             java.util.Objects.requireNonNull(authorization, "authorization");
             java.util.Objects.requireNonNull(client, "client");
+        }
+    }
+
+    enum CodeFinalizationResult { FINALIZED, INVALID }
+
+    record CodeFinalization(
+            String codeHash,
+            String authorizationId,
+            long registeredClientId,
+            String authenticatedSecretHash,
+            OAuthAccessToken accessToken,
+            OAuthRefreshToken refreshToken) {
+        public CodeFinalization {
+            java.util.Objects.requireNonNull(codeHash, "codeHash");
+            java.util.Objects.requireNonNull(authorizationId, "authorizationId");
+            java.util.Objects.requireNonNull(accessToken, "accessToken");
         }
     }
 
@@ -38,6 +55,13 @@ public interface OAuthAuthorizationRepository {
      */
     <T> Optional<CodeConsumption<T>> consumeCodeAtomically(
             String codeHash, Instant consumedAt, Function<LockedCodeExchange, T> exchange);
+    /**
+     * Linearizes an authorization-code exchange at token persistence. Locks code, parent
+     * authorization, current client, company, account, and user in that order, then merges only
+     * issued token metadata onto the locked current aggregate. Future identity-to-OAuth revocation
+     * must run after the identity transaction commits instead of acquiring these locks in reverse.
+     */
+    CodeFinalizationResult finalizeAuthorizationCodeExchange(CodeFinalization finalization, Instant finalizedAt);
     Optional<OAuthAccessToken> findByAccessTokenHash(String accessTokenHash);
     Optional<OAuthRefreshToken> findByRefreshTokenHash(String refreshTokenHash);
     Optional<OAuthRefreshToken> findRefreshByHashForUpdate(String refreshTokenHash);

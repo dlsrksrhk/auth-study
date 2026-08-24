@@ -12,6 +12,9 @@ import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository.LockedCodeExchange;
 import org.springframework.context.annotation.Primary;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.stereotype.Service;
@@ -42,6 +45,23 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     @Override
     public void save(org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization) {
         Assert.notNull(authorization, "authorization cannot be null");
+        CachedAuthorization consumed = cachedAuthorization();
+        if (consumed != null && authorization.getAccessToken() != null) {
+            try {
+                OAuthAuthorizationRepository.CodeFinalization finalization = mapper.codeFinalization(
+                        authorization, consumed.codeHash(), consumed.authenticatedSecretHash());
+                if (authorizations.finalizeAuthorizationCodeExchange(
+                        finalization, clock.instant())
+                        != OAuthAuthorizationRepository.CodeFinalizationResult.FINALIZED) {
+                    throwInvalidGrant();
+                }
+            } catch (IllegalArgumentException exception) {
+                throwInvalidGrant();
+            } finally {
+                clearConsumedAuthorization();
+            }
+            return;
+        }
         OAuthAuthorization existing = authorizations.findById(authorization.getId()).orElse(null);
         authorizations.save(mapper.toDomain(authorization, existing));
         clearConsumedAuthorization();
@@ -109,10 +129,12 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     }
 
     public void cacheConsumedAuthorization(String rawCode,
-            org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization) {
+            org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization,
+            String authenticatedSecretHash) {
         RequestAttributes attributes = RequestContextHolder.currentRequestAttributes();
         attributes.setAttribute(CONSUMED_CODE_ATTRIBUTE,
-                new CachedAuthorization(OAuthAuthorizationMapper.sha256(rawCode), authorization),
+                new CachedAuthorization(
+                        OAuthAuthorizationMapper.sha256(rawCode), authorization, authenticatedSecretHash),
                 RequestAttributes.SCOPE_REQUEST);
     }
 
@@ -138,14 +160,16 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     private record Match(String authorizationId, String tokenType) { }
 
     private CachedAuthorization cachedAuthorization(String rawCode) {
+        CachedAuthorization cached = cachedAuthorization();
+        return cached != null && cached.codeHash().equals(OAuthAuthorizationMapper.sha256(rawCode))
+                ? cached : null;
+    }
+
+    private CachedAuthorization cachedAuthorization() {
         RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
         if (attributes == null) return null;
         Object value = attributes.getAttribute(CONSUMED_CODE_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
-        if (value instanceof CachedAuthorization cached
-                && cached.codeHash().equals(OAuthAuthorizationMapper.sha256(rawCode))) {
-            return cached;
-        }
-        return null;
+        return value instanceof CachedAuthorization cached ? cached : null;
     }
 
     private void clearConsumedAuthorization() {
@@ -155,6 +179,12 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
         }
     }
 
+    private void throwInvalidGrant() {
+        throw new OAuth2AuthenticationException(new OAuth2Error(
+                OAuth2ErrorCodes.INVALID_GRANT, "Invalid authorization code grant.", null));
+    }
+
     private record CachedAuthorization(String codeHash,
-            org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization) { }
+            org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization,
+            String authenticatedSecretHash) { }
 }

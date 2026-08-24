@@ -1,14 +1,26 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
+import java.net.URI;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 
+import com.sweet.authstudy.hr.company.domain.Company;
+import com.sweet.authstudy.hr.company.domain.CompanyRepository;
+import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.hr.user.domain.HrUser;
+import com.sweet.authstudy.hr.user.domain.UserRepository;
+import com.sweet.authstudy.hr.user.domain.UserStatus;
+import com.sweet.authstudy.identity.domain.Account;
+import com.sweet.authstudy.identity.domain.AccountRepository;
+import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
+import com.sweet.authstudy.oauth.domain.OAuthClient;
+import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
@@ -22,15 +34,22 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     private final OAuthAccessTokenJpaRepository accessTokens;
     private final OAuthRefreshTokenJpaRepository refreshTokens;
     private final OAuthClientJpaRepository clients;
+    private final CompanyRepository companies;
+    private final AccountRepository accounts;
+    private final UserRepository users;
 
     public OAuthAuthorizationRepositoryAdapter(OAuthAuthorizationJpaRepository authorizations,
             OAuthAuthorizationCodeJpaRepository codes, OAuthAccessTokenJpaRepository accessTokens,
-            OAuthRefreshTokenJpaRepository refreshTokens, OAuthClientJpaRepository clients) {
+            OAuthRefreshTokenJpaRepository refreshTokens, OAuthClientJpaRepository clients,
+            CompanyRepository companies, AccountRepository accounts, UserRepository users) {
         this.authorizations = authorizations;
         this.codes = codes;
         this.accessTokens = accessTokens;
         this.refreshTokens = refreshTokens;
         this.clients = clients;
+        this.companies = companies;
+        this.accounts = accounts;
+        this.users = users;
     }
 
     @Override
@@ -92,13 +111,94 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 OAuthAuthorization authorization = authorizationEntity.toDomain(code, null, null);
                 OAuthClientJpaEntity clientEntity = clients.findByIdForUpdate(authorization.registeredClientId())
                         .orElseThrow(() -> new IllegalStateException("OAuth client does not exist for authorization."));
+                boolean principalActive = lockAndValidatePrincipal(authorization, clientEntity.toDomain());
                 exchangeResult = Optional.ofNullable(exchange.apply(
-                        new LockedCodeExchange(code, authorization, clientEntity.toDomain())));
+                        new LockedCodeExchange(code, authorization, clientEntity.toDomain(), principalActive)));
             }
             entity.updateFrom(code);
             codes.saveAndFlush(entity);
             return new CodeConsumption<>(consumption, exchangeResult);
         });
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public CodeFinalizationResult finalizeAuthorizationCodeExchange(
+            CodeFinalization finalization, Instant finalizedAt) {
+        java.util.Objects.requireNonNull(finalization, "finalization");
+        java.util.Objects.requireNonNull(finalizedAt, "finalizedAt");
+        OAuthAuthorizationCodeJpaEntity codeEntity = codes
+                .findByCodeHashForUpdate(finalization.codeHash()).orElse(null);
+        if (codeEntity == null) return CodeFinalizationResult.INVALID;
+        OAuthAuthorizationCode code = codeEntity.toDomain();
+        OAuthAuthorizationJpaEntity authorizationEntity = authorizations
+                .findByIdForUpdate(code.authorizationId()).orElse(null);
+        if (authorizationEntity == null) return CodeFinalizationResult.INVALID;
+        OAuthAuthorization authorization = authorizationEntity.toDomain(code, null, null);
+        OAuthClientJpaEntity clientEntity = clients
+                .findByIdForUpdate(authorization.registeredClientId()).orElse(null);
+        if (clientEntity == null) return CodeFinalizationResult.INVALID;
+        OAuthClient client = clientEntity.toDomain();
+        boolean principalActive = lockAndValidatePrincipal(authorization, client);
+
+        if (!validFinalization(finalization, finalizedAt, code, authorization, client, principalActive)
+                || accessTokens.findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(authorization.id()).isPresent()
+                || refreshTokens.findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(authorization.id()).isPresent()) {
+            return CodeFinalizationResult.INVALID;
+        }
+        accessTokens.saveAndFlush(OAuthAccessTokenJpaEntity.from(finalization.accessToken()));
+        if (finalization.refreshToken() != null) {
+            refreshTokens.saveAndFlush(OAuthRefreshTokenJpaEntity.from(finalization.refreshToken()));
+        }
+        return CodeFinalizationResult.FINALIZED;
+    }
+
+    private boolean validFinalization(CodeFinalization finalization, Instant finalizedAt,
+            OAuthAuthorizationCode code, OAuthAuthorization authorization,
+            OAuthClient client, boolean principalActive) {
+        OAuthAuthorization.AuthorizationRequest request = authorization.attributes().authorizationRequest();
+        boolean secretActive = client.publicClient()
+                ? finalization.authenticatedSecretHash() == null
+                : finalization.authenticatedSecretHash() != null && client.secrets().stream().anyMatch(secret ->
+                        finalization.authenticatedSecretHash().equals(secret.secretHash())
+                                && secret.revokedAt() == null
+                                && (secret.expiresAt() == null || secret.expiresAt().isAfter(finalizedAt)));
+        return code.usedAt() != null
+                && authorization.id().equals(finalization.authorizationId())
+                && authorization.registeredClientId() == finalization.registeredClientId()
+                && client.id() == finalization.registeredClientId()
+                && client.status() == OAuthClientStatus.ACTIVE
+                && authorization.companyId() == client.companyId()
+                && authorization.activeAt(finalizedAt)
+                && principalActive
+                && secretActive
+                && request != null
+                && client.allowsRedirect(URI.create(request.redirectUri()))
+                && code.redirectUri().toString().equals(request.redirectUri())
+                && code.codeChallenge().equals(request.codeChallenge())
+                && "S256".equals(request.codeChallengeMethod())
+                && client.scopes().containsAll(authorization.authorizedScopes())
+                && request.requestedScopes().containsAll(authorization.authorizedScopes())
+                && authorization.id().equals(finalization.accessToken().authorizationId())
+                && (finalization.refreshToken() == null
+                    || authorization.id().equals(finalization.refreshToken().authorizationId()));
+    }
+
+    private boolean lockAndValidatePrincipal(OAuthAuthorization authorization, OAuthClient client) {
+        Company company = companies.findLockedById(authorization.companyId()).orElse(null);
+        Account account = accounts.findByIdForUpdate(authorization.principalAccountId()).orElse(null);
+        HrUser user = account == null || account.userId() == null
+                ? null : users.findByIdForUpdate(account.userId()).orElse(null);
+        return company != null
+                && account != null
+                && user != null
+                && company.status() == CompanyStatus.ACTIVE
+                && account.status() == AccountStatus.ACTIVE
+                && user.status() == UserStatus.ACTIVE
+                && java.util.Objects.equals(account.companyId(), authorization.companyId())
+                && java.util.Objects.equals(account.userId(), user.id())
+                && user.companyId() == authorization.companyId()
+                && client.companyId() == authorization.companyId();
     }
 
     @Override

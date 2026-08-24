@@ -15,6 +15,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
@@ -30,6 +31,9 @@ import com.sweet.authstudy.oauth.domain.OAuthSubject;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -254,6 +258,58 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 .hasMessageContaining("not allowlisted");
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("wrongAuthorizationAttributeTypes")
+    void authorization_attributes_reject_wrong_json_node_types_before_jackson_can_coerce_them(
+            String description, String json) {
+        OAuthAuthorizationAttributesConverter converter = new OAuthAuthorizationAttributesConverter();
+
+        assertThatThrownBy(() -> converter.convertToEntityAttribute(json))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private static Stream<Arguments> wrongAuthorizationAttributeTypes() {
+        return Stream.of(
+                Arguments.of("numeric principal", """
+                        {"principalName":42,
+                         "authorizationRequestUri":"https://idp.localhost:8080/oauth2/authorize"}
+                        """),
+                Arguments.of("boolean authorization URI", """
+                        {"principalName":"principal@example.com","authorizationRequestUri":false}
+                        """),
+                Arguments.of("numeric redirect URI", authorizationRequestJson(
+                        "42", "[\"openid\"]", "\"rp-state\"", "\"A%s\"".formatted("A".repeat(42)),
+                        "\"S256\"", "\"nonce\"")),
+                Arguments.of("scalar scopes", authorizationRequestJson(
+                        "\"https://rp.example/callback\"", "\"openid\"", "\"rp-state\"",
+                        "\"%s\"".formatted("A".repeat(43)), "\"S256\"", "\"nonce\"")),
+                Arguments.of("numeric scope element", authorizationRequestJson(
+                        "\"https://rp.example/callback\"", "[\"openid\",7]", "\"rp-state\"",
+                        "\"%s\"".formatted("A".repeat(43)), "\"S256\"", "\"nonce\"")),
+                Arguments.of("object RP state", authorizationRequestJson(
+                        "\"https://rp.example/callback\"", "[\"openid\"]", "{}",
+                        "\"%s\"".formatted("A".repeat(43)), "\"S256\"", "\"nonce\"")),
+                Arguments.of("numeric challenge", authorizationRequestJson(
+                        "\"https://rp.example/callback\"", "[\"openid\"]", "\"rp-state\"",
+                        "42", "\"S256\"", "\"nonce\"")),
+                Arguments.of("array challenge method", authorizationRequestJson(
+                        "\"https://rp.example/callback\"", "[\"openid\"]", "\"rp-state\"",
+                        "\"%s\"".formatted("A".repeat(43)), "[]", "\"nonce\"")),
+                Arguments.of("boolean nonce", authorizationRequestJson(
+                        "\"https://rp.example/callback\"", "[\"openid\"]", "\"rp-state\"",
+                        "\"%s\"".formatted("A".repeat(43)), "\"S256\"", "true")));
+    }
+
+    private static String authorizationRequestJson(
+            String redirectUri, String scopes, String rpState, String challenge, String method, String nonce) {
+        return """
+                {"principalName":"principal@example.com",
+                 "authorizationRequestUri":"https://idp.localhost:8080/oauth2/authorize",
+                 "authorizationRequest":{"redirectUri":%s,"requestedScopes":%s,"rpState":%s,
+                 "codeChallenge":%s,"codeChallengeMethod":%s,"nonce":%s}}
+                """.formatted(redirectUri, scopes, rpState, challenge, method, nonce);
+    }
+
     @Test
     void atomic_code_consumption_allows_only_one_of_two_real_postgresql_transactions_to_exchange() {
         Fixture fixture = insertFixture("CODE_RACE");
@@ -331,6 +387,43 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 }).orElseThrow();
 
         assertThat(consumed.exchangeResult()).contains("VALID");
+    }
+
+    @Test
+    void finalization_reloads_the_locked_parent_and_does_not_attach_tokens_after_revocation() {
+        Fixture fixture = insertFixture("FINALIZE_REVOKED");
+        String authorizationId = "authorization-finalize-revoked";
+        String challenge = "I".repeat(43);
+        OAuthAuthorization authorization = authorizationWithRequest(
+                fixture, authorizationId, challenge);
+        authorization.attachAuthorizationCode(OAuthAuthorizationCode.issue(
+                authorization.id(), hash('e'), URI.create("https://rp.example/callback"),
+                challenge, null, AUTHENTICATED_AT, CODE_EXPIRES_AT));
+        authorizationRepository.save(authorization);
+        authorizationRepository.consumeCodeAtomically(
+                hash('e'), AUTHENTICATED_AT.plusSeconds(1), exchange -> "VALID").orElseThrow();
+        jdbcClient.sql("""
+                        update oauth_authorization
+                           set status = 'REVOKED', revocation_reason = 'TEST_REVOKED', revoked_at = :at
+                         where id = :id
+                        """).param("at", Timestamp.from(AUTHENTICATED_AT.plusSeconds(2)))
+                .param("id", authorizationId).update();
+        OAuthAccessToken accessToken = OAuthAccessToken.issue(
+                authorizationId, hash('f'), "jti-finalize-revoked", "auth-study-userinfo",
+                AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT);
+
+        OAuthAuthorizationRepository.CodeFinalizationResult result = authorizationRepository
+                .finalizeAuthorizationCodeExchange(
+                        new OAuthAuthorizationRepository.CodeFinalization(
+                                hash('e'), authorizationId, fixture.clientId(), null,
+                                accessToken, null),
+                        AUTHENTICATED_AT.plusSeconds(2));
+
+        assertThat(result).isEqualTo(OAuthAuthorizationRepository.CodeFinalizationResult.INVALID);
+        assertThat(jdbcClient.sql("select count(*) from oauth_access_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(String.class).single()).isEqualTo("REVOKED");
     }
 
     @Test
@@ -572,6 +665,27 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 null, AUTHENTICATED_AT, CREATED_AT, REFRESH_EXPIRES_AT);
     }
 
+    private OAuthAuthorization authorizationWithRequest(
+            Fixture fixture, String id, String challenge) {
+        OAuthClient client = OAuthClient.restore(
+                fixture.clientId(), fixture.companyId(), "client-" + fixture.clientId(), "Client",
+                OAuthClientStatus.ACTIVE, OAuthClientTrust.CONSENT_REQUIRED, true, 0,
+                Set.of(URI.create("https://rp.example/callback")), Set.of(), Set.of("openid"),
+                Set.of(), CREATED_AT, CREATED_AT);
+        OAuthSubject subject = OAuthSubject.restore(
+                fixture.accountId(), fixture.accountId(), fixture.subject(), CREATED_AT);
+        return OAuthAuthorization.create(
+                id, OAuthAuthorization.Ownership.verified(
+                        client, subject, fixture.accountId(), fixture.companyId()),
+                "authorization_code", Set.of("openid"),
+                new OAuthAuthorization.Attributes(
+                        "principal@example.com", "https://idp.localhost:8080/oauth2/authorize",
+                        new OAuthAuthorization.AuthorizationRequest(
+                                "https://rp.example/callback", Set.of("openid"), "rp-state",
+                                challenge, "S256", null)),
+                null, AUTHENTICATED_AT, CREATED_AT, REFRESH_EXPIRES_AT);
+    }
+
     private int insertAuthorizationRow(String id, long clientId, UUID subject, long accountId, long companyId) {
         return jdbcClient.sql("""
                         insert into oauth_authorization(
@@ -633,6 +747,8 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 .param("companyId", companyId).param("userId", userId)
                 .param("email", suffix + "@example.com").param("now", Timestamp.from(CREATED_AT))
                 .query(Long.class).single();
+        jdbcClient.sql("insert into account_roles(account_id, role) values (:accountId, 'USER')")
+                .param("accountId", accountId).update();
         UUID subject = prefix.equals("ROUND_TRIP") ? SUBJECT : UUID.randomUUID();
         jdbcClient.sql("insert into oauth_subject(account_id, subject, created_at) values (:accountId, :subject, :now)")
                 .param("accountId", accountId).param("subject", subject).param("now", Timestamp.from(CREATED_AT))

@@ -21,6 +21,7 @@ import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
@@ -266,6 +267,23 @@ public final class OAuthAuthorizationMapper {
                 same ? previous.familyId() : UUID.randomUUID(), token.getToken().getIssuedAt(),
                 token.getToken().getExpiresAt(), same ? previous.usedAt() : null,
                 same ? previous.revokedAt() : null, same ? previous.successorId() : null));
+    }
+
+    OAuthAuthorizationRepository.CodeFinalization codeFinalization(
+            OAuth2Authorization source, String codeHash, String authenticatedSecretHash) {
+        OAuthAccessToken accessToken = mapAccessToken(source, null)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Authorization-code finalization requires an access token."));
+        OAuthRefreshToken refreshToken = mapRefreshToken(source, null).orElse(null);
+        long registeredClientId;
+        try {
+            registeredClientId = Long.parseLong(source.getRegisteredClientId());
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("Authorization-code finalization client is invalid.", exception);
+        }
+        return new OAuthAuthorizationRepository.CodeFinalization(
+                codeHash, source.getId(), registeredClientId, authenticatedSecretHash,
+                accessToken, refreshToken);
     }
 
     private <T> String hashOrExisting(String tokenValue, T existing,

@@ -37,6 +37,11 @@ public class UserRepositoryAdapter implements UserRepository {
     }
 
     @Override
+    public Optional<HrUser> findByIdForUpdate(long id) {
+        return repository.findByIdForUpdate(id).map(UserJpaEntity::toDomain);
+    }
+
+    @Override
     public Optional<HrUser> findByCompanyIdAndCode(long companyId, String code) {
         return repository.findByCompanyIdAndCodeIgnoreCase(companyId, code).map(UserJpaEntity::toDomain);
     }

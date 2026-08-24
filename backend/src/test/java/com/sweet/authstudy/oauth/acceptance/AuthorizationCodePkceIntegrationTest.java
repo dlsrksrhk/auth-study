@@ -1,6 +1,9 @@
 package com.sweet.authstudy.oauth.acceptance;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -37,6 +40,7 @@ import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
+import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +53,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -73,6 +78,7 @@ class AuthorizationCodePkceIntegrationTest {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcClient jdbcClient;
     @Autowired private PlatformTransactionManager transactionManager;
+    @MockitoSpyBean private SpringOAuth2AuthorizationService authorizationService;
 
     @Test
     void discovery_driven_authorization_code_exchange_succeeds_exactly_once() throws Exception {
@@ -338,6 +344,147 @@ class AuthorizationCodePkceIntegrationTest {
         assertThat(accessTokenCount(issued.authorizationId())).isZero();
     }
 
+    @Test
+    void completed_revocation_after_validation_but_before_final_save_returns_invalid_grant_without_tokens()
+            throws Exception {
+        Fixture fixture = fixture(false, "post-validation-revoke-" + UUID.randomUUID());
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+
+        ExchangeResult result = exchangeAfterCommittedPostValidationMutation(
+                endpoints, fixture, issued, () -> jdbcClient.sql("""
+                        update oauth_authorization
+                           set status = 'REVOKED', revocation_reason = 'POST_VALIDATION_REVOKE', revoked_at = now()
+                         where id = :id
+                        """).param("id", issued.authorizationId()).update());
+
+        assertThat(result).isEqualTo(new ExchangeResult(400, "invalid_grant"));
+        assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+        assertThat(refreshTokenCount(issued.authorizationId())).isZero();
+        assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
+                .param("id", issued.authorizationId()).query(String.class).single()).isEqualTo("REVOKED");
+    }
+
+    @Test
+    void completed_client_disable_after_validation_but_before_final_save_returns_invalid_grant_without_tokens()
+            throws Exception {
+        Fixture fixture = fixture(false, "post-validation-client-" + UUID.randomUUID());
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+
+        ExchangeResult result = exchangeAfterCommittedPostValidationMutation(
+                endpoints, fixture, issued, () -> jdbcClient.sql("""
+                        update oauth_client set status = 'DISABLED', updated_at = now()
+                         where id = :id
+                        """).param("id", fixture.internalClientId()).update());
+
+        assertThat(result).isEqualTo(new ExchangeResult(400, "invalid_grant"));
+        assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+        assertThat(refreshTokenCount(issued.authorizationId())).isZero();
+    }
+
+    @Test
+    void completed_account_disable_after_validation_but_before_final_save_returns_invalid_grant_without_tokens()
+            throws Exception {
+        Fixture fixture = fixture(false, "post-validation-account-" + UUID.randomUUID());
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+
+        ExchangeResult result = exchangeAfterCommittedPostValidationMutation(
+                endpoints, fixture, issued, () -> jdbcClient.sql("""
+                        update accounts set status = 'DISABLED', updated_at = now()
+                         where id = :id
+                        """).param("id", fixture.accountId()).update());
+
+        assertThat(result).isEqualTo(new ExchangeResult(400, "invalid_grant"));
+        assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+        assertThat(refreshTokenCount(issued.authorizationId())).isZero();
+    }
+
+    @Test
+    void completed_user_resignation_after_validation_but_before_final_save_returns_invalid_grant_without_tokens()
+            throws Exception {
+        Fixture fixture = fixture(false, "post-validation-user-" + UUID.randomUUID());
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+
+        ExchangeResult result = exchangeAfterCommittedPostValidationMutation(
+                endpoints, fixture, issued, () -> jdbcClient.sql("""
+                        update users set status = 'RESIGNED', updated_at = now()
+                         where id = (select user_id from accounts where id = :accountId)
+                        """).param("accountId", fixture.accountId()).update());
+
+        assertThat(result).isEqualTo(new ExchangeResult(400, "invalid_grant"));
+        assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+        assertThat(refreshTokenCount(issued.authorizationId())).isZero();
+    }
+
+    @Test
+    void completed_company_disable_after_validation_but_before_final_save_returns_invalid_grant_without_tokens()
+            throws Exception {
+        Fixture fixture = fixture(false, "post-validation-company-" + UUID.randomUUID());
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+
+        ExchangeResult result = exchangeAfterCommittedPostValidationMutation(
+                endpoints, fixture, issued, () -> jdbcClient.sql("""
+                        update companies set status = 'INACTIVE', updated_at = now()
+                         where id = (select company_id from accounts where id = :accountId)
+                        """).param("accountId", fixture.accountId()).update());
+
+        assertThat(result).isEqualTo(new ExchangeResult(400, "invalid_grant"));
+        assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+        assertThat(refreshTokenCount(issued.authorizationId())).isZero();
+    }
+
+    @Test
+    void an_account_disabled_before_atomic_validation_returns_invalid_grant_and_consumes_the_code()
+            throws Exception {
+        Fixture fixture = fixture();
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+        jdbcClient.sql("update accounts set status = 'DISABLED', updated_at = now() where id = :id")
+                .param("id", fixture.accountId()).update();
+
+        mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_grant"));
+        assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+        assertThat(refreshTokenCount(issued.authorizationId())).isZero();
+    }
+
+    private ExchangeResult exchangeAfterCommittedPostValidationMutation(
+            Endpoints endpoints, Fixture fixture, IssuedCode issued, Runnable mutation) throws Exception {
+        CountDownLatch finalSaveEntered = new CountDownLatch(1);
+        CountDownLatch releaseFinalSave = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            var candidate = invocation.getArgument(
+                    0, org.springframework.security.oauth2.server.authorization.OAuth2Authorization.class);
+            if (candidate.getAccessToken() != null) {
+                finalSaveEntered.countDown();
+                await(releaseFinalSave);
+            }
+            return invocation.callRealMethod();
+        }).when(authorizationService).save(any());
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var exchange = executor.submit(() ->
+                    exchangeAfterBarrier(new CyclicBarrier(1), endpoints, fixture, issued));
+            assertThat(finalSaveEntered.await(20, TimeUnit.SECONDS)).isTrue();
+            mutation.run();
+            releaseFinalSave.countDown();
+            return exchange.get(20, TimeUnit.SECONDS);
+        } finally {
+            releaseFinalSave.countDown();
+            doCallRealMethod().when(authorizationService).save(any());
+        }
+    }
+
     private ExchangeResult exchangeAfterCommittedMutationWhileCodeLocked(
             Endpoints endpoints, Fixture fixture, IssuedCode issued, Runnable mutation) throws Exception {
         CountDownLatch codeLocked = new CountDownLatch(1);
@@ -542,6 +689,11 @@ class AuthorizationCodePkceIntegrationTest {
 
     private long accessTokenCount(String authorizationId) {
         return jdbcClient.sql("select count(*) from oauth_access_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single();
+    }
+
+    private long refreshTokenCount(String authorizationId) {
+        return jdbcClient.sql("select count(*) from oauth_refresh_token where authorization_id = :id")
                 .param("id", authorizationId).query(Long.class).single();
     }
 

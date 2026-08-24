@@ -193,3 +193,102 @@ fresh full backend command `./gradlew.bat test --rerun-tasks`:
 - production protocol filter는 authorization service + consent service + production JWKSource가 모두 있을 때만 활성화됩니다. Task 8 전 일반 app context의 issuer-origin token POST 501 boundary와 test-scope RS256 JWK만 사용하는 경계를 focused/full suite에서 보존했습니다.
 - numeric account-id principal 계약은 Task 9 연결 시 유지하거나 명시적 principal adapter로 교체해야 합니다. Task 9 UI, Task 8 key ring, Task 11 refresh rotation은 이번 fix 범위 밖입니다.
 - BASE-wide Origin 정책은 Task 12 범위라 변경하지 않았으며, 이 테스트는 issuer Origin이 실제 BFF interop을 대표한다고 주장하지 않습니다.
+
+## Review fix round 2
+
+### 상태와 변경 파일
+
+DONE
+
+- final token persistence boundary:
+  - `OAuthAuthorizationRepository`, `OAuthAuthorizationRepositoryAdapter`
+  - `OAuthAuthorizationMapper`, `SpringOAuth2AuthorizationService`
+  - `AtomicAuthorizationCodeClientAuthenticationProvider`
+- authoritative identity locking:
+  - `UserRepository`, `UserJpaRepository`, `UserRepositoryAdapter`의 `findByIdForUpdate`
+- strict allowlist JSON:
+  - `OAuthAuthorizationAttributesConverter`
+- tests:
+  - `AuthorizationCodePkceIntegrationTest`
+  - `OAuthAuthorizationPersistenceIntegrationTest`
+
+### Critical finalization boundary
+
+SAS 1.5.8의 authorization-code provider는 access/refresh/ID token을 생성한 다음 `OAuth2AuthorizationService.save`를 호출합니다. round 1의 consume transaction은 그보다 먼저 끝나므로, 그 사이 revoke/disable이 commit되면 unlocked final save가 최신 상태에 token row를 붙일 수 있었습니다.
+
+authorization-code request-scope cache가 있고 issued access token이 포함된 최종 save는 이제 일반 mapper read-then-save 경로를 사용하지 않습니다. raw access/refresh는 이 adapter 경계에서 즉시 SHA-256 domain metadata로 바뀌며, 별도 `REQUIRES_NEW` finalization이 다음 순서로 잠급니다.
+
+`code → parent authorization → current client → company → account → user`
+
+finalization은 다음을 같은 transaction에서 다시 확인합니다.
+
+- code hash, consumed 상태와 parent authorization ID
+- candidate authorization/client/token ownership
+- current authorization ACTIVE/미만료와 current client ACTIVE
+- confidential client이면 직전에 인증한 BCrypt secret hash가 여전히 active/미만료인지 여부
+- current exact registered redirect, code/request redirect와 S256 challenge/method
+- current client/request/authorized scopes 관계
+- Company/Account/User가 모두 ACTIVE이고 서로 같은 authoritative ownership chain인지 여부
+- 기존 access/refresh row가 아직 없는지 여부
+
+유효할 때만 현재 잠긴 aggregate의 parent 상태를 수정하지 않고 access/refresh metadata row만 save+flush합니다. 따라서 stale `ACTIVE` parent를 다시 쓰거나 `REVOKED` parent를 부활시키지 않습니다. refresh flush가 실패하면 같은 transaction의 access insert도 rollback됩니다. invalid finalization은 explicit `INVALID` 값이며 Spring service가 generic OAuth 400 `invalid_grant`로 바꿉니다. DB/system exception은 protocol-invalid로 숨기지 않고 transaction rollback이 가능합니다.
+
+잠금은 HTTP response까지 유지하지 않고 token metadata commit 지점에서만 linearize합니다. finalization이 먼저 잠금을 얻으면 뒤의 identity mutation이 기다렸다가 이후 순서가 되고, mutation이 먼저 commit되면 finalization이 `invalid_grant`로 끝납니다. 현재 identity mutation의 suffix 순서인 company → account → user와 맞췄습니다. 미래 Task 12 identity-to-OAuth revocation은 identity lock을 보유한 채 OAuth lock을 역순으로 잡지 말고 identity transaction commit 뒤 별도 transaction/event로 수행해야 한다는 규칙을 repository contract에 기록했습니다.
+
+### 실제 post-validation race와 identity 오류
+
+production sleep/hook은 추가하지 않았습니다. test-scope `@MockitoSpyBean`이 token이 생성된 final `save` 진입에서만 latch로 멈추므로 post-validation/pre-final-save window를 정확히 만듭니다. 그 사이 실제 PostgreSQL update를 commit한 뒤 final save를 해제합니다.
+
+- authorization revoke: 400 `invalid_grant`, consumed code, access 0, refresh 0, parent `REVOKED` 유지
+- client disable: 400 `invalid_grant`, consumed code, access 0, refresh 0
+- account disable: 400 `invalid_grant`, consumed code, access 0, refresh 0
+- user resignation: 400 `invalid_grant`, consumed code, access 0, refresh 0
+- company inactive: 400 `invalid_grant`, consumed code, access 0, refresh 0
+
+account가 atomic consume 전에 이미 DISABLED인 별도 HTTP test도 정확히 400 `invalid_grant`, consumed code, access/refresh 0을 검증합니다. account/user/company lock과 상태 read는 repository가 callback 전에 수행하므로 Task 6 callback 자체는 계속 clock read와 메모리 비교만 수행합니다.
+
+### Minor JSON node type validation
+
+root의 `principalName`, `authorizationRequestUri`와 nested request의 redirect/challenge/method는 textual node만 허용합니다. RP state/nonce는 null 또는 textual만 허용하고, requested scopes는 array이며 각 element가 textual이어야 합니다. allowlisted field 이름만 맞춘 numeric/boolean/object/array 값을 Jackson이 String으로 coercion하기 전에 모두 거부합니다.
+
+### 엄격 TDD와 mutation 증거
+
+1. post-validation revoke HTTP RED
+   - test-scope barrier 뒤 revoke를 먼저 commit했을 때 기존 구현은 기대한 `ExchangeResult[400, invalid_grant]` 대신 `ExchangeResult[200, null]`과 token을 반환했습니다.
+2. persistence finalization contract RED
+   - test를 먼저 추가한 실행은 `CodeFinalization`, `CodeFinalizationResult`, `finalizeAuthorizationCodeExchange`가 없어 `compileTestJava` 3 errors였습니다.
+3. disabled account RED/mutation
+   - account-active 검사를 제거한 regression 실행에서 pre-validation과 post-validation test 모두 기대 400 대신 200이었습니다. 검사를 복원한 뒤 둘 다 GREEN입니다.
+4. client status mutation
+   - finalization의 current-client ACTIVE 검사를 제거하면 post-validation client-disable test가 기대 400 대신 200으로 실패하며, 복원 뒤 GREEN입니다.
+5. User/Company RED
+   - authoritative User/Company validation을 제외한 상태에서 두 post-validation tests가 모두 기대 400 대신 200이었습니다. company/user pessimistic re-read를 추가한 뒤 GREEN입니다.
+6. JSON RED
+   - wrong-node-type 9-case parameterized test 중 numeric principal, boolean authorization URI, numeric redirect, numeric scope element, boolean nonce 5건이 Jackson coercion으로 저장되어 실패했습니다. explicit node validation 뒤 9건 모두 GREEN입니다.
+
+### GREEN / full evidence
+
+focused command:
+
+`./gradlew.bat test --rerun-tasks --tests "*SpringOAuth2AuthorizationServiceTest" --tests "*AtomicAuthorizationCodeClientAuthenticationProviderTest" --tests "*AuthorizationCodePkceIntegrationTest" --tests "*OAuthAuthorizationPersistenceIntegrationTest" --tests "*OAuthClientAuthenticationIntegrationTest" --tests "*SpringRegisteredClientRepositoryTest" --tests "*SecurityChainIsolationIntegrationTest" --tests "*ModuleBoundaryTest"`
+
+- BUILD SUCCESSFUL in 52s
+- XML 합계 8 suites, 79 tests, 0 failures, 0 errors, 0 skipped
+- 실제 authorization-code filter-chain suite 16 cases와 PostgreSQL persistence suite 30 cases 포함
+
+fresh full backend `./gradlew.bat test --rerun-tasks`:
+
+- BUILD SUCCESSFUL in 2m 55s
+- XML 합계 41 suites, 258 tests, 0 failures, 0 errors, 0 skipped
+
+production 금지 문자열(`ObjectOutputStream`, `ObjectInputStream`, default typing API, raw token value column명)은 0건입니다. 최종 test XML/HTML의 알려진 verifier, confidential/race secret, Java serialization fixture scan도 0건이고 `git diff --check` 오류도 없습니다.
+
+### self-review / 범위 경계
+
+- finalization에서 authorization/client/account/user/company 상태 검사를 하나씩 제거하면 해당 deterministic race가 200으로 바뀝니다. parent를 일반 `save`로 되돌리면 revoke test의 parent/token assertions이 실패합니다.
+- code/authorization/client/request ownership 또는 exact redirect/S256 비교를 제거하면 persistence finalization contract나 기존 wrong-verifier/exact-redirect tests가 방어하지 못하므로 finalization에서 consume 단계와 독립적으로 다시 확인합니다.
+- finalization에 raw token을 전달하거나 mapper hash를 제거하면 기존 실제 DB hash equality/raw inequality tests와 production scan 계약을 위반합니다.
+- converter scalar/element type 검사를 제거하면 9-case test 중 coercible cases가 즉시 실패합니다.
+- finalization보다 먼저 commit된 mutation은 이번 tests가 보장합니다. finalization이 먼저 commit된 뒤 Account/client lifecycle mutation이 기존 active rows까지 revoke하는 orchestration은 기존 Task 6 repository revoke contract가 담당하며, 모든 실제 lifecycle event 연결은 Task 12 범위입니다.
+- test-only barrier는 Spring bean을 바꾸거나 token generator를 production에 노출하지 않으며, `@MockitoSpyBean` test context 안에만 존재합니다.
+- Task 8 production JWK/test-only RS256 경계, Task 1 issuer-origin 501 placeholder, Task 5 Basic/public auth, C1 consent round-trip, other-grant pass-through를 focused/full suite에서 그대로 보존했습니다.

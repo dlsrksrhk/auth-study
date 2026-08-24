@@ -89,6 +89,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                     && authorization.registeredClientId() == currentClient.id()
                     && authorization.companyId() == currentClient.companyId()
                     && authorization.activeAt(now)
+                    && locked.principalActive()
                     && currentAuthenticationSnapshotMatches(clientAuthentication, client, currentClient, now);
             boolean requestMatches = request != null
                     && currentClient.allowsRedirect(URI.create(request.redirectUri()));
@@ -100,7 +101,8 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                     && validS256(verifier, locked.code().codeChallenge())
                     && S256.equals(request.codeChallengeMethod());
             return new ExchangeValidation(
-                    clientMatches && redirectMatches && verifierMatches, authorization);
+                    clientMatches && redirectMatches && verifierMatches, authorization,
+                    currentClient.publicClient() ? null : client.getClientSecret());
         }).orElse(null);
         if (consumption == null
                 || consumption.consumption()
@@ -114,7 +116,9 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                 authorizations.reconstructConsumedAuthorization(
                 rawCode, consumption.exchangeResult().orElseThrow().authorization());
         if (authorization == null) throwInvalidGrant("code");
-        authorizations.cacheConsumedAuthorization(rawCode, authorization);
+        authorizations.cacheConsumedAuthorization(
+                rawCode, authorization,
+                consumption.exchangeResult().orElseThrow().authenticatedSecretHash());
         return new OAuth2ClientAuthenticationToken(client,
                 clientAuthentication.getClientAuthenticationMethod(),
                 clientAuthentication.getCredentials());
@@ -187,7 +191,8 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                 OAuth2ErrorCodes.INVALID_GRANT, "Invalid grant: " + parameter, null));
     }
 
-    private record ExchangeValidation(boolean valid, OAuthAuthorization authorization) { }
+    private record ExchangeValidation(
+            boolean valid, OAuthAuthorization authorization, String authenticatedSecretHash) { }
 
     public static final class Converter implements AuthenticationConverter {
         @Override

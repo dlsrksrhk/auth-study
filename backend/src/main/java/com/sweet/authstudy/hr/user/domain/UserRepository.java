@@ -11,6 +11,8 @@ public interface UserRepository {
 
     Optional<HrUser> findById(long id);
 
+    Optional<HrUser> findByIdForUpdate(long id);
+
     Optional<HrUser> findByCompanyIdAndCode(long companyId, String code);
 
     Optional<HrUser> findByCompanyIdAndEmployeeNumber(long companyId, String employeeNumber);

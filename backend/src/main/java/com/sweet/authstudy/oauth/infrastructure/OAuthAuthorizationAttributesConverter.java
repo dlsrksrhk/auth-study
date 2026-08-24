@@ -41,6 +41,8 @@ class OAuthAuthorizationAttributesConverter
                     throw new IllegalArgumentException("Authorization attribute is not allowlisted: " + field);
                 }
             });
+            requireText(root, "principalName");
+            requireText(root, "authorizationRequestUri");
             JsonNode request = root.get("authorizationRequest");
             if (request != null && !request.isNull()) {
                 if (!request.isObject()) {
@@ -52,10 +54,37 @@ class OAuthAuthorizationAttributesConverter
                                 "Authorization request attribute is not allowlisted: " + field);
                     }
                 });
+                requireText(request, "redirectUri");
+                JsonNode scopes = request.get("requestedScopes");
+                if (scopes == null || !scopes.isArray()) {
+                    throw wrongType("requestedScopes");
+                }
+                scopes.forEach(scope -> {
+                    if (!scope.isTextual()) throw wrongType("requestedScopes element");
+                });
+                requireNullableText(request, "rpState");
+                requireText(request, "codeChallenge");
+                requireText(request, "codeChallengeMethod");
+                requireNullableText(request, "nonce");
             }
             return JSON.treeToValue(root, OAuthAuthorization.Attributes.class);
         } catch (JsonProcessingException exception) {
             throw new IllegalArgumentException("Cannot read allowlisted authorization attributes.", exception);
         }
+    }
+
+    private static void requireText(JsonNode object, String field) {
+        JsonNode value = object.get(field);
+        if (value == null || !value.isTextual()) throw wrongType(field);
+    }
+
+    private static void requireNullableText(JsonNode object, String field) {
+        JsonNode value = object.get(field);
+        if (value != null && !value.isNull() && !value.isTextual()) throw wrongType(field);
+    }
+
+    private static IllegalArgumentException wrongType(String field) {
+        return new IllegalArgumentException(
+                "Authorization attribute has an invalid JSON type: " + field);
     }
 }
