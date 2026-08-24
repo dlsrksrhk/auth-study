@@ -89,9 +89,8 @@ public interface OAuthUserInfoClaimSource {
         }
     }
 
-    record User(long id, long companyId, String code, String name, Status status) {
+    record User(long id, long companyId, String name, Status status) {
         public User {
-            code = requireText(code, "user code");
             name = requireText(name, "user name");
             status = Objects.requireNonNull(status, "status");
         }

@@ -57,6 +57,10 @@ class OAuthAuthorizationJpaEntity {
     private Instant expiresAt;
     @Column(name = "revoked_at")
     private Instant revokedAt;
+    @Column(name = "id_token_issued_at")
+    private Instant idTokenIssuedAt;
+    @Column(name = "id_token_expires_at")
+    private Instant idTokenExpiresAt;
 
     protected OAuthAuthorizationJpaEntity() { }
 
@@ -85,6 +89,18 @@ class OAuthAuthorizationJpaEntity {
         status = authorization.status();
         revocationReason = authorization.revocationReason();
         revokedAt = authorization.revokedAt();
+        idTokenIssuedAt = authorization.idTokenEvidence()
+                .map(OAuthAuthorization.IdTokenEvidence::issuedAt).orElse(null);
+        idTokenExpiresAt = authorization.idTokenEvidence()
+                .map(OAuthAuthorization.IdTokenEvidence::expiresAt).orElse(null);
+    }
+
+    void recordIdTokenEvidence(OAuthAuthorization.IdTokenEvidence evidence) {
+        if (idTokenIssuedAt != null || idTokenExpiresAt != null) {
+            throw new IllegalStateException("ID token issuance evidence already exists.");
+        }
+        idTokenIssuedAt = evidence.issuedAt();
+        idTokenExpiresAt = evidence.expiresAt();
     }
 
     OAuthAuthorization toDomain(OAuthAuthorizationCode code, OAuthAccessToken accessToken,
@@ -93,6 +109,9 @@ class OAuthAuthorizationJpaEntity {
                 : Arrays.stream(authorizedScopes.split(" ")).collect(Collectors.toUnmodifiableSet());
         return OAuthAuthorization.restore(id, registeredClientId, subject, principalAccountId, companyId,
                 authorizationGrantType, scopes, attributes, serverStateHash, authenticatedAt, status,
-                revocationReason, createdAt, expiresAt, revokedAt, code, accessToken, refreshToken);
+                revocationReason, createdAt, expiresAt, revokedAt,
+                idTokenIssuedAt == null ? null
+                        : new OAuthAuthorization.IdTokenEvidence(idTokenIssuedAt, idTokenExpiresAt),
+                code, accessToken, refreshToken);
     }
 }

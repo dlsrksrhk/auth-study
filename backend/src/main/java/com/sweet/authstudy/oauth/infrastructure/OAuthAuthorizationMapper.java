@@ -114,7 +114,8 @@ public final class OAuthAuthorizationMapper {
                         source.getAuthorizationGrantType().getValue(), source.getAuthorizedScopes(),
                         attributes, serverStateHash, existing.authenticatedAt(), existing.status(),
                         existing.revocationReason(), existing.createdAt(), existing.expiresAt(),
-                        existing.revokedAt(), null, null, null);
+                        existing.revokedAt(), existing.idTokenEvidence().orElse(null),
+                        null, null, null);
 
         mapAuthorizationCode(source, request, existing).ifPresent(mapped::attachAuthorizationCode);
         mapAccessToken(source, existing).ifPresent(mapped::attachAccessToken);
@@ -129,6 +130,19 @@ public final class OAuthAuthorizationMapper {
 
     OAuth2Authorization toSpring(com.sweet.authstudy.oauth.domain.OAuthAuthorization source,
             String lookedUpToken, String lookedUpTokenType, boolean activeConsumedCode) {
+        return toSpring(source, lookedUpToken, lookedUpTokenType, activeConsumedCode, false);
+    }
+
+    OAuth2Authorization toSpringForUserInfo(
+            com.sweet.authstudy.oauth.domain.OAuthAuthorization source, String rawAccessToken) {
+        return toSpring(source, rawAccessToken,
+                org.springframework.security.oauth2.server.authorization.OAuth2TokenType.ACCESS_TOKEN.getValue(),
+                false, true);
+    }
+
+    private OAuth2Authorization toSpring(com.sweet.authstudy.oauth.domain.OAuthAuthorization source,
+            String lookedUpToken, String lookedUpTokenType, boolean activeConsumedCode,
+            boolean userInfoLookup) {
         Objects.requireNonNull(source, "authorization");
         if (source.status() != com.sweet.authstudy.oauth.domain.OAuthAuthorization.Status.ACTIVE
                 || source.revokedAt() != null) {
@@ -179,15 +193,22 @@ public final class OAuthAuthorizationMapper {
                 }
             });
         });
-        if (source.authorizedScopes().contains("openid")) {
-            source.accessToken().ifPresent(token -> builder.token(OidcIdToken
-                    .withTokenValue("userinfo-metadata:" + source.id())
-                    .issuer(properties.issuer().toString())
-                    .subject(source.subject().toString())
-                    .audience(List.of(client.clientId()))
-                    .issuedAt(token.issuedAt())
-                    .expiresAt(token.expiresAt())
-                    .build()));
+        if (userInfoLookup && source.authorizedScopes().contains("openid")
+                && source.accessToken().isPresent() && source.idTokenEvidence().isPresent()) {
+            OAuthSubject currentSubject = subjects.findByAccountId(source.principalAccountId()).orElse(null);
+            if (currentSubject != null
+                    && currentSubject.accountId() == source.principalAccountId()
+                    && currentSubject.subject().equals(source.subject())) {
+                com.sweet.authstudy.oauth.domain.OAuthAuthorization.IdTokenEvidence evidence =
+                        source.idTokenEvidence().orElseThrow();
+                builder.token(OidcIdToken.withTokenValue("userinfo-metadata:" + source.id())
+                        .issuer(properties.issuer().toString())
+                        .subject(currentSubject.subject().toString())
+                        .audience(List.of(client.clientId()))
+                        .issuedAt(evidence.issuedAt())
+                        .expiresAt(evidence.expiresAt())
+                        .build());
+            }
         }
         source.refreshToken().ifPresent(token -> {
             String value = tokenValue(token.refreshTokenHash(), lookedUpToken, lookedUpTokenType,
@@ -302,11 +323,25 @@ public final class OAuthAuthorizationMapper {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Authorization-code finalization requires an access token."));
         OAuthRefreshToken refreshToken = mapRefreshToken(source, null).orElse(null);
+        OAuthAuthorizationRepository.IdTokenCandidate idTokenCandidate = idTokenCandidate(source);
         OAuthAuthorizationCodeExchangeBinding candidateBinding = codeExchangeBinding(source);
         Set<String> accessTokenScopes = source.getAccessToken().getToken().getScopes();
         return new OAuthAuthorizationRepository.CodeFinalization(
                 consumedBinding, candidateBinding, authenticatedSecretHash, accessTokenScopes,
-                accessToken, refreshToken);
+                idTokenCandidate, accessToken, refreshToken);
+    }
+
+    private OAuthAuthorizationRepository.IdTokenCandidate idTokenCandidate(OAuth2Authorization source) {
+        OAuth2Authorization.Token<OidcIdToken> idToken = source.getToken(OidcIdToken.class);
+        boolean openid = source.getAuthorizedScopes().contains("openid");
+        if (openid != (idToken != null)) {
+            throw new IllegalArgumentException("ID token issuance does not match the authorized scopes.");
+        }
+        if (idToken == null) return null;
+        OidcIdToken token = idToken.getToken();
+        return new OAuthAuthorizationRepository.IdTokenCandidate(
+                token.getSubject(), Set.copyOf(token.getAudience()),
+                token.getIssuedAt(), token.getExpiresAt());
     }
 
     OAuthAuthorizationCodeExchangeBinding codeExchangeBinding(OAuth2Authorization source) {

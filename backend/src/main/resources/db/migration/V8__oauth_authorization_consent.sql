@@ -37,6 +37,8 @@ CREATE TABLE oauth_authorization (
     created_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     revoked_at TIMESTAMPTZ,
+    id_token_issued_at TIMESTAMPTZ,
+    id_token_expires_at TIMESTAMPTZ,
     CONSTRAINT fk_oauth_authorization_subject_account
         FOREIGN KEY (subject, principal_account_id)
         REFERENCES oauth_subject (subject, account_id),
@@ -50,6 +52,10 @@ CREATE TABLE oauth_authorization (
     CONSTRAINT ck_oauth_authorization_grant_not_blank CHECK (btrim(authorization_grant_type) <> ''),
     CONSTRAINT ck_oauth_authorization_status CHECK (status IN ('ACTIVE', 'REVOKED')),
     CONSTRAINT ck_oauth_authorization_time_order CHECK (expires_at > created_at),
+    CONSTRAINT ck_oauth_authorization_id_token_evidence CHECK (
+        (id_token_issued_at IS NULL AND id_token_expires_at IS NULL)
+        OR (id_token_issued_at IS NOT NULL AND id_token_expires_at > id_token_issued_at)
+    ),
     CONSTRAINT ck_oauth_authorization_server_state_hash CHECK (
         server_state_hash IS NULL OR server_state_hash ~ '^[0-9a-f]{64}$'
     )

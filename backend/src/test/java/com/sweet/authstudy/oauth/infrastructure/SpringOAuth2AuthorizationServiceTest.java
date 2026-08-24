@@ -55,6 +55,7 @@ import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
@@ -70,6 +71,7 @@ class SpringOAuth2AuthorizationServiceTest {
     private static final String CODE = "raw-authorization-code-that-must-never-be-persisted";
     private static final String ACCESS = "raw-access-token-that-must-never-be-persisted";
     private static final String REFRESH = "raw-refresh-token-that-must-never-be-persisted";
+    private static final String ID_TOKEN = "raw-id-token-that-must-never-be-persisted";
     private static final String CONSENT_STATE = "server-generated-consent-state";
     private static final String CHALLENGE = challenge("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~");
     private static final URI CALLBACK = URI.create("https://rp.example/callback?exact=true");
@@ -246,7 +248,26 @@ class SpringOAuth2AuthorizationServiceTest {
         });
         assertThat(finalization.refreshToken()).satisfies(token ->
                 assertThat(token.refreshTokenHash()).isEqualTo(sha256(REFRESH)));
+        assertThat(finalization.idTokenCandidate()).satisfies(candidate -> {
+            assertThat(candidate.subject()).isEqualTo(SUBJECT.toString());
+            assertThat(candidate.audiences()).containsExactly("public-id");
+            assertThat(candidate.issuedAt()).isEqualTo(NOW);
+            assertThat(candidate.expiresAt()).isEqualTo(NOW.plusSeconds(300));
+            assertThat(candidate.toString()).doesNotContain(ID_TOKEN);
+        });
         verify(authorizations, never()).save(any());
+    }
+
+    @Test
+    void openid_authorization_code_finalization_requires_an_actual_id_token_candidate() {
+        var candidate = springAuthorization(false);
+        service.cacheConsumedAuthorization(candidate, null, binding(CODE));
+
+        assertThatThrownBy(() -> service.save(candidate))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+
+        verify(authorizations, never()).finalizeAuthorizationCodeExchange(any(), any());
     }
 
     @Test
@@ -333,6 +354,7 @@ class SpringOAuth2AuthorizationServiceTest {
                 .getToken().getTokenValue()).isEqualTo(sha256(CODE));
         assertThat(found.getAccessToken().getToken().getTokenValue()).isEqualTo(sha256(ACCESS));
         assertThat(found.getRefreshToken().getToken().getTokenValue()).isEqualTo(sha256(REFRESH));
+        assertThat(found.getToken(OidcIdToken.class)).isNull();
         assertThat(found.getAttributes().toString()).doesNotContain(CODE, ACCESS, REFRESH);
     }
 
@@ -345,20 +367,77 @@ class SpringOAuth2AuthorizationServiceTest {
                 .thenReturn(Optional.of(persisted.accessToken().orElseThrow()));
         when(authorizations.findByRefreshTokenHash(sha256(REFRESH)))
                 .thenReturn(Optional.of(persisted.refreshToken().orElseThrow()));
+        when(authorizations.findByServerStateHash(sha256(CONSENT_STATE)))
+                .thenReturn(Optional.of(persisted));
         when(authorizations.findById("authorization-1")).thenReturn(Optional.of(persisted));
         when(clients.findById(22L)).thenReturn(Optional.of(activeClient()));
 
-        assertThat(service.findByToken(CODE, new OAuth2TokenType("code"))
+        var byState = service.findByToken(CONSENT_STATE, new OAuth2TokenType("state"));
+        var byCode = service.findByToken(CODE, new OAuth2TokenType("code"));
+        var byAccess = service.findByToken(ACCESS, OAuth2TokenType.ACCESS_TOKEN);
+        var byRefresh = service.findByToken(REFRESH, OAuth2TokenType.REFRESH_TOKEN);
+        assertThat(byCode
                 .getToken(org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class)
                 .getToken().getTokenValue()).isEqualTo(CODE);
-        assertThat(service.findByToken(ACCESS, OAuth2TokenType.ACCESS_TOKEN)
+        assertThat(byAccess
                 .getAccessToken().getToken().getTokenValue()).isEqualTo(ACCESS);
-        assertThat(service.findByToken(REFRESH, OAuth2TokenType.REFRESH_TOKEN)
+        assertThat(byRefresh
                 .getRefreshToken().getToken().getTokenValue()).isEqualTo(REFRESH);
+        assertThat(byState.getToken(OidcIdToken.class)).isNull();
+        assertThat(byCode.getToken(OidcIdToken.class)).isNull();
+        assertThat(byAccess.getToken(OidcIdToken.class)).isNull();
+        assertThat(byRefresh.getToken(OidcIdToken.class)).isNull();
 
+        verify(authorizations).findByServerStateHash(sha256(CONSENT_STATE));
         verify(authorizations).findByCodeHash(sha256(CODE));
         verify(authorizations).findByAccessTokenHash(sha256(ACCESS));
         verify(authorizations).findByRefreshTokenHash(sha256(REFRESH));
+    }
+
+    @Test
+    void dedicated_userinfo_access_lookup_attaches_only_evidenced_authoritative_id_metadata() {
+        OAuthAuthorization persisted = domainAuthorization(true);
+        when(authorizations.findByAccessTokenHash(sha256(ACCESS)))
+                .thenReturn(Optional.of(persisted.accessToken().orElseThrow()));
+        when(authorizations.findById("authorization-1")).thenReturn(Optional.of(persisted));
+        stubUserInfoOwnership();
+
+        var found = service.findByAccessTokenForUserInfo(ACCESS);
+
+        assertThat(found.getToken(OidcIdToken.class)).satisfies(idToken -> {
+            assertThat(idToken.getToken().getSubject()).isEqualTo(SUBJECT.toString());
+            assertThat(idToken.getToken().getAudience()).containsExactly("public-id");
+            assertThat(idToken.getToken().getIssuedAt()).isEqualTo(NOW);
+            assertThat(idToken.getToken().getExpiresAt()).isEqualTo(NOW.plusSeconds(300));
+        });
+    }
+
+    @Test
+    void dedicated_userinfo_access_lookup_does_not_invent_missing_id_evidence() {
+        OAuthAuthorization persisted = domainAuthorization(false);
+        when(authorizations.findByAccessTokenHash(sha256(ACCESS)))
+                .thenReturn(Optional.of(persisted.accessToken().orElseThrow()));
+        when(authorizations.findById("authorization-1")).thenReturn(Optional.of(persisted));
+        when(clients.findById(22L)).thenReturn(Optional.of(activeClient()));
+
+        var found = service.findByAccessTokenForUserInfo(ACCESS);
+
+        assertThat(found.getToken(OidcIdToken.class)).isNull();
+    }
+
+    @Test
+    void dedicated_userinfo_access_lookup_does_not_attach_id_metadata_for_a_changed_subject_owner() {
+        OAuthAuthorization persisted = domainAuthorization(true);
+        when(authorizations.findByAccessTokenHash(sha256(ACCESS)))
+                .thenReturn(Optional.of(persisted.accessToken().orElseThrow()));
+        when(authorizations.findById("authorization-1")).thenReturn(Optional.of(persisted));
+        when(clients.findById(22L)).thenReturn(Optional.of(activeClient()));
+        when(subjects.findByAccountId(42L)).thenReturn(Optional.of(
+                OAuthSubject.restore(8L, 42L, UUID.randomUUID(), NOW.minusSeconds(300))));
+
+        var found = service.findByAccessTokenForUserInfo(ACCESS);
+
+        assertThat(found.getToken(OidcIdToken.class)).isNull();
     }
 
     @Test
@@ -538,6 +617,12 @@ class SpringOAuth2AuthorizationServiceTest {
         when(accounts.findById(42L)).thenReturn(Optional.of(account(202L)));
     }
 
+    private void stubUserInfoOwnership() {
+        when(clients.findById(22L)).thenReturn(Optional.of(activeClient()));
+        when(subjects.findByAccountId(42L)).thenReturn(Optional.of(
+                OAuthSubject.restore(7L, 42L, SUBJECT, NOW.minusSeconds(300))));
+    }
+
     private Account account(long companyId) {
         return Account.restore(
                 42L, companyId, 77L, "member@example.com", "hash", AccountStatus.ACTIVE,
@@ -551,11 +636,21 @@ class SpringOAuth2AuthorizationServiceTest {
 
     private org.springframework.security.oauth2.server.authorization.OAuth2Authorization springAuthorization(
             String rawCode) {
+        return springAuthorization(rawCode, true);
+    }
+
+    private org.springframework.security.oauth2.server.authorization.OAuth2Authorization springAuthorization(
+            boolean includeIdToken) {
+        return springAuthorization(CODE, includeIdToken);
+    }
+
+    private org.springframework.security.oauth2.server.authorization.OAuth2Authorization springAuthorization(
+            String rawCode, boolean includeIdToken) {
         Instant codeIssued = NOW.minusSeconds(30);
         OAuth2AccessToken accessToken = new OAuth2AccessToken(
                 OAuth2AccessToken.TokenType.BEARER, ACCESS, NOW, NOW.plusSeconds(300),
                 Set.of("openid", "profile"));
-        return org.springframework.security.oauth2.server.authorization.OAuth2Authorization
+        var builder = org.springframework.security.oauth2.server.authorization.OAuth2Authorization
                 .withRegisteredClient(registeredClient())
                 .id("authorization-1")
                 .principalName("42")
@@ -570,8 +665,17 @@ class SpringOAuth2AuthorizationServiceTest {
                         org.springframework.security.oauth2.server.authorization.OAuth2Authorization.Token
                                 .CLAIMS_METADATA_NAME,
                         Map.of("jti", "access-jti", "aud", List.of("auth-study-userinfo"))))
-                .refreshToken(new OAuth2RefreshToken(REFRESH, NOW, NOW.plus(Duration.ofDays(7))))
-                .build();
+                .refreshToken(new OAuth2RefreshToken(REFRESH, NOW, NOW.plus(Duration.ofDays(7))));
+        if (includeIdToken) {
+            builder.token(OidcIdToken.withTokenValue(ID_TOKEN)
+                    .issuer("http://idp.localhost:8080")
+                    .subject(SUBJECT.toString())
+                    .audience(List.of("public-id"))
+                    .issuedAt(NOW)
+                    .expiresAt(NOW.plusSeconds(300))
+                    .build());
+        }
+        return builder.build();
     }
 
     private OAuthAuthorizationCodeExchangeBinding binding(String rawCode) {
@@ -622,6 +726,10 @@ class SpringOAuth2AuthorizationServiceTest {
     }
 
     private OAuthAuthorization domainAuthorization() {
+        return domainAuthorization(true);
+    }
+
+    private OAuthAuthorization domainAuthorization(boolean idTokenIssued) {
         OAuthAuthorization authorization = OAuthAuthorization.restore(
                 "authorization-1", 22L, SUBJECT, 42L, 202L,
                 AuthorizationGrantType.AUTHORIZATION_CODE.getValue(), Set.of("openid", "profile"),
@@ -630,8 +738,10 @@ class SpringOAuth2AuthorizationServiceTest {
                         new OAuthAuthorization.AuthorizationRequest(
                                 CALLBACK.toString(), Set.of("openid", "profile"), "opaque-state",
                                 CHALLENGE, "S256", "opaque-nonce")),
-                null, NOW.minusSeconds(120), OAuthAuthorization.Status.ACTIVE, null,
-                NOW.minusSeconds(60), NOW.plus(Duration.ofDays(7)), null, null, null, null);
+                sha256(CONSENT_STATE), NOW.minusSeconds(120), OAuthAuthorization.Status.ACTIVE, null,
+                NOW.minusSeconds(60), NOW.plus(Duration.ofDays(7)), null,
+                idTokenIssued ? new OAuthAuthorization.IdTokenEvidence(NOW, NOW.plusSeconds(300)) : null,
+                null, null, null);
         authorization.attachAuthorizationCode(OAuthAuthorizationCode.issue(
                 authorization.id(), sha256(CODE), CALLBACK, CHALLENGE, "opaque-nonce",
                 NOW.minusSeconds(30), NOW.plusSeconds(30)));

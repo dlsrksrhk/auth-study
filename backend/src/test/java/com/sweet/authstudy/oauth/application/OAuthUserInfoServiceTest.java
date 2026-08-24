@@ -30,7 +30,7 @@ class OAuthUserInfoServiceTest {
                 SUBJECT, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()));
 
         OAuthUserInfoView profile = view(Set.of("openid", "profile"));
-        assertThat(profile.profile()).contains(new OAuthUserInfoView.Profile("Ada Lovelace", "USR-ADA"));
+        assertThat(profile.profile()).contains(new OAuthUserInfoView.Profile("Ada Lovelace"));
         assertThat(profile.email()).isEmpty();
 
         OAuthUserInfoView email = view(Set.of("openid", "email"));
@@ -325,7 +325,7 @@ class OAuthUserInfoServiceTest {
                     new OAuthUserInfoClaimSource.Company(
                             companyId, companyCode, companyName, companyStatus),
                     new OAuthUserInfoClaimSource.User(
-                            userId, userCompanyId, userCode, userName, userStatus),
+                            userId, userCompanyId, userName, userStatus),
                     position, memberships);
         }
     }

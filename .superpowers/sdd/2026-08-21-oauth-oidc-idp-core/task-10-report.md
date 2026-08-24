@@ -22,13 +22,14 @@ BASE는 `142aeb2d512cf785aeaef8233f13f76e4cac8719`입니다. 구현 및 이 보�
     사용하지 않습니다. SYSTEM_ADMIN/no-company/no-user는 항상 거부합니다.
 - current HR snapshot
   - `HrOAuthUserInfoClaimSource`는 raw bearer의 SHA-256 hash로 access token을 찾고 각 domain repository/port를
-    `REPEATABLE_READ`, read-only transaction에서 다시 조회합니다. 상태 판단과 공개 claim 선택은 application
-    service에 남기고 infrastructure는 typed snapshot만 조립합니다.
+    새 `REQUIRES_NEW` + `REPEATABLE_READ`, read-only transaction과 비운 persistence context에서 다시 조회합니다.
+    공용 설정의 OpenEntityManagerInView도 끄므로 security lookup이 읽은 entity가 claim source에 재사용되지 않습니다.
+    상태 판단과 공개 claim 선택은 application service에 남기고 infrastructure는 typed snapshot만 조립합니다.
   - organization은 현재 ended membership을 제외하고 active department 및 같은 company/user 소유만 사용합니다.
     position/primary는 optional, secondary는 code/name 순으로 deterministic 정렬하며 중복을 제거합니다.
 - exact UserInfo claim matrix
   - `openid`: `sub`
-  - `profile`: `name`, `preferred_username`(HR user code)
+  - `profile`: `name`만 제공하며 HR user code/employee number를 노출하지 않음
   - `email`: non-null일 때만 `email`, 항상 `email_verified=false`
   - `hr.company`: `https://auth-study.local/claims/company` → `{code,name}`
   - `hr.organization`: `https://auth-study.local/claims/organization` → optional `position`, optional
@@ -38,16 +39,56 @@ BASE는 `142aeb2d512cf785aeaef8233f13f76e4cac8719`입니다. 구현 및 이 보�
     employee number 및 내부 numeric id를 넣지 않습니다. ID/access token의 기존 exact allowlist에는 HR claim을
     추가하지 않았습니다.
 - SAS 1.5.8 연결
-  - `OidcUserInfoEndpointConfigurer.userInfoMapper(...)`에 `OidcUserInfoMapper`를 연결했습니다.
-  - project authorization persistence는 raw ID token을 보존하지 않으므로 access-token lookup 재구성 때
-    emitted token이 아닌 최소 typed `OidcIdToken` metadata를 current persisted opaque subject로 복원합니다.
-    mapper는 이것을 실제 bearer JWT subject와 exact 비교합니다.
+  - `OidcUserInfoEndpointConfigurer`에 `OidcUserInfoMapper`와 UserInfo 전용
+    `OidcUserInfoAuthenticationProvider`를 연결했습니다.
+  - 공용 authorization mapper는 find-by-id/state/code/access/refresh 어떤 재구성에서도 synthetic ID token을
+    만들지 않습니다. 실제 OIDC code finalization 때만 raw token 없이 ID token issued/expires evidence를 V8에
+    원자적으로 기록합니다. UserInfo 전용 access-token lookup만 evidence와 현재 persisted opaque subject가 모두
+    일치할 때 emitted token이 아닌 최소 typed `OidcIdToken` metadata를 메모리에 복원합니다.
+  - finalization은 실제 `OidcIdToken` 후보의 opaque subject, exact client audience, access token과의 발급 시간/TTL,
+    authorization expiry를 검증하며 openid가 없으면 후보/evidence도 없어야 합니다.
   - authorization-server chain에 OAuth RS256 decoder를 명시해 application API의 `@Primary` HR HS256 decoder와
     격리했습니다. 모든 bearer/mapper 실패는 oracle 없는 `401`, exact
     `WWW-Authenticate: Bearer error="invalid_token"`, `{"error":"invalid_token"}`로 응답합니다.
 
 Task 11 refresh/revocation lifecycle과 Task 12 event/CORS는 구현하지 않았습니다. Task 9 browser Origin/token
 semantics와 Task 8 ID/access claim allowlist를 유지했습니다.
+
+## Review fix round 1/5
+
+### I1 — fresh authoritative state / OSIV
+
+- RED: `spring.jpa.open-in-view`가 false라는 web contract test는 기본값 true 때문에 실패했습니다.
+- GREEN: 공용 `application.yaml`에서 OSIV를 끄고 claim source를 `REQUIRES_NEW` + `REPEATABLE_READ`로 분리한 뒤,
+  첫 repository read 전에 `EntityManager.clear()`를 호출합니다.
+- deterministic HTTP race 두 건은 SAS access lookup 뒤 claim source를 latch로 멈추고, 별도 transaction에서
+  authorization revoke 또는 client disable을 commit한 다음 재개합니다. 둘 다 내부 상태 oracle 없이 exact
+  `401`, `Bearer error="invalid_token"`, `{"error":"invalid_token"}`을 반환합니다.
+
+### I2 — 실제 ID-token-issued evidence
+
+- RED 1: 공용 mapper의 synthetic ID token을 금지하는 find-by-id/code/access/refresh 테스트가 기존 구현에서
+  실패했습니다. 공용 synthetic 복원을 제거하자 실제 UserInfo scope HTTP 7건이 모두 401이 되었습니다.
+- RED 2: 실제 `OidcIdToken` 후보를 요구하는 finalization 테스트는 typed candidate가 없어 compile RED였고,
+  DB evidence/잘못된 subject·audience·time 검증은 domain/JPA evidence가 없어 compile RED였습니다.
+- GREEN: 공용 reconstruction에는 ID token이 없고, 전용 access lookup만 persisted evidence와 current subject가
+  일치할 때 최소 metadata를 붙입니다. 실제 authorize→token은 evidence를 기록하며, evidence를 지운 openid
+  access token과 openid 없이 발급된 access token은 UserInfo에서 동일한 generic invalid_token으로 거부됩니다.
+  state/code/access/refresh/id generic lookup에는 synthetic ID token이 없음을 단위 테스트로 고정했습니다.
+- V8은 아직 배포되지 않은 migration이므로 같은 파일을 안전하게 확장했습니다. 저장 값은
+  `id_token_issued_at`, `id_token_expires_at`뿐이며 raw ID token 컬럼/값은 없습니다.
+- relevant 첫 실행에서 Task 9 고정 `Clock`과 SAS 1.5.8 `JwtGenerator`의 직접 `Instant.now()` 사용 때문에
+  `auth_time` SSO 테스트가 token 400으로 RED였습니다. candidate time은 동일 응답의 access token 대비
+  0~5초 발급 지연, 동일 TTL, finalization/authorization expiry를 검증하도록 바꿨고 기존 Task 9 의미와
+  wrong-time candidate 거부를 함께 GREEN으로 복원했습니다.
+
+### I3 — 승인된 exact profile matrix
+
+- RED: application/HTTP 테스트를 `profile -> {sub,name}` exact shape와 user code 재귀 비노출로 먼저 바꾸자
+  기존 two-field `Profile` 생성자가 compile RED였습니다.
+- GREEN: application snapshot에서 HR user code 자체를 제거하고 typed profile과 protocol mapper를 name-only로
+  축소했습니다. HTTP 테스트는 모든 scope 단독/조합에서 exact claim set을 확인하며 user code와 employee number,
+  numeric/internal ID를 재귀적으로 거부합니다.
 
 ## 엄격 TDD 증거
 
@@ -107,6 +148,20 @@ revocation·expiry, authorization client/subject/account, access-token authoriza
 
 ## GREEN / 검증 증거
 
+Round 1 fresh focused/relevant (Task 7/8/9, UserInfo, persistence, HR/web, module boundary):
+
+`./gradlew.bat test --rerun-tasks --tests "*OAuthUserInfoServiceTest" --tests "*OidcUserInfoIntegrationTest" --tests "*SpringOAuth2AuthorizationServiceTest" --tests "*OAuthAuthorizationPersistenceIntegrationTest" --tests "*AuthorizationCodePkceIntegrationTest" --tests "*OidcDiscoveryAndTokenContractIntegrationTest" --tests "*IdpBrowserFlowIntegrationTest" --tests "*SecurityChainIsolationIntegrationTest" --tests "*AuthenticationIntegrationTest" --tests "*ModuleBoundaryTest" --tests "*OAuthSigningKeyPersistenceIntegrationTest" --tests "*OAuthSigningKeySourceTest" --tests "*OAuthSecurityPropertiesTest" --console=plain --no-daemon`
+
+- `BUILD SUCCESSFUL in 2m 4s`
+- JUnit XML: 216 tests, 0 failures, 0 errors, 0 skipped
+
+Round 1 fresh full backend (OSIV off):
+
+`./gradlew.bat test --rerun-tasks --console=plain --no-daemon`
+
+- `BUILD SUCCESSFUL in 4m 3s`
+- JUnit XML: 399 tests, 0 failures, 0 errors, 0 skipped
+
 Task 10 focused:
 
 `./gradlew.bat test --tests "*OAuthUserInfoServiceTest" --tests "*OidcUserInfoIntegrationTest" --console=plain`
@@ -149,7 +204,8 @@ Static verification:
 - mapper와 resource-server failure handler는 내부 예외 설명이나 entity/status 차이를 제거해 동일한 표준
   invalid_token body/header/status만 반환합니다.
 - persisted raw ID token을 새로 저장하거나 numeric principal을 `sub`로 대체하지 않았습니다. 재구성 metadata는
-  UserInfo provider가 요구하는 in-memory protocol object일 뿐 response/persistence에는 노출되지 않습니다.
+  실제 발급 evidence가 있는 UserInfo 전용 provider lookup의 in-memory protocol object일 뿐 response/persistence에는
+  노출되지 않습니다. 공용 authorization reconstruction은 evidence가 있어도 synthetic ID token을 붙이지 않습니다.
 
 ## 우려와 의도적 경계
 

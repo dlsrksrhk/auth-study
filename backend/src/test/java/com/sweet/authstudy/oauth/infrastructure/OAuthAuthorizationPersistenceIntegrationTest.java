@@ -101,7 +101,8 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                         select table_name || '.' || column_name
                         from information_schema.columns
                         where table_schema = 'public'
-                          and table_name in ('oauth_authorization_code', 'oauth_access_token', 'oauth_refresh_token')
+                          and table_name in ('oauth_authorization', 'oauth_authorization_code',
+                                             'oauth_access_token', 'oauth_refresh_token')
                         order by table_name, column_name
                         """)
                 .query(String.class).list();
@@ -109,10 +110,14 @@ class OAuthAuthorizationPersistenceIntegrationTest {
         assertThat(columns)
                 .contains("oauth_authorization_code.code_hash",
                         "oauth_access_token.access_token_hash",
-                        "oauth_refresh_token.refresh_token_hash")
+                        "oauth_refresh_token.refresh_token_hash",
+                        "oauth_authorization.id_token_issued_at",
+                        "oauth_authorization.id_token_expires_at")
                 .doesNotContain("oauth_authorization_code.code_value",
                         "oauth_access_token.access_token_value",
-                        "oauth_refresh_token.refresh_token_value");
+                        "oauth_refresh_token.refresh_token_value",
+                        "oauth_authorization.id_token",
+                        "oauth_authorization.id_token_value");
 
         List<String> uniqueColumns = jdbcClient.sql("""
                         select ccu.table_name || '.' || ccu.column_name
@@ -495,7 +500,9 @@ class OAuthAuthorizationPersistenceIntegrationTest {
         OAuthAuthorizationRepository.CodeFinalizationResult result = authorizationRepository
                 .finalizeAuthorizationCodeExchange(
                         new OAuthAuthorizationRepository.CodeFinalization(
-                                binding, binding, null, Set.of("openid"), accessToken, null),
+                                binding, binding, null, Set.of("openid"),
+                                idTokenCandidate(fixture, AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT),
+                                accessToken, null),
                         AUTHENTICATED_AT.plusSeconds(2));
 
         assertThat(result).isEqualTo(OAuthAuthorizationRepository.CodeFinalizationResult.FINALIZED);
@@ -503,6 +510,58 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 .param("id", authorizationId).query(Long.class).single()).isOne();
         assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
                 .param("id", authorizationId).query(String.class).single()).isEqualTo("ACTIVE");
+        assertThat(jdbcClient.sql("select id_token_issued_at from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(Instant.class).single())
+                .isEqualTo(AUTHENTICATED_AT.plusSeconds(2));
+        assertThat(jdbcClient.sql("select id_token_expires_at from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(Instant.class).single())
+                .isEqualTo(TOKEN_EXPIRES_AT);
+        assertThat(authorizationRepository.findById(authorizationId).orElseThrow().idTokenEvidence())
+                .contains(new OAuthAuthorization.IdTokenEvidence(
+                        AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT));
+    }
+
+    @ParameterizedTest(name = "invalid ID token {0}")
+    @ValueSource(strings = {"subject", "audience", "issued after finalization", "expired"})
+    void finalization_rejects_wrong_id_token_subject_audience_or_time(String mismatch) {
+        Fixture fixture = insertFixture("ID_TOKEN_" + mismatch.replace(' ', '_'));
+        String authorizationId = "authorization-id-token-" + UUID.randomUUID();
+        String challenge = "I".repeat(43);
+        OAuthAuthorization authorization = authorizationWithRequest(fixture, authorizationId, challenge);
+        OAuthAuthorizationCode code = OAuthAuthorizationCode.issue(
+                authorization.id(), hash('9'), URI.create("https://rp.example/callback"),
+                challenge, null, AUTHENTICATED_AT, CODE_EXPIRES_AT);
+        authorization.attachAuthorizationCode(code);
+        authorizationRepository.save(authorization);
+        authorizationRepository.consumeCodeAtomically(
+                hash('9'), AUTHENTICATED_AT.plusSeconds(1), exchange -> "VALID").orElseThrow();
+        OAuthAuthorizationCodeExchangeBinding binding = binding(fixture, authorization, code);
+        OAuthAccessToken accessToken = OAuthAccessToken.issue(
+                authorizationId, hash('7'), "jti-id-token-" + UUID.randomUUID(), "auth-study-userinfo",
+                AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT);
+        Instant finalizedAt = AUTHENTICATED_AT.plusSeconds(2);
+        OAuthAuthorizationRepository.IdTokenCandidate candidate = switch (mismatch) {
+            case "subject" -> new OAuthAuthorizationRepository.IdTokenCandidate(
+                    UUID.randomUUID().toString(), Set.of(externalClientId(fixture)),
+                    finalizedAt, TOKEN_EXPIRES_AT);
+            case "audience" -> new OAuthAuthorizationRepository.IdTokenCandidate(
+                    fixture.subject().toString(), Set.of("another-client"), finalizedAt, TOKEN_EXPIRES_AT);
+            case "issued after finalization" -> idTokenCandidate(
+                    fixture, finalizedAt.plusSeconds(6), TOKEN_EXPIRES_AT);
+            case "expired" -> idTokenCandidate(
+                    fixture, finalizedAt.minusSeconds(2), finalizedAt.minusSeconds(1));
+            default -> throw new IllegalArgumentException(mismatch);
+        };
+
+        OAuthAuthorizationRepository.CodeFinalizationResult result = authorizationRepository
+                .finalizeAuthorizationCodeExchange(
+                        new OAuthAuthorizationRepository.CodeFinalization(
+                                binding, binding, null, Set.of("openid"), candidate, accessToken, null),
+                        finalizedAt);
+
+        assertThat(result).isEqualTo(OAuthAuthorizationRepository.CodeFinalizationResult.INVALID);
+        assertThat(jdbcClient.sql("select count(*) from oauth_access_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isZero();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -859,6 +918,17 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                                 "https://rp.example/callback", Set.of("openid"), "rp-state",
                                 challenge, "S256", null)),
                 null, AUTHENTICATED_AT, CREATED_AT, REFRESH_EXPIRES_AT);
+    }
+
+    private OAuthAuthorizationRepository.IdTokenCandidate idTokenCandidate(
+            Fixture fixture, Instant issuedAt, Instant expiresAt) {
+        return new OAuthAuthorizationRepository.IdTokenCandidate(
+                fixture.subject().toString(), Set.of(externalClientId(fixture)), issuedAt, expiresAt);
+    }
+
+    private String externalClientId(Fixture fixture) {
+        return jdbcClient.sql("select client_id from oauth_client where id = :id")
+                .param("id", fixture.clientId()).query(String.class).single();
     }
 
     private int insertAuthorizationRow(String id, long clientId, UUID subject, long accountId, long companyId) {

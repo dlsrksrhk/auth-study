@@ -169,6 +169,20 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
                 OAuthAuthorizationMapper.sha256(rawCode), clock.instant(), exchange);
     }
 
+    public org.springframework.security.oauth2.server.authorization.OAuth2Authorization
+            findByAccessTokenForUserInfo(String rawAccessToken) {
+        Assert.hasText(rawAccessToken, "access token cannot be empty");
+        String hash = OAuthAuthorizationMapper.sha256(rawAccessToken);
+        return authorizations.findByAccessTokenHash(hash)
+                .flatMap(token -> authorizations.findById(token.authorizationId())
+                        .filter(authorization -> authorization.accessToken()
+                                .map(current -> current.accessTokenHash().equals(hash))
+                                .orElse(false)))
+                .map(authorization -> mapper.toSpringForUserInfo(authorization, rawAccessToken))
+                .map(this::markPersisted)
+                .orElse(null);
+    }
+
     public org.springframework.security.oauth2.server.authorization.OAuth2Authorization reconstructConsumedAuthorization(
             String rawCode, OAuthAuthorization authorization) {
         return mapper.toSpring(authorization, rawCode, AUTHORIZATION_CODE_TYPE, true);

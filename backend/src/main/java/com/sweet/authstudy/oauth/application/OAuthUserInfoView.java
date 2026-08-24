@@ -22,10 +22,9 @@ public record OAuthUserInfoView(
         roles = Objects.requireNonNull(roles, "roles").map(List::copyOf);
     }
 
-    public record Profile(String name, String preferredUsername) {
+    public record Profile(String name) {
         public Profile {
             name = requireText(name, "name");
-            preferredUsername = requireText(preferredUsername, "preferredUsername");
         }
     }
 

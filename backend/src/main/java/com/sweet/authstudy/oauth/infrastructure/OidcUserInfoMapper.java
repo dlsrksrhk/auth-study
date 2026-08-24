@@ -80,7 +80,6 @@ public final class OidcUserInfoMapper
         claims.put("sub", view.subject());
         view.profile().ifPresent(profile -> {
             claims.put("name", profile.name());
-            claims.put("preferred_username", profile.preferredUsername());
         });
         view.email().ifPresent(email -> {
             email.value().ifPresent(value -> claims.put("email", value));

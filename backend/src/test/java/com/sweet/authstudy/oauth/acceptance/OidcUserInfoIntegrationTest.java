@@ -1,6 +1,8 @@
 package com.sweet.authstudy.oauth.acceptance;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -19,11 +21,16 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import java.util.stream.Stream;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jwt.SignedJWT;
+import com.sweet.authstudy.oauth.infrastructure.HrOAuthUserInfoClaimSource;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -33,9 +40,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -58,6 +67,13 @@ class OidcUserInfoIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcClient jdbcClient;
+    @Autowired private Environment environment;
+    @MockitoSpyBean private HrOAuthUserInfoClaimSource claimSource;
+
+    @Test
+    void web_requests_do_not_share_a_persistence_context_across_security_and_userinfo_reads() {
+        assertThat(environment.getProperty("spring.jpa.open-in-view", Boolean.class, true)).isFalse();
+    }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("scopeCases")
@@ -90,7 +106,6 @@ class OidcUserInfoIntegrationTest {
 
         if (scopes.contains("profile")) {
             assertThat(userInfo.path("name").asText()).isEqualTo("Ada Lovelace");
-            assertThat(userInfo.path("preferred_username").asText()).isEqualTo(fixture.userCode());
         }
         if (scopes.contains("email")) {
             assertThat(userInfo.path("email").asText()).isEqualTo(fixture.email());
@@ -226,15 +241,111 @@ class OidcUserInfoIntegrationTest {
                 .param("id", authorizationId).param("other", alternateAuthorization).update();
     }
 
+    @Test
+    void authorization_revoked_after_sas_lookup_is_not_hidden_by_the_request_persistence_context()
+            throws Exception {
+        raceAfterSasLookup((fixture, authorizationId) -> jdbcClient.sql("""
+                update oauth_authorization
+                   set status = 'REVOKED', revocation_reason = 'RACE', revoked_at = now()
+                 where id = :id
+                """).param("id", authorizationId).update());
+    }
+
+    @Test
+    void client_disabled_after_sas_lookup_is_not_hidden_by_the_request_persistence_context()
+            throws Exception {
+        raceAfterSasLookup((fixture, authorizationId) -> jdbcClient.sql("""
+                update oauth_client set status = 'DISABLED' where id = :id
+                """).param("id", fixture.internalClientId()).update());
+    }
+
+    @Test
+    void openid_access_token_without_persisted_id_token_issuance_evidence_is_invalid()
+            throws Exception {
+        Discovery discovery = discovery();
+        Fixture fixture = fixture();
+        Tokens tokens = issue(discovery, fixture, Set.of("openid"));
+        String authorizationId = authorizationId(tokens.accessToken());
+
+        assertThat(jdbcClient.sql("""
+                select count(*) from oauth_authorization
+                 where id = :id
+                   and id_token_issued_at is not null
+                   and id_token_expires_at is not null
+                """).param("id", authorizationId).query(Long.class).single()).isOne();
+        jdbcClient.sql("""
+                update oauth_authorization
+                   set id_token_issued_at = null, id_token_expires_at = null
+                 where id = :id
+                """).param("id", authorizationId).update();
+
+        assertInvalid(discovery.userInfoPath(), tokens.accessToken());
+    }
+
+    @Test
+    void access_token_without_openid_is_not_valid_for_oidc_userinfo() throws Exception {
+        Discovery discovery = discovery();
+        Fixture fixture = fixture();
+        Tokens tokens = issue(discovery, fixture, Set.of("profile"));
+        String authorizationId = authorizationId(tokens.accessToken());
+
+        assertThat(tokens.idToken()).isEmpty();
+        assertThat(jdbcClient.sql("""
+                select count(*) from oauth_authorization
+                 where id = :id
+                   and id_token_issued_at is null
+                   and id_token_expires_at is null
+                """).param("id", authorizationId).query(Long.class).single()).isOne();
+        assertInvalid(discovery.userInfoPath(), tokens.accessToken());
+    }
+
+    private void raceAfterSasLookup(BiConsumer<Fixture, String> mutation) throws Exception {
+        Discovery discovery = discovery();
+        Fixture fixture = fixture();
+        Tokens tokens = issue(discovery, fixture, allScopes());
+        String authorizationId = jdbcClient.sql("""
+                select authorization_id from oauth_access_token where access_token_hash = :hash
+                """).param("hash", sha256(tokens.accessToken())).query(String.class).single();
+        CountDownLatch sourceEntered = new CountDownLatch(1);
+        CountDownLatch releaseSource = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            sourceEntered.countDown();
+            if (!releaseSource.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting to resume UserInfo claim source.");
+            }
+            return invocation.callRealMethod();
+        }).when(claimSource).load(eq(tokens.accessToken()));
+
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var response = executor.submit(() -> mockMvc.perform(get(discovery.userInfoPath())
+                    .header("Authorization", "Bearer " + tokens.accessToken())).andReturn());
+            assertThat(sourceEntered.await(10, TimeUnit.SECONDS)).isTrue();
+            mutation.accept(fixture, authorizationId);
+            releaseSource.countDown();
+            assertInvalid(response.get(10, TimeUnit.SECONDS));
+        } finally {
+            releaseSource.countDown();
+            executor.shutdownNow();
+            org.mockito.Mockito.reset(claimSource);
+        }
+    }
+
+    private String authorizationId(String accessToken) throws Exception {
+        return jdbcClient.sql("""
+                select authorization_id from oauth_access_token where access_token_hash = :hash
+                """).param("hash", sha256(accessToken)).query(String.class).single();
+    }
+
     private static Stream<Arguments> scopeCases() {
         return Stream.of(
                 scope("openid only", Set.of("openid"), "sub"),
-                scope("profile only", Set.of("openid", "profile"), "sub", "name", "preferred_username"),
+                scope("profile only", Set.of("openid", "profile"), "sub", "name"),
                 scope("email only", Set.of("openid", "email"), "sub", "email", "email_verified"),
                 scope("company only", Set.of("openid", "hr.company"), "sub", COMPANY_CLAIM),
                 scope("organization only", Set.of("openid", "hr.organization"), "sub", ORGANIZATION_CLAIM),
                 scope("roles only", Set.of("openid", "hr.roles"), "sub", ROLES_CLAIM),
-                scope("all scopes", allScopes(), "sub", "name", "preferred_username", "email",
+                scope("all scopes", allScopes(), "sub", "name", "email",
                         "email_verified", COMPANY_CLAIM, ORGANIZATION_CLAIM, ROLES_CLAIM));
     }
 
@@ -304,6 +415,13 @@ class OidcUserInfoIntegrationTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("WWW-Authenticate", "Bearer error=\"invalid_token\""))
                 .andReturn();
+        assertInvalid(result);
+    }
+
+    private void assertInvalid(MvcResult result) throws Exception {
+        assertThat(result.getResponse().getStatus()).isEqualTo(401);
+        assertThat(result.getResponse().getHeader("WWW-Authenticate"))
+                .isEqualTo("Bearer error=\"invalid_token\"");
         JsonNode error = json(result);
         assertThat(fieldNames(error)).containsExactly("error");
         assertThat(error.path("error").asText()).isEqualTo("invalid_token");
@@ -474,7 +592,7 @@ class OidcUserInfoIntegrationTest {
                 "employee_number", "employeeNumber", "password", "password_hash",
                 "must_change_password", "locked_until");
         assertThat(textValues).doesNotContain(
-                Long.toString(fixture.accountId()), fixture.employeeNumber(), "password_hash");
+                Long.toString(fixture.accountId()), fixture.userCode(), fixture.employeeNumber(), "password_hash");
         assertThat(numericValues).isEmpty();
     }
 

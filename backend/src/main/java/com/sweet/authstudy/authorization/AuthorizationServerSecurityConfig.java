@@ -18,6 +18,7 @@ import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.infrastructure.OAuthClientSecretPasswordEncoder;
 import com.sweet.authstudy.oauth.infrastructure.OidcUserInfoMapper;
+import com.sweet.authstudy.oauth.infrastructure.OidcUserInfoAuthorizationService;
 import com.sweet.authstudy.oauth.infrastructure.AtomicAuthorizationCodeClientAuthenticationProvider;
 import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
 import com.sweet.authstudy.oauth.presentation.IdpLoginController;
@@ -48,6 +49,7 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.authentication.ClientSecretAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider;
+import org.springframework.security.oauth2.server.authorization.oidc.authentication.OidcUserInfoAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
@@ -75,6 +77,7 @@ public class AuthorizationServerSecurityConfig {
             IdpSessionStateService sessionStates,
             OAuthConsentService oauthConsents,
             OidcUserInfoMapper userInfoMapper,
+            OidcUserInfoAuthorizationService userInfoAuthorizations,
             Clock clock,
             ObjectProvider<OAuth2AuthorizationService> authorizationServices,
             ObjectProvider<OAuth2AuthorizationConsentService> consentServices,
@@ -88,6 +91,9 @@ public class AuthorizationServerSecurityConfig {
         OAuth2AuthorizationConsentService consentService = consentServices.getIfAvailable();
         if (jwkSource != null && oauthJwtEncoder != null && oauthJwtDecoder != null
                 && authorizationService != null && consentService != null) {
+            OidcUserInfoAuthenticationProvider userInfoProvider =
+                    new OidcUserInfoAuthenticationProvider(userInfoAuthorizations);
+            userInfoProvider.setUserInfoMapper(userInfoMapper);
             OAuth2AuthorizationServerConfigurer authorizationServer =
                     OAuth2AuthorizationServerConfigurer.authorizationServer();
             http.setSharedObject(JwtEncoder.class, oauthJwtEncoder);
@@ -112,6 +118,7 @@ public class AuthorizationServerSecurityConfig {
                                                 context.getAuthorizationRequest().getScopes());
                                     }))))
                     .oidc(oidc -> oidc.userInfoEndpoint(userInfo -> userInfo
+                            .authenticationProvider(userInfoProvider)
                             .userInfoMapper(userInfoMapper)
                             .errorResponseHandler(AuthorizationServerSecurityConfig::writeInvalidToken)))
                     .clientAuthentication(clientAuthentication -> clientAuthentication

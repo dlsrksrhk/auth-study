@@ -29,7 +29,7 @@ public final class OAuthUserInfoService {
 
         Set<String> scopes = snapshot.authorization().grantedScopes();
         Optional<OAuthUserInfoView.Profile> profile = scopes.contains("profile")
-                ? Optional.of(new OAuthUserInfoView.Profile(snapshot.user().name(), snapshot.user().code()))
+                ? Optional.of(new OAuthUserInfoView.Profile(snapshot.user().name()))
                 : Optional.empty();
         Optional<OAuthUserInfoView.Email> email = scopes.contains("email")
                 ? Optional.of(new OAuthUserInfoView.Email(snapshot.account().email(), false))

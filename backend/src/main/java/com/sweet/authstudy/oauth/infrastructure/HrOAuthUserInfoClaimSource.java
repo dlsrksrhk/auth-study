@@ -26,8 +26,10 @@ import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
+import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
@@ -42,6 +44,7 @@ public class HrOAuthUserInfoClaimSource implements OAuthUserInfoClaimSource {
     private final PositionRepository positions;
     private final MembershipRepository memberships;
     private final DepartmentRepository departments;
+    private final EntityManager entityManager;
 
     public HrOAuthUserInfoClaimSource(
             OAuthAuthorizationRepository authorizations,
@@ -52,7 +55,8 @@ public class HrOAuthUserInfoClaimSource implements OAuthUserInfoClaimSource {
             UserRepository users,
             PositionRepository positions,
             MembershipRepository memberships,
-            DepartmentRepository departments) {
+            DepartmentRepository departments,
+            EntityManager entityManager) {
         this.authorizations = authorizations;
         this.clients = clients;
         this.subjects = subjects;
@@ -62,11 +66,14 @@ public class HrOAuthUserInfoClaimSource implements OAuthUserInfoClaimSource {
         this.positions = positions;
         this.memberships = memberships;
         this.departments = departments;
+        this.entityManager = entityManager;
     }
 
     @Override
-    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ,
+            propagation = Propagation.REQUIRES_NEW)
     public Optional<Snapshot> load(String rawAccessToken) {
+        entityManager.clear();
         if (rawAccessToken == null || rawAccessToken.isBlank()) return Optional.empty();
         var accessToken = authorizations.findByAccessTokenHash(sha256(rawAccessToken)).orElse(null);
         if (accessToken == null) return Optional.empty();
@@ -125,7 +132,7 @@ public class HrOAuthUserInfoClaimSource implements OAuthUserInfoClaimSource {
                         account.roles().stream().map(Enum::name).toList()),
                 new Company(company.id(), company.code(), company.name(),
                         status(company.status() == CompanyStatus.ACTIVE)),
-                new User(user.id(), user.companyId(), user.code(), user.name(),
+                new User(user.id(), user.companyId(), user.name(),
                         status(user.status() == UserStatus.ACTIVE)),
                 position, currentMemberships));
     }

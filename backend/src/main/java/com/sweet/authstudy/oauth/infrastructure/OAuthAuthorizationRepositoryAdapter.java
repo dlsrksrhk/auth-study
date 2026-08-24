@@ -1,6 +1,7 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
 import java.net.URI;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -167,6 +168,12 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 || refreshTokens.findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(authorization.id()).isPresent()) {
             return CodeFinalizationResult.INVALID;
         }
+        if (finalization.idTokenCandidate() != null) {
+            authorizationEntity.recordIdTokenEvidence(new OAuthAuthorization.IdTokenEvidence(
+                    finalization.idTokenCandidate().issuedAt(),
+                    finalization.idTokenCandidate().expiresAt()));
+            authorizations.saveAndFlush(authorizationEntity);
+        }
         accessTokens.saveAndFlush(OAuthAccessTokenJpaEntity.from(finalization.accessToken()));
         if (finalization.refreshToken() != null) {
             refreshTokens.saveAndFlush(OAuthRefreshTokenJpaEntity.from(finalization.refreshToken()));
@@ -184,6 +191,24 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                         finalization.authenticatedSecretHash().equals(secret.secretHash())
                                 && secret.revokedAt() == null
                                 && (secret.expiresAt() == null || secret.expiresAt().isAfter(finalizedAt)));
+        boolean openid = authorization.authorizedScopes().contains("openid");
+        OAuthAuthorizationRepository.IdTokenCandidate idToken = finalization.idTokenCandidate();
+        Duration idTokenIssueDelay = idToken == null ? null
+                : Duration.between(finalization.accessToken().issuedAt(), idToken.issuedAt());
+        boolean idTokenValid = openid
+                ? idToken != null
+                    && code.usedAt() != null
+                    && authorization.idTokenEvidence().isEmpty()
+                    && authorization.subject().toString().equals(idToken.subject())
+                    && idToken.audiences().equals(java.util.Set.of(client.clientId()))
+                    && !idTokenIssueDelay.isNegative()
+                    && idTokenIssueDelay.compareTo(Duration.ofSeconds(5)) <= 0
+                    && Duration.between(idToken.issuedAt(), idToken.expiresAt()).equals(
+                            Duration.between(finalization.accessToken().issuedAt(),
+                                    finalization.accessToken().expiresAt()))
+                    && idToken.expiresAt().isAfter(finalizedAt)
+                    && !idToken.expiresAt().isAfter(authorization.expiresAt())
+                : idToken == null && authorization.idTokenEvidence().isEmpty();
         return code.usedAt() != null
                 && authorization.id().equals(finalization.consumedBinding().authorizationId())
                 && authorization.registeredClientId() == finalization.consumedBinding().registeredClientId()
@@ -193,6 +218,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 && authorization.activeAt(finalizedAt)
                 && principalActive
                 && secretActive
+                && idTokenValid
                 && request != null
                 && client.allowsRedirect(URI.create(request.redirectUri()))
                 && code.redirectUri().toString().equals(request.redirectUri())

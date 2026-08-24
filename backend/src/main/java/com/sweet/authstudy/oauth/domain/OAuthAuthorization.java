@@ -43,6 +43,16 @@ public final class OAuthAuthorization {
         }
     }
 
+    public record IdTokenEvidence(Instant issuedAt, Instant expiresAt) {
+        public IdTokenEvidence {
+            Objects.requireNonNull(issuedAt, "issuedAt");
+            Objects.requireNonNull(expiresAt, "expiresAt");
+            if (!expiresAt.isAfter(issuedAt)) {
+                throw new IllegalArgumentException("ID token expiresAt must be after issuedAt.");
+            }
+        }
+    }
+
     public static final class Ownership {
         private final long registeredClientId;
         private final UUID subject;
@@ -93,6 +103,7 @@ public final class OAuthAuthorization {
     private final Instant createdAt;
     private final Instant expiresAt;
     private Instant revokedAt;
+    private final IdTokenEvidence idTokenEvidence;
     private OAuthAuthorizationCode authorizationCode;
     private OAuthAccessToken accessToken;
     private OAuthRefreshToken refreshToken;
@@ -101,6 +112,7 @@ public final class OAuthAuthorization {
             long companyId, String authorizationGrantType, Set<String> authorizedScopes,
             Attributes attributes, String serverStateHash, Instant authenticatedAt, Status status,
             String revocationReason, Instant createdAt, Instant expiresAt, Instant revokedAt,
+            IdTokenEvidence idTokenEvidence,
             OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
             OAuthRefreshToken refreshToken) {
         this.id = OAuthRefreshToken.requireText(id, "id");
@@ -125,6 +137,7 @@ public final class OAuthAuthorization {
             throw new IllegalArgumentException("expiresAt must be after createdAt");
         }
         this.revokedAt = revokedAt;
+        this.idTokenEvidence = idTokenEvidence;
         this.authorizationCode = authorizationCode;
         this.accessToken = accessToken;
         this.refreshToken = refreshToken;
@@ -137,7 +150,7 @@ public final class OAuthAuthorization {
         return new OAuthAuthorization(id, ownership.registeredClientId(), ownership.subject(),
                 ownership.principalAccountId(), ownership.companyId(),
                 authorizationGrantType, authorizedScopes, attributes, serverStateHash, authenticatedAt,
-                Status.ACTIVE, null, createdAt, expiresAt, null, null, null, null);
+                Status.ACTIVE, null, createdAt, expiresAt, null, null, null, null, null);
     }
 
     public static OAuthAuthorization restore(String id, long registeredClientId, UUID subject,
@@ -146,9 +159,22 @@ public final class OAuthAuthorization {
             Status status, String revocationReason, Instant createdAt, Instant expiresAt,
             Instant revokedAt, OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
             OAuthRefreshToken refreshToken) {
+        return restore(id, registeredClientId, subject, principalAccountId, companyId,
+                authorizationGrantType, authorizedScopes, attributes, serverStateHash, authenticatedAt,
+                status, revocationReason, createdAt, expiresAt, revokedAt, null,
+                authorizationCode, accessToken, refreshToken);
+    }
+
+    public static OAuthAuthorization restore(String id, long registeredClientId, UUID subject,
+            long principalAccountId, long companyId, String authorizationGrantType,
+            Set<String> authorizedScopes, Attributes attributes, String serverStateHash, Instant authenticatedAt,
+            Status status, String revocationReason, Instant createdAt, Instant expiresAt,
+            Instant revokedAt, IdTokenEvidence idTokenEvidence,
+            OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
+            OAuthRefreshToken refreshToken) {
         return new OAuthAuthorization(id, registeredClientId, subject, principalAccountId, companyId,
                 authorizationGrantType, authorizedScopes, attributes, serverStateHash, authenticatedAt, status,
-                revocationReason, createdAt, expiresAt, revokedAt,
+                revocationReason, createdAt, expiresAt, revokedAt, idTokenEvidence,
                 authorizationCode, accessToken, refreshToken);
     }
 
@@ -203,6 +229,7 @@ public final class OAuthAuthorization {
     public Instant createdAt() { return createdAt; }
     public Instant expiresAt() { return expiresAt; }
     public Instant revokedAt() { return revokedAt; }
+    public Optional<IdTokenEvidence> idTokenEvidence() { return Optional.ofNullable(idTokenEvidence); }
     public Optional<OAuthAuthorizationCode> authorizationCode() { return Optional.ofNullable(authorizationCode); }
     public Optional<OAuthAccessToken> accessToken() { return Optional.ofNullable(accessToken); }
     public Optional<OAuthRefreshToken> refreshToken() { return Optional.ofNullable(refreshToken); }

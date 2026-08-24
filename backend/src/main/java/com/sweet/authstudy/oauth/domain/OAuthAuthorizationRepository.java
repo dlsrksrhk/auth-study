@@ -29,13 +29,44 @@ public interface OAuthAuthorizationRepository {
 
     enum CodeFinalizationResult { FINALIZED, INVALID }
 
+    record IdTokenCandidate(
+            String subject,
+            java.util.Set<String> audiences,
+            Instant issuedAt,
+            Instant expiresAt) {
+        public IdTokenCandidate {
+            subject = OAuthRefreshToken.requireText(subject, "ID token subject");
+            audiences = java.util.Set.copyOf(java.util.Objects.requireNonNull(audiences, "audiences"));
+            if (audiences.isEmpty() || audiences.stream().anyMatch(String::isBlank)) {
+                throw new IllegalArgumentException("ID token audience is required.");
+            }
+            java.util.Objects.requireNonNull(issuedAt, "issuedAt");
+            java.util.Objects.requireNonNull(expiresAt, "expiresAt");
+            if (!expiresAt.isAfter(issuedAt)) {
+                throw new IllegalArgumentException("ID token expiresAt must be after issuedAt.");
+            }
+        }
+    }
+
     record CodeFinalization(
             OAuthAuthorizationCodeExchangeBinding consumedBinding,
             OAuthAuthorizationCodeExchangeBinding candidateBinding,
             String authenticatedSecretHash,
             java.util.Set<String> accessTokenScopes,
+            IdTokenCandidate idTokenCandidate,
             OAuthAccessToken accessToken,
             OAuthRefreshToken refreshToken) {
+        public CodeFinalization(
+                OAuthAuthorizationCodeExchangeBinding consumedBinding,
+                OAuthAuthorizationCodeExchangeBinding candidateBinding,
+                String authenticatedSecretHash,
+                java.util.Set<String> accessTokenScopes,
+                OAuthAccessToken accessToken,
+                OAuthRefreshToken refreshToken) {
+            this(consumedBinding, candidateBinding, authenticatedSecretHash,
+                    accessTokenScopes, null, accessToken, refreshToken);
+        }
+
         public CodeFinalization {
             java.util.Objects.requireNonNull(consumedBinding, "consumedBinding");
             java.util.Objects.requireNonNull(candidateBinding, "candidateBinding");
