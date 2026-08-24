@@ -9,9 +9,11 @@ import java.util.function.Function;
 
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository.LockedCodeExchange;
 import org.springframework.context.annotation.Primary;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
@@ -30,6 +32,8 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     static final String STATE_TYPE = "state";
     private static final String CONSUMED_CODE_ATTRIBUTE =
             SpringOAuth2AuthorizationService.class.getName() + ".CONSUMED_CODE";
+    private static final String AUTHORIZATION_SOURCE_ATTRIBUTE =
+            SpringOAuth2AuthorizationService.class.getName() + ".AUTHORIZATION_SOURCE";
 
     private final OAuthAuthorizationRepository authorizations;
     private final OAuthAuthorizationMapper mapper;
@@ -46,25 +50,30 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     public void save(org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization) {
         Assert.notNull(authorization, "authorization cannot be null");
         CachedAuthorization consumed = cachedAuthorization();
-        if (consumed != null && authorization.getAccessToken() != null) {
-            try {
+        boolean codeFinalization = isAuthorizationCodeFinalization(authorization);
+        try {
+            if (codeFinalization) {
+                if (consumed == null) throwInvalidGrant();
                 OAuthAuthorizationRepository.CodeFinalization finalization = mapper.codeFinalization(
-                        authorization, consumed.codeHash(), consumed.authenticatedSecretHash());
+                        authorization, consumed.binding(), consumed.authenticatedSecretHash());
+                if (!finalization.consumedBinding().equals(finalization.candidateBinding())) {
+                    throwInvalidGrant();
+                }
                 if (authorizations.finalizeAuthorizationCodeExchange(
                         finalization, clock.instant())
                         != OAuthAuthorizationRepository.CodeFinalizationResult.FINALIZED) {
                     throwInvalidGrant();
                 }
-            } catch (IllegalArgumentException exception) {
-                throwInvalidGrant();
-            } finally {
-                clearConsumedAuthorization();
+                return;
             }
-            return;
+            OAuthAuthorization existing = authorizations.findById(authorization.getId()).orElse(null);
+            authorizations.save(mapper.toDomain(authorization, existing));
+        } catch (IllegalArgumentException exception) {
+            if (codeFinalization) throwInvalidGrant();
+            throw exception;
+        } finally {
+            clearConsumedAuthorization();
         }
-        OAuthAuthorization existing = authorizations.findById(authorization.getId()).orElse(null);
-        authorizations.save(mapper.toDomain(authorization, existing));
-        clearConsumedAuthorization();
     }
 
     @Override
@@ -76,7 +85,9 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     @Override
     public org.springframework.security.oauth2.server.authorization.OAuth2Authorization findById(String id) {
         Assert.hasText(id, "id cannot be empty");
-        return authorizations.findById(id).map(value -> mapper.toSpring(value, null, null)).orElse(null);
+        return authorizations.findById(id)
+                .map(value -> markPersisted(mapper.toSpring(value, null, null)))
+                .orElse(null);
     }
 
     @Override
@@ -91,7 +102,7 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
         }
         if (STATE_TYPE.equals(value)) {
             return authorizations.findByServerStateHash(OAuthAuthorizationMapper.sha256(token))
-                    .map(authorization -> mapper.toSpring(authorization, token, STATE_TYPE))
+                    .map(authorization -> markPersisted(mapper.toSpring(authorization, token, STATE_TYPE)))
                     .orElse(null);
         }
         String hash;
@@ -112,7 +123,7 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
             default -> Optional.empty();
         };
         return authorizationId.flatMap(authorizations::findById)
-                .map(authorization -> mapper.toSpring(authorization, token, value))
+                .map(authorization -> markPersisted(mapper.toSpring(authorization, token, value)))
                 .orElse(null);
     }
 
@@ -128,13 +139,17 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
         return mapper.toSpring(authorization, rawCode, AUTHORIZATION_CODE_TYPE, true);
     }
 
-    public void cacheConsumedAuthorization(String rawCode,
+    public void cacheConsumedAuthorization(
             org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization,
-            String authenticatedSecretHash) {
+            String authenticatedSecretHash, OAuthAuthorizationCodeExchangeBinding binding) {
+        clearConsumedAuthorization();
+        Objects.requireNonNull(binding, "binding");
+        if (!binding.equals(mapper.codeExchangeBinding(authorization))) {
+            throw new IllegalArgumentException("Consumed authorization binding does not match reconstruction.");
+        }
         RequestAttributes attributes = RequestContextHolder.currentRequestAttributes();
         attributes.setAttribute(CONSUMED_CODE_ATTRIBUTE,
-                new CachedAuthorization(
-                        OAuthAuthorizationMapper.sha256(rawCode), authorization, authenticatedSecretHash),
+                new CachedAuthorization(binding, authorization, authenticatedSecretHash),
                 RequestAttributes.SCOPE_REQUEST);
     }
 
@@ -153,7 +168,7 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
         if (matches.size() != 1) return null;
         Match match = matches.getFirst();
         return authorizations.findById(match.authorizationId())
-                .map(authorization -> mapper.toSpring(authorization, token, match.tokenType()))
+                .map(authorization -> markPersisted(mapper.toSpring(authorization, token, match.tokenType())))
                 .orElse(null);
     }
 
@@ -161,7 +176,7 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
 
     private CachedAuthorization cachedAuthorization(String rawCode) {
         CachedAuthorization cached = cachedAuthorization();
-        return cached != null && cached.codeHash().equals(OAuthAuthorizationMapper.sha256(rawCode))
+        return cached != null && cached.binding().codeHash().equals(OAuthAuthorizationMapper.sha256(rawCode))
                 ? cached : null;
     }
 
@@ -184,7 +199,28 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
                 OAuth2ErrorCodes.INVALID_GRANT, "Invalid authorization code grant.", null));
     }
 
-    private record CachedAuthorization(String codeHash,
+    private boolean isAuthorizationCodeFinalization(
+            org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization) {
+        if (!AuthorizationGrantType.AUTHORIZATION_CODE.equals(authorization.getAuthorizationGrantType())
+                || authorization.getAccessToken() == null && authorization.getRefreshToken() == null) {
+            return false;
+        }
+        return authorization.getAttribute(AUTHORIZATION_SOURCE_ATTRIBUTE) != AuthorizationSource.PERSISTED;
+    }
+
+    private org.springframework.security.oauth2.server.authorization.OAuth2Authorization markPersisted(
+            org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization) {
+        if (authorization == null) return null;
+        // SAS refreshes via OAuth2Authorization.from(existing), retaining the original authorization-code
+        // grant type. This request-local, non-persisted provenance keeps refresh saves on the normal path.
+        return org.springframework.security.oauth2.server.authorization.OAuth2Authorization.from(authorization)
+                .attribute(AUTHORIZATION_SOURCE_ATTRIBUTE, AuthorizationSource.PERSISTED)
+                .build();
+    }
+
+    private enum AuthorizationSource { PERSISTED }
+
+    private record CachedAuthorization(OAuthAuthorizationCodeExchangeBinding binding,
             org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization,
             String authenticatedSecretHash) { }
 }

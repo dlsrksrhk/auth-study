@@ -30,6 +30,7 @@ import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
@@ -41,6 +42,7 @@ import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
 import com.sweet.authstudy.oauth.domain.OAuthSubject;
 import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -48,6 +50,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
@@ -55,6 +58,9 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @ExtendWith(MockitoExtension.class)
 class SpringOAuth2AuthorizationServiceTest {
@@ -84,41 +90,161 @@ class SpringOAuth2AuthorizationServiceTest {
         mapper = new OAuthAuthorizationMapper(clients, subjects, accounts, properties(), clock);
         service = new SpringOAuth2AuthorizationService(authorizations, mapper, clock);
         consentService = new SpringOAuth2AuthorizationConsentService(consents, clients, clock);
+        RequestContextHolder.setRequestAttributes(
+                new ServletRequestAttributes(new MockHttpServletRequest()));
+    }
+
+    @AfterEach
+    void clearRequestContext() {
+        RequestContextHolder.resetRequestAttributes();
     }
 
     @Test
-    void save_hashes_every_raw_token_at_the_adapter_boundary_and_preserves_protocol_metadata() {
-        stubOwnership(activeClient());
-        when(authorizations.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    void authorization_code_token_finalization_without_a_verified_consume_cache_fails_closed() {
+        assertThatThrownBy(() -> service.save(springAuthorization()))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+
+        verify(authorizations, never()).save(any());
+        verify(authorizations, never()).finalizeAuthorizationCodeExchange(any(), any());
+    }
+
+    @Test
+    void a_verified_consume_cache_is_single_use_for_authorization_code_finalization() {
+        when(authorizations.finalizeAuthorizationCodeExchange(any(), any()))
+                .thenReturn(OAuthAuthorizationRepository.CodeFinalizationResult.FINALIZED);
+        service.cacheConsumedAuthorization(springAuthorization(), null, binding(CODE));
 
         service.save(springAuthorization());
 
-        ArgumentCaptor<OAuthAuthorization> saved = ArgumentCaptor.forClass(OAuthAuthorization.class);
-        verify(authorizations).save(saved.capture());
-        OAuthAuthorization authorization = saved.getValue();
-        assertThat(authorization.id()).isEqualTo("authorization-1");
-        assertThat(authorization.registeredClientId()).isEqualTo(22L);
-        assertThat(authorization.principalAccountId()).isEqualTo(42L);
-        assertThat(authorization.subject()).isEqualTo(SUBJECT);
-        assertThat(authorization.attributes().principalName()).isEqualTo("42");
-        assertThat(authorization.authorizedScopes()).containsExactlyInAnyOrder("openid", "profile");
-        assertThat(authorization.serverStateHash()).isNull();
-        assertThat(authorization.attributes().authorizationRequest().rpState()).isEqualTo("opaque-state");
-        assertThat(authorization.authorizationCode()).get().satisfies(code -> {
-            assertThat(code.codeHash()).isEqualTo(sha256(CODE));
-            assertThat(code.codeHash()).doesNotContain(CODE);
-            assertThat(code.redirectUri()).isEqualTo(CALLBACK);
-            assertThat(code.codeChallenge()).isEqualTo(CHALLENGE);
-            assertThat(code.nonce()).isEqualTo("opaque-nonce");
-            assertThat(Duration.between(code.issuedAt(), code.expiresAt())).isEqualTo(Duration.ofSeconds(60));
-        });
-        assertThat(authorization.accessToken()).get().satisfies(token -> {
+        assertThatThrownBy(() -> service.save(springAuthorization()))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+        verify(authorizations).finalizeAuthorizationCodeExchange(any(), any());
+        verify(authorizations, never()).save(any());
+    }
+
+    @Test
+    void refresh_shaped_save_with_a_consume_cache_uses_the_normal_path_and_clears_the_cache() {
+        stubOwnership(activeClient());
+        OAuthAuthorization persisted = domainAuthorization();
+        persisted.authorizationCode().orElseThrow().consume(NOW.minusSeconds(1));
+        when(authorizations.findByRefreshTokenHash(sha256(REFRESH)))
+                .thenReturn(Optional.of(persisted.refreshToken().orElseThrow()));
+        when(authorizations.findById("authorization-1")).thenReturn(Optional.of(persisted));
+        when(authorizations.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        service.cacheConsumedAuthorization(springAuthorization(), null, binding(CODE));
+        var persistedRefresh = service.findByToken(REFRESH, OAuth2TokenType.REFRESH_TOKEN);
+
+        service.save(refreshSaveCandidate(persistedRefresh));
+
+        verify(authorizations).save(any());
+        verify(authorizations, never()).finalizeAuthorizationCodeExchange(any(), any());
+        assertThatThrownBy(() -> service.save(springAuthorization()))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+    }
+
+    @Test
+    void an_unmarked_code_grant_candidate_cannot_bypass_the_required_cache_by_invalidating_the_code() {
+        assertThatThrownBy(() -> service.save(refreshSaveCandidate(springAuthorization())))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+
+        verify(authorizations, never()).save(any());
+        verify(authorizations, never()).finalizeAuthorizationCodeExchange(any(), any());
+    }
+
+    @Test
+    void a_stale_consume_cache_with_another_code_hash_fails_closed_before_finalization() {
+        String staleCode = "another-consumed-authorization-code";
+        service.cacheConsumedAuthorization(
+                springAuthorization(staleCode), null, binding(staleCode));
+
+        assertThatThrownBy(() -> service.save(springAuthorization()))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+
+        verify(authorizations, never()).finalizeAuthorizationCodeExchange(any(), any());
+        verify(authorizations, never()).save(any());
+    }
+
+    @Test
+    void a_candidate_spoofing_the_consumed_authorization_id_fails_closed_before_finalization() {
+        service.cacheConsumedAuthorization(springAuthorization(), null, binding(CODE));
+        var spoofed = org.springframework.security.oauth2.server.authorization.OAuth2Authorization
+                .from(springAuthorization())
+                .id("another-authorization")
+                .build();
+
+        assertThatThrownBy(() -> service.save(spoofed))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+        assertThatThrownBy(() -> service.save(springAuthorization()))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+
+        verify(authorizations, never()).finalizeAuthorizationCodeExchange(any(), any());
+        verify(authorizations, never()).save(any());
+    }
+
+    @Test
+    void a_failed_cache_replacement_removes_the_previous_verified_cache() {
+        service.cacheConsumedAuthorization(springAuthorization(), null, binding(CODE));
+
+        assertThatThrownBy(() -> service.cacheConsumedAuthorization(
+                springAuthorization("different-code"), null, binding(CODE)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.save(springAuthorization()))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+
+        verify(authorizations, never()).finalizeAuthorizationCodeExchange(any(), any());
+        verify(authorizations, never()).save(any());
+    }
+
+    @Test
+    void a_non_code_grant_with_a_consume_cache_uses_the_normal_path() {
+        stubOwnership(activeClient());
+        when(authorizations.findById("authorization-1")).thenReturn(Optional.of(domainAuthorization()));
+        when(authorizations.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        service.cacheConsumedAuthorization(springAuthorization(), null, binding(CODE));
+        var clientCredentials = org.springframework.security.oauth2.server.authorization.OAuth2Authorization
+                .from(springAuthorization())
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .build();
+
+        service.save(clientCredentials);
+
+        verify(authorizations).save(any());
+        verify(authorizations, never()).finalizeAuthorizationCodeExchange(any(), any());
+    }
+
+    @Test
+    void authorization_code_finalization_hashes_every_raw_token_at_the_adapter_boundary() {
+        when(authorizations.finalizeAuthorizationCodeExchange(any(), any()))
+                .thenReturn(OAuthAuthorizationRepository.CodeFinalizationResult.FINALIZED);
+        service.cacheConsumedAuthorization(springAuthorization(), null, binding(CODE));
+
+        service.save(springAuthorization());
+
+        ArgumentCaptor<OAuthAuthorizationRepository.CodeFinalization> saved =
+                ArgumentCaptor.forClass(OAuthAuthorizationRepository.CodeFinalization.class);
+        verify(authorizations).finalizeAuthorizationCodeExchange(saved.capture(), any());
+        OAuthAuthorizationRepository.CodeFinalization finalization = saved.getValue();
+        assertThat(finalization.consumedBinding().codeHash()).isEqualTo(sha256(CODE));
+        assertThat(finalization.candidateBinding()).isEqualTo(finalization.consumedBinding());
+        assertThat(finalization.consumedBinding().codeHash()).doesNotContain(CODE);
+        assertThat(finalization.consumedBinding().authorizationId()).isEqualTo("authorization-1");
+        assertThat(finalization.consumedBinding().registeredClientId()).isEqualTo(22L);
+        assertThat(finalization.accessToken()).satisfies(token -> {
             assertThat(token.accessTokenHash()).isEqualTo(sha256(ACCESS));
             assertThat(token.jti()).isEqualTo("access-jti");
             assertThat(token.audience()).isEqualTo("auth-study-userinfo");
         });
-        assertThat(authorization.refreshToken()).get().satisfies(token ->
+        assertThat(finalization.refreshToken()).satisfies(token ->
                 assertThat(token.refreshTokenHash()).isEqualTo(sha256(REFRESH)));
+        verify(authorizations, never()).save(any());
     }
 
     @Test
@@ -309,7 +435,7 @@ class SpringOAuth2AuthorizationServiceTest {
                 OAuthSubject.restore(7L, 42L, SUBJECT, NOW.minusSeconds(300))));
         when(accounts.findById(42L)).thenReturn(Optional.of(account(303L)));
 
-        assertThatThrownBy(() -> service.save(springAuthorization()))
+        assertThatThrownBy(() -> service.save(springAuthorizationWithoutIssuedTokens()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("OAuth authorization ownership is invalid.");
         verify(authorizations, never()).save(any());
@@ -317,27 +443,30 @@ class SpringOAuth2AuthorizationServiceTest {
 
     @Test
     void save_rejects_access_tokens_without_real_jti_and_audience_claims_instead_of_synthesizing_them() {
-        stubOwnership(activeClient());
         Instant codeIssued = NOW.minusSeconds(30);
         OAuth2AccessToken accessToken = new OAuth2AccessToken(
-                OAuth2AccessToken.TokenType.BEARER, ACCESS, NOW, NOW.plusSeconds(300), Set.of("openid"));
+                OAuth2AccessToken.TokenType.BEARER, ACCESS, NOW, NOW.plusSeconds(300),
+                Set.of("openid", "profile"));
         org.springframework.security.oauth2.server.authorization.OAuth2Authorization missingClaims =
                 org.springframework.security.oauth2.server.authorization.OAuth2Authorization
                         .withRegisteredClient(registeredClient())
-                        .id("missing-access-claims")
+                        .id("authorization-1")
                         .principalName("42")
                         .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                        .authorizedScopes(Set.of("openid"))
+                        .authorizedScopes(Set.of("openid", "profile"))
                         .attribute(OAuth2AuthorizationRequest.class.getName(), authorizationRequest())
                         .token(new org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode(
                                 CODE, codeIssued, codeIssued.plusSeconds(60)))
                         .accessToken(accessToken)
                         .build();
 
+        service.cacheConsumedAuthorization(missingClaims, null, binding(CODE));
+
         assertThatThrownBy(() -> service.save(missingClaims))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Access token claims must contain jti and aud.");
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                        assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
         verify(authorizations, never()).save(any());
+        verify(authorizations, never()).finalizeAuthorizationCodeExchange(any(), any());
     }
 
     @Test
@@ -415,6 +544,11 @@ class SpringOAuth2AuthorizationServiceTest {
     }
 
     private org.springframework.security.oauth2.server.authorization.OAuth2Authorization springAuthorization() {
+        return springAuthorization(CODE);
+    }
+
+    private org.springframework.security.oauth2.server.authorization.OAuth2Authorization springAuthorization(
+            String rawCode) {
         Instant codeIssued = NOW.minusSeconds(30);
         OAuth2AccessToken accessToken = new OAuth2AccessToken(
                 OAuth2AccessToken.TokenType.BEARER, ACCESS, NOW, NOW.plusSeconds(300),
@@ -429,12 +563,59 @@ class SpringOAuth2AuthorizationServiceTest {
                 .attribute(Principal.class.getName(), UsernamePasswordAuthenticationToken.authenticated(
                         "42", "N/A", List.of()))
                 .token(new org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode(
-                        CODE, codeIssued, codeIssued.plusSeconds(60)))
+                        rawCode, codeIssued, codeIssued.plusSeconds(60)))
                 .token(accessToken, metadata -> metadata.put(
                         org.springframework.security.oauth2.server.authorization.OAuth2Authorization.Token
                                 .CLAIMS_METADATA_NAME,
                         Map.of("jti", "access-jti", "aud", List.of("auth-study-userinfo"))))
                 .refreshToken(new OAuth2RefreshToken(REFRESH, NOW, NOW.plus(Duration.ofDays(7))))
+                .build();
+    }
+
+    private OAuthAuthorizationCodeExchangeBinding binding(String rawCode) {
+        return new OAuthAuthorizationCodeExchangeBinding(
+                sha256(rawCode), NOW.minusSeconds(30), NOW.plusSeconds(30),
+                "authorization-1", 22L, "42",
+                AuthorizationGrantType.AUTHORIZATION_CODE.getValue(), Set.of("openid", "profile"),
+                new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                        "http://idp.localhost:8080/oauth2/authorize", "public-id", CALLBACK.toString(),
+                        Set.of("openid", "profile"), "opaque-state", "opaque-nonce",
+                        CHALLENGE, "S256"));
+    }
+
+    private org.springframework.security.oauth2.server.authorization.OAuth2Authorization
+            springAuthorizationWithoutIssuedTokens() {
+        Instant codeIssued = NOW.minusSeconds(30);
+        return org.springframework.security.oauth2.server.authorization.OAuth2Authorization
+                .withRegisteredClient(registeredClient())
+                .id("authorization-1")
+                .principalName("42")
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .authorizedScopes(Set.of("openid", "profile"))
+                .attribute(OAuth2AuthorizationRequest.class.getName(), authorizationRequest())
+                .attribute(Principal.class.getName(), UsernamePasswordAuthenticationToken.authenticated(
+                        "42", "N/A", List.of()))
+                .token(new org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode(
+                        CODE, codeIssued, codeIssued.plusSeconds(60)))
+                .build();
+    }
+
+    private org.springframework.security.oauth2.server.authorization.OAuth2Authorization refreshSaveCandidate(
+            org.springframework.security.oauth2.server.authorization.OAuth2Authorization source) {
+        var code = source.getToken(
+                org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class).getToken();
+        OAuth2AccessToken replacement = new OAuth2AccessToken(
+                OAuth2AccessToken.TokenType.BEARER, ACCESS + "-refresh", NOW.plusSeconds(1),
+                NOW.plusSeconds(301), Set.of("openid", "profile"));
+        return org.springframework.security.oauth2.server.authorization.OAuth2Authorization.from(source)
+                .token(code, metadata -> metadata.put(
+                        org.springframework.security.oauth2.server.authorization.OAuth2Authorization.Token
+                                .INVALIDATED_METADATA_NAME,
+                        true))
+                .token(replacement, metadata -> metadata.put(
+                        org.springframework.security.oauth2.server.authorization.OAuth2Authorization.Token
+                                .CLAIMS_METADATA_NAME,
+                        Map.of("jti", "refresh-access-jti", "aud", List.of("auth-study-userinfo"))))
                 .build();
     }
 

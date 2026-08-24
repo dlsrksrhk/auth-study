@@ -292,3 +292,117 @@ production 금지 문자열(`ObjectOutputStream`, `ObjectInputStream`, default t
 - finalization보다 먼저 commit된 mutation은 이번 tests가 보장합니다. finalization이 먼저 commit된 뒤 Account/client lifecycle mutation이 기존 active rows까지 revoke하는 orchestration은 기존 Task 6 repository revoke contract가 담당하며, 모든 실제 lifecycle event 연결은 Task 12 범위입니다.
 - test-only barrier는 Spring bean을 바꾸거나 token generator를 production에 노출하지 않으며, `@MockitoSpyBean` test context 안에만 존재합니다.
 - Task 8 production JWK/test-only RS256 경계, Task 1 issuer-origin 501 placeholder, Task 5 Basic/public auth, C1 consent round-trip, other-grant pass-through를 focused/full suite에서 그대로 보존했습니다.
+
+## Review fix round 3
+
+### 상태와 변경 파일
+
+DONE
+
+- typed exchange identity: `OAuthAuthorizationCodeExchangeBinding`
+- finalization contract/locking: `OAuthAuthorizationRepository`, `OAuthAuthorizationRepositoryAdapter`
+- consume producer and candidate mapper: `AtomicAuthorizationCodeClientAuthenticationProvider`,
+  `OAuthAuthorizationMapper`
+- fail-closed routing/cache lifecycle: `SpringOAuth2AuthorizationService`
+- contract, real-service, and PostgreSQL tests: `SpringOAuth2AuthorizationServiceTest`,
+  `OAuthAuthorizationPersistenceIntegrationTest`
+
+### C1: candidate-based fail-closed routing
+
+Authorization-code token save는 cache 존재 여부로 분류하지 않습니다. candidate 자체가 original
+`authorization_code` grant와 issued access/refresh token shape를 가지며 persisted-source provenance가 없을 때
+finalization candidate입니다. 이 경로는 verified request-scope consume cache가 반드시 있어야 하고, 없거나
+stale/malformed/reused/mismatched이면 표준 400 `invalid_grant`이며 일반 `save`로 내려가지 않습니다.
+
+SAS 1.5.8 provider bytecode를 다시 확인한 결과 두 특성이 함께 존재합니다.
+
+- 성공한 authorization-code provider는 최종 `save` 직전에 code token을 invalidated 처리합니다.
+- refresh provider는 `OAuth2Authorization.from(existing)`으로 기존 authorization을 복사하므로 stored
+  `authorizationGrantType`은 original `authorization_code` 그대로입니다.
+
+따라서 code invalidated 여부만으로 refresh를 구분하면 실제 code final save가 fail-open되고, grant type만으로
+구분하면 실제 refresh를 code finalizer가 가로챕니다. project service가 DB에서 복원한 Spring authorization에만
+private typed `PERSISTED` provenance를 in-memory attribute로 붙이고, SAS가 이를 candidate에 복사하도록 했습니다.
+이 값은 allowlisted mapper에 포함되지 않아 DB/JSON에 저장되지 않습니다. consumed-code cache에서 반환하는
+authorization은 이 marker가 없으므로 invalidated code를 가진 실제 final candidate도 올바르게 finalizer로 갑니다.
+marker가 없는 임의/malformed candidate는 invalidated code를 스스로 표시해도 cache 필수 검사를 우회하지 못합니다.
+
+cache는 저장 전에 reconstructed Spring object와 typed binding의 exact equality를 확인합니다. replacement 검증을
+시작할 때 이전 cache를 먼저 제거하며, `save`는 normal/final success와 모든 protocol/system failure에서 `finally`로
+cache를 제거합니다. 실제 persisted refresh-shaped candidate와 explicit non-code grant는 cache가 있어도 normal path를
+사용하고 cache를 지웁니다.
+
+### C2: consumed, candidate, locked DB의 exact typed binding
+
+`OAuthAuthorizationCodeExchangeBinding`은 arbitrary map이나 serialization이 아닌 immutable allowlisted record입니다.
+다음 값을 담습니다.
+
+- consumed code SHA-256 hash, issued/expires instants
+- authorization ID, internal registered-client ID, principal name, grant type, authorized scopes
+- authorization URI, public client ID, exact redirect URI, requested scopes, RP state, nonce,
+  PKCE challenge와 method
+
+atomic consume callback이 locked code/authorization/current client에서 이 binding을 순수 메모리 연산으로 만들며,
+callback에는 외부 I/O를 추가하지 않았습니다. mapper는 final candidate에서 같은 typed binding을 만들고 code/access/
+refresh raw value는 즉시 hash metadata로 바꿉니다. service가 consumed == candidate를 먼저 확인하고, final
+`REQUIRES_NEW` transaction은 기존 `code → authorization → client → company → account → user` 순서로 다시 잠근 뒤
+locked DB snapshot에서 binding을 새로 capture하여 다음을 모두 요구합니다.
+
+`consumed binding == candidate binding == locked DB binding`
+
+access-token scopes도 locked authorized scopes와 exact equality여야 하며 access/refresh metadata의 authorization
+ownership도 다시 확인합니다. round 2의 confidential BCrypt secret/current client/company/account/user checks,
+exact redirect/S256 checks, token-only insert/flush, stale parent non-overwrite는 그대로 유지됩니다.
+
+### strict TDD / mutation 증거
+
+1. C1 initial RED
+   - cache 없는 code token save, single-use cache 재사용, refresh-shaped+cache routing tests를 먼저 추가했습니다.
+   - 기존 구현에서 20 tests 중 3 failures였습니다: missing cache는 일반 save, reused cache는 일반 save,
+     refresh는 cache 존재만으로 code finalizer에 들어갔습니다.
+2. candidate invalidation bypass RED
+   - marker가 없는 candidate가 code를 invalidated 표시해 cache requirement를 우회하지 못해야 하는 test는
+     기존 invalidated-based 분기에서 24 tests 중 1 failure였습니다.
+3. failed cache replacement RED
+   - valid cache 뒤 malformed replacement가 실패했을 때 이전 cache까지 없어져야 하는 test는 3 실행 중
+     1 failure였습니다. replacement 검증 전에 clear하도록 바꾼 뒤 GREEN입니다.
+4. C2 API RED
+   - exact typed binding tests를 먼저 추가한 `compileTestJava`는
+     `OAuthAuthorizationCodeExchangeBinding` 부재로 29 compile errors였습니다.
+5. locked-binding mutation
+   - DB binding equality 한 줄을 임시 제거한 실행은 18 tests 중 13 failures였습니다. code times, principal,
+     grant, authorized scopes, authorization URI/client ID/redirect/request scopes/RP state/nonce/challenge/method
+     mismatch가 token을 발급해 assertion을 실패시켰습니다. 비교를 즉시 복원했습니다.
+   - 첫 mutation 실행은 test fixture에 registered redirect row가 없어 false-green이었습니다. fixture에 exact
+     callback row와 positive exact-match finalization test를 추가한 뒤 mutation을 다시 실행해 위 RED를 확인했고,
+     복원 후 focused/full GREEN을 재검증했습니다.
+
+### GREEN / 최종 검증
+
+focused command:
+
+`./gradlew.bat test --rerun-tasks --tests "*SpringOAuth2AuthorizationServiceTest" --tests "*AtomicAuthorizationCodeClientAuthenticationProviderTest" --tests "*AuthorizationCodePkceIntegrationTest" --tests "*OAuthAuthorizationPersistenceIntegrationTest" --tests "*OAuthClientAuthenticationIntegrationTest" --tests "*SpringRegisteredClientRepositoryTest" --tests "*SecurityChainIsolationIntegrationTest" --tests "*ModuleBoundaryTest"`
+
+- BUILD SUCCESSFUL in 51s
+- 8 suites, 107 tests, 0 failures, 0 errors, 0 skipped
+- service routing/cache 23 tests, PostgreSQL persistence/binding 50 tests, 실제 HTTP filter-chain/race 16 tests 포함
+
+fresh full backend `./gradlew.bat test --rerun-tasks`:
+
+- BUILD SUCCESSFUL in 2m 50s
+- 41 suites, 286 tests, 0 failures, 0 errors, 0 skipped
+- production serialization/default-typing/raw-value-column 금지 scan 0건
+- 최종 XML/HTML raw code/access/refresh/verifier/confidential/race fixture scan 0건
+- `git diff --check` 오류 0건
+
+### self-review / 남은 경계
+
+- cache mandatory 분기를 제거하면 missing/reused tests가 일반 save를 관찰하고 실패합니다. final save의
+  consumed/candidate equality를 제거하면 spoof unit의 no-finalizer assertion이 실패합니다.
+- locked DB equality를 제거하면 위 13개 mutation이 실제 token insert를 관찰합니다. access scope 또는 token
+  ownership check는 각각 독립 parameterized case가 방어합니다.
+- persisted provenance는 SAS 1.5.8 `from(existing)` attribute copy 계약을 사용하며 unit refresh characterization와
+  실제 authorization-code HTTP suite가 양쪽 routing을 검증합니다. Task 11 refresh rotation을 구현할 때 이
+  provenance와 project finalization 경계를 함께 재검토해야 합니다.
+- Task 12 lifecycle wiring은 확장하지 않았고 round 2의 stable lock-order 규칙을 유지합니다. Task 8 JWK/test-only
+  RS256 및 pre-Task8 501 경계도 유지됩니다.

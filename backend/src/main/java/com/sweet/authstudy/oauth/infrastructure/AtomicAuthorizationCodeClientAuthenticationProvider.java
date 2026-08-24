@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import jakarta.servlet.http.HttpServletRequest;
@@ -100,9 +101,11 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                     && locked.code().codeChallenge().equals(request.codeChallenge())
                     && validS256(verifier, locked.code().codeChallenge())
                     && S256.equals(request.codeChallengeMethod());
+            boolean valid = clientMatches && redirectMatches && verifierMatches;
             return new ExchangeValidation(
-                    clientMatches && redirectMatches && verifierMatches, authorization,
-                    currentClient.publicClient() ? null : client.getClientSecret());
+                    valid, authorization, currentClient.publicClient() ? null : client.getClientSecret(),
+                    valid ? OAuthAuthorizationCodeExchangeBinding.captureLocked(
+                            locked.code(), authorization, currentClient) : null);
         }).orElse(null);
         if (consumption == null
                 || consumption.consumption()
@@ -117,8 +120,8 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                 rawCode, consumption.exchangeResult().orElseThrow().authorization());
         if (authorization == null) throwInvalidGrant("code");
         authorizations.cacheConsumedAuthorization(
-                rawCode, authorization,
-                consumption.exchangeResult().orElseThrow().authenticatedSecretHash());
+                authorization, consumption.exchangeResult().orElseThrow().authenticatedSecretHash(),
+                consumption.exchangeResult().orElseThrow().binding());
         return new OAuth2ClientAuthenticationToken(client,
                 clientAuthentication.getClientAuthenticationMethod(),
                 clientAuthentication.getCredentials());
@@ -192,7 +195,8 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
     }
 
     private record ExchangeValidation(
-            boolean valid, OAuthAuthorization authorization, String authenticatedSecretHash) { }
+            boolean valid, OAuthAuthorization authorization, String authenticatedSecretHash,
+            OAuthAuthorizationCodeExchangeBinding binding) { }
 
     public static final class Converter implements AuthenticationConverter {
         @Override

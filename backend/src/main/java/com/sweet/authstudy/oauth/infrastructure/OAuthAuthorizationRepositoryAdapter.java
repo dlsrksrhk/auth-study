@@ -18,6 +18,7 @@ import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
@@ -128,7 +129,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
         java.util.Objects.requireNonNull(finalization, "finalization");
         java.util.Objects.requireNonNull(finalizedAt, "finalizedAt");
         OAuthAuthorizationCodeJpaEntity codeEntity = codes
-                .findByCodeHashForUpdate(finalization.codeHash()).orElse(null);
+                .findByCodeHashForUpdate(finalization.consumedBinding().codeHash()).orElse(null);
         if (codeEntity == null) return CodeFinalizationResult.INVALID;
         OAuthAuthorizationCode code = codeEntity.toDomain();
         OAuthAuthorizationJpaEntity authorizationEntity = authorizations
@@ -140,8 +141,16 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
         if (clientEntity == null) return CodeFinalizationResult.INVALID;
         OAuthClient client = clientEntity.toDomain();
         boolean principalActive = lockAndValidatePrincipal(authorization, client);
+        OAuthAuthorizationCodeExchangeBinding lockedBinding;
+        try {
+            lockedBinding = OAuthAuthorizationCodeExchangeBinding.captureLocked(code, authorization, client);
+        } catch (IllegalArgumentException exception) {
+            return CodeFinalizationResult.INVALID;
+        }
 
-        if (!validFinalization(finalization, finalizedAt, code, authorization, client, principalActive)
+        if (!finalization.consumedBinding().equals(finalization.candidateBinding())
+                || !lockedBinding.equals(finalization.consumedBinding())
+                || !validFinalization(finalization, finalizedAt, code, authorization, client, principalActive)
                 || accessTokens.findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(authorization.id()).isPresent()
                 || refreshTokens.findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(authorization.id()).isPresent()) {
             return CodeFinalizationResult.INVALID;
@@ -164,9 +173,9 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                                 && secret.revokedAt() == null
                                 && (secret.expiresAt() == null || secret.expiresAt().isAfter(finalizedAt)));
         return code.usedAt() != null
-                && authorization.id().equals(finalization.authorizationId())
-                && authorization.registeredClientId() == finalization.registeredClientId()
-                && client.id() == finalization.registeredClientId()
+                && authorization.id().equals(finalization.consumedBinding().authorizationId())
+                && authorization.registeredClientId() == finalization.consumedBinding().registeredClientId()
+                && client.id() == finalization.consumedBinding().registeredClientId()
                 && client.status() == OAuthClientStatus.ACTIVE
                 && authorization.companyId() == client.companyId()
                 && authorization.activeAt(finalizedAt)
@@ -176,9 +185,11 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 && client.allowsRedirect(URI.create(request.redirectUri()))
                 && code.redirectUri().toString().equals(request.redirectUri())
                 && code.codeChallenge().equals(request.codeChallenge())
+                && java.util.Objects.equals(code.nonce(), request.nonce())
                 && "S256".equals(request.codeChallengeMethod())
                 && client.scopes().containsAll(authorization.authorizedScopes())
                 && request.requestedScopes().containsAll(authorization.authorizedScopes())
+                && finalization.accessTokenScopes().equals(authorization.authorizedScopes())
                 && authorization.id().equals(finalization.accessToken().authorizationId())
                 && (finalization.refreshToken() == null
                     || authorization.id().equals(finalization.refreshToken().authorizationId()));

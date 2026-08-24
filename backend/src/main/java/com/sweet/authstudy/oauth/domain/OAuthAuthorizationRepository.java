@@ -30,15 +30,17 @@ public interface OAuthAuthorizationRepository {
     enum CodeFinalizationResult { FINALIZED, INVALID }
 
     record CodeFinalization(
-            String codeHash,
-            String authorizationId,
-            long registeredClientId,
+            OAuthAuthorizationCodeExchangeBinding consumedBinding,
+            OAuthAuthorizationCodeExchangeBinding candidateBinding,
             String authenticatedSecretHash,
+            java.util.Set<String> accessTokenScopes,
             OAuthAccessToken accessToken,
             OAuthRefreshToken refreshToken) {
         public CodeFinalization {
-            java.util.Objects.requireNonNull(codeHash, "codeHash");
-            java.util.Objects.requireNonNull(authorizationId, "authorizationId");
+            java.util.Objects.requireNonNull(consumedBinding, "consumedBinding");
+            java.util.Objects.requireNonNull(candidateBinding, "candidateBinding");
+            accessTokenScopes = java.util.Set.copyOf(
+                    java.util.Objects.requireNonNull(accessTokenScopes, "accessTokenScopes"));
             java.util.Objects.requireNonNull(accessToken, "accessToken");
         }
     }

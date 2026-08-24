@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
@@ -20,6 +21,7 @@ import java.util.stream.Stream;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
@@ -33,15 +35,22 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.oauth2.core.OAuth2AccessToken;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)
@@ -59,6 +68,7 @@ class OAuthAuthorizationPersistenceIntegrationTest {
     @Autowired JdbcClient jdbcClient;
     @Autowired OAuthAuthorizationRepository authorizationRepository;
     @Autowired OAuthConsentRepository consentRepository;
+    @Autowired SpringOAuth2AuthorizationService springAuthorizationService;
     @Autowired PlatformTransactionManager transactionManager;
     private final List<Fixture> fixtures = new ArrayList<>();
 
@@ -396,9 +406,10 @@ class OAuthAuthorizationPersistenceIntegrationTest {
         String challenge = "I".repeat(43);
         OAuthAuthorization authorization = authorizationWithRequest(
                 fixture, authorizationId, challenge);
-        authorization.attachAuthorizationCode(OAuthAuthorizationCode.issue(
+        OAuthAuthorizationCode code = OAuthAuthorizationCode.issue(
                 authorization.id(), hash('e'), URI.create("https://rp.example/callback"),
-                challenge, null, AUTHENTICATED_AT, CODE_EXPIRES_AT));
+                challenge, null, AUTHENTICATED_AT, CODE_EXPIRES_AT);
+        authorization.attachAuthorizationCode(code);
         authorizationRepository.save(authorization);
         authorizationRepository.consumeCodeAtomically(
                 hash('e'), AUTHENTICATED_AT.plusSeconds(1), exchange -> "VALID").orElseThrow();
@@ -411,11 +422,12 @@ class OAuthAuthorizationPersistenceIntegrationTest {
         OAuthAccessToken accessToken = OAuthAccessToken.issue(
                 authorizationId, hash('f'), "jti-finalize-revoked", "auth-study-userinfo",
                 AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT);
+        OAuthAuthorizationCodeExchangeBinding binding = binding(fixture, authorization, code);
 
         OAuthAuthorizationRepository.CodeFinalizationResult result = authorizationRepository
                 .finalizeAuthorizationCodeExchange(
                         new OAuthAuthorizationRepository.CodeFinalization(
-                                hash('e'), authorizationId, fixture.clientId(), null,
+                                binding, binding, null, Set.of("openid"),
                                 accessToken, null),
                         AUTHENTICATED_AT.plusSeconds(2));
 
@@ -424,6 +436,169 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 .param("id", authorizationId).query(Long.class).single()).isZero();
         assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
                 .param("id", authorizationId).query(String.class).single()).isEqualTo("REVOKED");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(BindingMutation.class)
+    void finalization_rejects_each_consumed_binding_dimension_that_differs_from_the_locked_exchange(
+            BindingMutation mutation) {
+        Fixture fixture = insertFixture("BIND_" + mutation.name());
+        String authorizationId = "authorization-binding-" + mutation.name().toLowerCase();
+        String challenge = "J".repeat(43);
+        OAuthAuthorization authorization = authorizationWithRequest(fixture, authorizationId, challenge);
+        OAuthAuthorizationCode code = OAuthAuthorizationCode.issue(
+                authorization.id(), hash('d'), URI.create("https://rp.example/callback"),
+                challenge, null, AUTHENTICATED_AT, CODE_EXPIRES_AT);
+        authorization.attachAuthorizationCode(code);
+        authorizationRepository.save(authorization);
+        authorizationRepository.consumeCodeAtomically(
+                hash('d'), AUTHENTICATED_AT.plusSeconds(1), exchange -> "VALID").orElseThrow();
+        OAuthAuthorizationCodeExchangeBinding changed = mutateBinding(
+                binding(fixture, authorization, code), mutation);
+        OAuthAccessToken accessToken = OAuthAccessToken.issue(
+                authorizationId, hash('a'), "jti-binding", "auth-study-userinfo",
+                AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT);
+
+        OAuthAuthorizationRepository.CodeFinalizationResult result = authorizationRepository
+                .finalizeAuthorizationCodeExchange(
+                        new OAuthAuthorizationRepository.CodeFinalization(
+                                changed, changed, null, Set.of("openid"), accessToken, null),
+                        AUTHENTICATED_AT.plusSeconds(2));
+
+        assertThat(result).isEqualTo(OAuthAuthorizationRepository.CodeFinalizationResult.INVALID);
+        assertThat(jdbcClient.sql("select count(*) from oauth_access_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("select count(*) from oauth_refresh_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(String.class).single()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void finalization_persists_token_metadata_when_every_locked_binding_dimension_matches() {
+        Fixture fixture = insertFixture("BINDING_MATCH");
+        String authorizationId = "authorization-binding-match";
+        String challenge = "N".repeat(43);
+        OAuthAuthorization authorization = authorizationWithRequest(fixture, authorizationId, challenge);
+        OAuthAuthorizationCode code = OAuthAuthorizationCode.issue(
+                authorization.id(), hash('1'), URI.create("https://rp.example/callback"),
+                challenge, null, AUTHENTICATED_AT, CODE_EXPIRES_AT);
+        authorization.attachAuthorizationCode(code);
+        authorizationRepository.save(authorization);
+        authorizationRepository.consumeCodeAtomically(
+                hash('1'), AUTHENTICATED_AT.plusSeconds(1), exchange -> "VALID").orElseThrow();
+        OAuthAuthorizationCodeExchangeBinding binding = binding(fixture, authorization, code);
+        OAuthAccessToken accessToken = OAuthAccessToken.issue(
+                authorizationId, hash('2'), "jti-binding-match", "auth-study-userinfo",
+                AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT);
+
+        OAuthAuthorizationRepository.CodeFinalizationResult result = authorizationRepository
+                .finalizeAuthorizationCodeExchange(
+                        new OAuthAuthorizationRepository.CodeFinalization(
+                                binding, binding, null, Set.of("openid"), accessToken, null),
+                        AUTHENTICATED_AT.plusSeconds(2));
+
+        assertThat(result).isEqualTo(OAuthAuthorizationRepository.CodeFinalizationResult.FINALIZED);
+        assertThat(jdbcClient.sql("select count(*) from oauth_access_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isOne();
+        assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(String.class).single()).isEqualTo("ACTIVE");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"access scopes", "token ownership"})
+    void finalization_rejects_each_token_binding_that_does_not_match_the_locked_authorization(
+            String mismatch) {
+        Fixture fixture = insertFixture("FINALIZE_TOKEN_BINDING");
+        String authorizationId = "authorization-token-binding";
+        String challenge = "K".repeat(43);
+        OAuthAuthorization authorization = authorizationWithRequest(fixture, authorizationId, challenge);
+        OAuthAuthorizationCode code = OAuthAuthorizationCode.issue(
+                authorization.id(), hash('c'), URI.create("https://rp.example/callback"),
+                challenge, null, AUTHENTICATED_AT, CODE_EXPIRES_AT);
+        authorization.attachAuthorizationCode(code);
+        authorizationRepository.save(authorization);
+        authorizationRepository.consumeCodeAtomically(
+                hash('c'), AUTHENTICATED_AT.plusSeconds(1), exchange -> "VALID").orElseThrow();
+        OAuthAuthorizationCodeExchangeBinding binding = binding(fixture, authorization, code);
+        OAuthAccessToken accessToken = OAuthAccessToken.issue(
+                mismatch.equals("token ownership") ? "different-authorization" : authorizationId,
+                hash('b'), "jti-foreign", "auth-study-userinfo",
+                AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT);
+        Set<String> accessScopes = mismatch.equals("access scopes")
+                ? Set.of("profile") : Set.of("openid");
+
+        OAuthAuthorizationRepository.CodeFinalizationResult result = authorizationRepository
+                .finalizeAuthorizationCodeExchange(
+                        new OAuthAuthorizationRepository.CodeFinalization(
+                                binding, binding, null, accessScopes, accessToken, null),
+                        AUTHENTICATED_AT.plusSeconds(2));
+
+        assertThat(result).isEqualTo(OAuthAuthorizationRepository.CodeFinalizationResult.INVALID);
+        assertThat(jdbcClient.sql("select count(*) from oauth_access_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(String.class).single()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void real_spring_service_rejects_a_candidate_mismatching_the_consumed_principal_without_parent_changes() {
+        Fixture fixture = insertFixture("SERVICE_BINDING_MISMATCH");
+        String authorizationId = "authorization-service-binding-mismatch";
+        String rawCode = "raw-service-binding-code";
+        String challenge = "M".repeat(43);
+        OAuthAuthorization authorization = authorizationWithRequest(fixture, authorizationId, challenge);
+        OAuthAuthorizationCode code = OAuthAuthorizationCode.issue(
+                authorization.id(), OAuthAuthorizationMapper.sha256(rawCode),
+                URI.create("https://rp.example/callback"), challenge, null,
+                AUTHENTICATED_AT, CODE_EXPIRES_AT);
+        authorization.attachAuthorizationCode(code);
+        authorizationRepository.save(authorization);
+        OAuthAuthorizationRepository.CodeConsumption<ConsumedSnapshot> consumption = authorizationRepository
+                .consumeCodeAtomically(OAuthAuthorizationMapper.sha256(rawCode),
+                        AUTHENTICATED_AT.plusSeconds(1), exchange -> new ConsumedSnapshot(
+                                exchange.authorization(), OAuthAuthorizationCodeExchangeBinding.captureLocked(
+                                        exchange.code(), exchange.authorization(), exchange.client())))
+                .orElseThrow();
+        ConsumedSnapshot consumed = consumption.exchangeResult().orElseThrow();
+        String attributesBefore = jdbcClient.sql(
+                        "select attributes::text from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(String.class).single();
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+        try {
+            org.springframework.security.oauth2.server.authorization.OAuth2Authorization reconstructed =
+                    springAuthorizationService
+                    .reconstructConsumedAuthorization(rawCode, consumed.authorization());
+            springAuthorizationService.cacheConsumedAuthorization(
+                    reconstructed, null, consumed.binding());
+            OAuth2AccessToken accessToken = new OAuth2AccessToken(
+                    OAuth2AccessToken.TokenType.BEARER, "raw-service-access-token",
+                    AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT, Set.of("openid"));
+            org.springframework.security.oauth2.server.authorization.OAuth2Authorization mismatched =
+                    org.springframework.security.oauth2.server.authorization.OAuth2Authorization.from(reconstructed)
+                    .principalName("different-principal")
+                    .token(accessToken, metadata -> metadata.put(
+                            org.springframework.security.oauth2.server.authorization.OAuth2Authorization.Token
+                                    .CLAIMS_METADATA_NAME,
+                            Map.of("jti", "jti-service-mismatch", "aud", List.of("auth-study-userinfo"))))
+                    .build();
+
+            assertThatThrownBy(() -> springAuthorizationService.save(mismatched))
+                    .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
+                            assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant"));
+        } finally {
+            RequestContextHolder.resetRequestAttributes();
+        }
+
+        assertThat(jdbcClient.sql("select count(*) from oauth_access_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("select count(*) from oauth_refresh_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(String.class).single()).isEqualTo("ACTIVE");
+        assertThat(jdbcClient.sql("select attributes::text from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(String.class).single()).isEqualTo(attributesBefore);
     }
 
     @Test
@@ -762,6 +937,10 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 .param("companyId", companyId).param("externalId", "client-" + suffix)
                 .param("code", code).param("now", Timestamp.from(CREATED_AT))
                 .query(Long.class).single();
+        jdbcClient.sql("""
+                        insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
+                        values (:clientId, 'https://rp.example/callback', 'AUTHORIZATION')
+                        """).param("clientId", clientId).update();
         jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, 'openid')")
                 .param("clientId", clientId).update();
         Fixture fixture = new Fixture(companyId, positionId, userId, accountId, clientId, subject);
@@ -769,11 +948,125 @@ class OAuthAuthorizationPersistenceIntegrationTest {
         return fixture;
     }
 
+    private OAuthAuthorizationCodeExchangeBinding binding(
+            Fixture fixture, OAuthAuthorization authorization, OAuthAuthorizationCode code) {
+        String clientId = jdbcClient.sql("select client_id from oauth_client where id = :id")
+                .param("id", fixture.clientId()).query(String.class).single();
+        OAuthAuthorization.AuthorizationRequest request = authorization.attributes().authorizationRequest();
+        return new OAuthAuthorizationCodeExchangeBinding(
+                code.codeHash(), code.issuedAt(), code.expiresAt(), authorization.id(),
+                authorization.registeredClientId(), authorization.attributes().principalName(),
+                authorization.authorizationGrantType(), authorization.authorizedScopes(),
+                new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                        authorization.attributes().authorizationRequestUri(), clientId,
+                        request.redirectUri(), request.requestedScopes(), request.rpState(), request.nonce(),
+                        request.codeChallenge(), request.codeChallengeMethod()));
+    }
+
+    private OAuthAuthorizationCodeExchangeBinding mutateBinding(
+            OAuthAuthorizationCodeExchangeBinding binding, BindingMutation mutation) {
+        OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest request = binding.authorizationRequest();
+        return switch (mutation) {
+            case CODE_HASH -> copyBinding(hash('0'), binding.codeIssuedAt(), binding.codeExpiresAt(),
+                    binding.authorizationId(), binding.registeredClientId(), binding.principalName(),
+                    binding.authorizationGrantType(), binding.authorizedScopes(), request);
+            case CODE_ISSUED_AT -> copyBinding(binding.codeHash(), binding.codeIssuedAt().plusSeconds(1),
+                    binding.codeExpiresAt(), binding.authorizationId(), binding.registeredClientId(),
+                    binding.principalName(), binding.authorizationGrantType(), binding.authorizedScopes(), request);
+            case CODE_EXPIRES_AT -> copyBinding(binding.codeHash(), binding.codeIssuedAt(),
+                    binding.codeExpiresAt().plusSeconds(1), binding.authorizationId(), binding.registeredClientId(),
+                    binding.principalName(), binding.authorizationGrantType(), binding.authorizedScopes(), request);
+            case AUTHORIZATION_ID -> copyBinding(binding.codeHash(), binding.codeIssuedAt(),
+                    binding.codeExpiresAt(), "different-authorization", binding.registeredClientId(),
+                    binding.principalName(), binding.authorizationGrantType(), binding.authorizedScopes(), request);
+            case REGISTERED_CLIENT_ID -> copyBinding(binding.codeHash(), binding.codeIssuedAt(),
+                    binding.codeExpiresAt(), binding.authorizationId(), binding.registeredClientId() + 100_000,
+                    binding.principalName(), binding.authorizationGrantType(), binding.authorizedScopes(), request);
+            case PRINCIPAL_NAME -> copyBinding(binding.codeHash(), binding.codeIssuedAt(),
+                    binding.codeExpiresAt(), binding.authorizationId(), binding.registeredClientId(),
+                    "different-principal", binding.authorizationGrantType(), binding.authorizedScopes(), request);
+            case AUTHORIZATION_GRANT_TYPE -> copyBinding(binding.codeHash(), binding.codeIssuedAt(),
+                    binding.codeExpiresAt(), binding.authorizationId(), binding.registeredClientId(),
+                    binding.principalName(), "client_credentials", binding.authorizedScopes(), request);
+            case AUTHORIZED_SCOPES -> copyBinding(binding.codeHash(), binding.codeIssuedAt(),
+                    binding.codeExpiresAt(), binding.authorizationId(), binding.registeredClientId(),
+                    binding.principalName(), binding.authorizationGrantType(), Set.of("profile"), request);
+            case AUTHORIZATION_URI -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                    "https://another-idp.example/oauth2/authorize", request.clientId(), request.redirectUri(),
+                    request.requestedScopes(), request.rpState(), request.nonce(), request.codeChallenge(),
+                    request.codeChallengeMethod()));
+            case CLIENT_ID -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                    request.authorizationUri(), "different-client", request.redirectUri(), request.requestedScopes(),
+                    request.rpState(), request.nonce(), request.codeChallenge(), request.codeChallengeMethod()));
+            case REDIRECT_URI -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                    request.authorizationUri(), request.clientId(), "https://rp.example/another-callback",
+                    request.requestedScopes(), request.rpState(), request.nonce(), request.codeChallenge(),
+                    request.codeChallengeMethod()));
+            case REQUESTED_SCOPES -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                    request.authorizationUri(), request.clientId(), request.redirectUri(), Set.of("profile"),
+                    request.rpState(), request.nonce(), request.codeChallenge(), request.codeChallengeMethod()));
+            case RP_STATE -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                    request.authorizationUri(), request.clientId(), request.redirectUri(), request.requestedScopes(),
+                    "different-state", request.nonce(), request.codeChallenge(), request.codeChallengeMethod()));
+            case NONCE -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                    request.authorizationUri(), request.clientId(), request.redirectUri(), request.requestedScopes(),
+                    request.rpState(), "different-nonce", request.codeChallenge(), request.codeChallengeMethod()));
+            case CODE_CHALLENGE -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                    request.authorizationUri(), request.clientId(), request.redirectUri(), request.requestedScopes(),
+                    request.rpState(), request.nonce(), "L".repeat(43), request.codeChallengeMethod()));
+            case CODE_CHALLENGE_METHOD -> withRequest(binding,
+                    new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                            request.authorizationUri(), request.clientId(), request.redirectUri(),
+                            request.requestedScopes(), request.rpState(), request.nonce(), request.codeChallenge(),
+                            "plain"));
+        };
+    }
+
+    private OAuthAuthorizationCodeExchangeBinding withRequest(
+            OAuthAuthorizationCodeExchangeBinding binding,
+            OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest request) {
+        return copyBinding(binding.codeHash(), binding.codeIssuedAt(), binding.codeExpiresAt(),
+                binding.authorizationId(), binding.registeredClientId(), binding.principalName(),
+                binding.authorizationGrantType(), binding.authorizedScopes(), request);
+    }
+
+    private OAuthAuthorizationCodeExchangeBinding copyBinding(
+            String codeHash, Instant codeIssuedAt,
+            Instant codeExpiresAt, String authorizationId, long registeredClientId, String principalName,
+            String authorizationGrantType, Set<String> authorizedScopes,
+            OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest request) {
+        return new OAuthAuthorizationCodeExchangeBinding(
+                codeHash, codeIssuedAt, codeExpiresAt, authorizationId, registeredClientId,
+                principalName, authorizationGrantType, authorizedScopes, request);
+    }
+
     private static String hash(char value) {
         return String.valueOf(value).repeat(64);
     }
 
     private enum RefreshOutcome { ROTATED, REUSED }
+
+    private enum BindingMutation {
+        CODE_HASH,
+        CODE_ISSUED_AT,
+        CODE_EXPIRES_AT,
+        AUTHORIZATION_ID,
+        REGISTERED_CLIENT_ID,
+        PRINCIPAL_NAME,
+        AUTHORIZATION_GRANT_TYPE,
+        AUTHORIZED_SCOPES,
+        AUTHORIZATION_URI,
+        CLIENT_ID,
+        REDIRECT_URI,
+        REQUESTED_SCOPES,
+        RP_STATE,
+        NONCE,
+        CODE_CHALLENGE,
+        CODE_CHALLENGE_METHOD
+    }
+
+    private record ConsumedSnapshot(
+            OAuthAuthorization authorization, OAuthAuthorizationCodeExchangeBinding binding) { }
 
     private record Fixture(long companyId, long positionId, long userId, long accountId,
                            long clientId, UUID subject) { }

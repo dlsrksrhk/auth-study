@@ -21,6 +21,7 @@ import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
@@ -270,20 +271,50 @@ public final class OAuthAuthorizationMapper {
     }
 
     OAuthAuthorizationRepository.CodeFinalization codeFinalization(
-            OAuth2Authorization source, String codeHash, String authenticatedSecretHash) {
+            OAuth2Authorization source, OAuthAuthorizationCodeExchangeBinding consumedBinding,
+            String authenticatedSecretHash) {
         OAuthAccessToken accessToken = mapAccessToken(source, null)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Authorization-code finalization requires an access token."));
         OAuthRefreshToken refreshToken = mapRefreshToken(source, null).orElse(null);
+        OAuthAuthorizationCodeExchangeBinding candidateBinding = codeExchangeBinding(source);
+        Set<String> accessTokenScopes = source.getAccessToken().getToken().getScopes();
+        return new OAuthAuthorizationRepository.CodeFinalization(
+                consumedBinding, candidateBinding, authenticatedSecretHash, accessTokenScopes,
+                accessToken, refreshToken);
+    }
+
+    OAuthAuthorizationCodeExchangeBinding codeExchangeBinding(OAuth2Authorization source) {
+        Objects.requireNonNull(source, "authorization");
+        var code = source.getToken(
+                org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class);
+        if (code == null) {
+            throw new IllegalArgumentException("Authorization-code token is required.");
+        }
+        OAuth2AuthorizationRequest request = requiredAuthorizationRequest(source);
         long registeredClientId;
         try {
             registeredClientId = Long.parseLong(source.getRegisteredClientId());
         } catch (RuntimeException exception) {
             throw new IllegalArgumentException("Authorization-code finalization client is invalid.", exception);
         }
-        return new OAuthAuthorizationRepository.CodeFinalization(
-                codeHash, source.getId(), registeredClientId, authenticatedSecretHash,
-                accessToken, refreshToken);
+        Object challenge = request.getAdditionalParameters().get(CODE_CHALLENGE);
+        Object method = request.getAdditionalParameters().get(CODE_CHALLENGE_METHOD);
+        Object nonce = request.getAdditionalParameters().get(NONCE);
+        if (!(challenge instanceof String challengeValue)
+                || !(method instanceof String methodValue)
+                || nonce != null && !(nonce instanceof String)) {
+            throw new IllegalArgumentException("Authorization-code request binding is invalid.");
+        }
+        return new OAuthAuthorizationCodeExchangeBinding(
+                sha256(code.getToken().getTokenValue()), code.getToken().getIssuedAt(),
+                code.getToken().getExpiresAt(), source.getId(), registeredClientId,
+                source.getPrincipalName(), source.getAuthorizationGrantType().getValue(),
+                source.getAuthorizedScopes(),
+                new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                        request.getAuthorizationUri(), request.getClientId(), request.getRedirectUri(),
+                        request.getScopes(), request.getState(), (String) nonce,
+                        challengeValue, methodValue));
     }
 
     private <T> String hashOrExisting(String tokenValue, T existing,
