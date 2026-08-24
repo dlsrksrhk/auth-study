@@ -34,7 +34,9 @@ class UserPositionOwnershipMigrationIntegrationTest {
 
     @Test
     void migrates_an_empty_database_through_the_position_ownership_constraint() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("6");
+        assertThat(flyway.info().applied())
+                .extracting(info -> info.getVersion().getVersion())
+                .contains("6");
         assertThat(constraintExists("uk_positions_id_company")).isTrue();
         assertThat(constraintExists("fk_users_position_company")).isTrue();
         assertThat(constraintExists("users_position_id_fkey")).isFalse();
