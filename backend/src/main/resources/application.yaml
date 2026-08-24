@@ -6,3 +6,9 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+
+server:
+  servlet:
+    session:
+      cookie:
+        name: ${app.oauth.session-cookie-name}
