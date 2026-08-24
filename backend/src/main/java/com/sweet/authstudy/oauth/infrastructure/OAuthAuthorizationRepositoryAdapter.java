@@ -21,14 +21,16 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     private final OAuthAuthorizationCodeJpaRepository codes;
     private final OAuthAccessTokenJpaRepository accessTokens;
     private final OAuthRefreshTokenJpaRepository refreshTokens;
+    private final OAuthClientJpaRepository clients;
 
     public OAuthAuthorizationRepositoryAdapter(OAuthAuthorizationJpaRepository authorizations,
             OAuthAuthorizationCodeJpaRepository codes, OAuthAccessTokenJpaRepository accessTokens,
-            OAuthRefreshTokenJpaRepository refreshTokens) {
+            OAuthRefreshTokenJpaRepository refreshTokens, OAuthClientJpaRepository clients) {
         this.authorizations = authorizations;
         this.codes = codes;
         this.accessTokens = accessTokens;
         this.refreshTokens = refreshTokens;
+        this.clients = clients;
     }
 
     @Override
@@ -57,8 +59,8 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
 
     @Override
     @Transactional(readOnly = true)
-    public Optional<OAuthAuthorization> findByState(String state) {
-        return authorizations.findByState(state).flatMap(entity -> findById(entity.toDomain(
+    public Optional<OAuthAuthorization> findByServerStateHash(String serverStateHash) {
+        return authorizations.findByServerStateHash(serverStateHash).flatMap(entity -> findById(entity.toDomain(
                 null, null, null).id()));
     }
 
@@ -77,14 +79,22 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public <T> Optional<CodeConsumption<T>> consumeCodeAtomically(
-            String codeHash, Instant consumedAt, Function<OAuthAuthorizationCode, T> exchange) {
+            String codeHash, Instant consumedAt, Function<LockedCodeExchange, T> exchange) {
         java.util.Objects.requireNonNull(exchange, "exchange");
         return codes.findByCodeHashForUpdate(codeHash).map(entity -> {
             OAuthAuthorizationCode code = entity.toDomain();
             OAuthAuthorizationCode.Consumption consumption = code.consume(consumedAt);
-            Optional<T> exchangeResult = consumption == OAuthAuthorizationCode.Consumption.CONSUMED
-                    ? Optional.ofNullable(exchange.apply(code))
-                    : Optional.empty();
+            Optional<T> exchangeResult = Optional.empty();
+            if (consumption == OAuthAuthorizationCode.Consumption.CONSUMED) {
+                OAuthAuthorizationJpaEntity authorizationEntity = authorizations
+                        .findByIdForUpdate(code.authorizationId())
+                        .orElseThrow(() -> new IllegalStateException("Authorization does not exist for code."));
+                OAuthAuthorization authorization = authorizationEntity.toDomain(code, null, null);
+                OAuthClientJpaEntity clientEntity = clients.findByIdForUpdate(authorization.registeredClientId())
+                        .orElseThrow(() -> new IllegalStateException("OAuth client does not exist for authorization."));
+                exchangeResult = Optional.ofNullable(exchange.apply(
+                        new LockedCodeExchange(code, authorization, clientEntity.toDomain())));
+            }
             entity.updateFrom(code);
             codes.saveAndFlush(entity);
             return new CodeConsumption<>(consumption, exchangeResult);

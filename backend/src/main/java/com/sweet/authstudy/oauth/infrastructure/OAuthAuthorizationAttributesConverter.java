@@ -14,7 +14,10 @@ class OAuthAuthorizationAttributesConverter
         implements AttributeConverter<OAuthAuthorization.Attributes, String> {
 
     private static final Set<String> ALLOWED_FIELDS = Set.of(
-            "principalName", "authorizationRequestUri");
+            "principalName", "authorizationRequestUri", "authorizationRequest");
+    private static final Set<String> ALLOWED_REQUEST_FIELDS = Set.of(
+            "redirectUri", "requestedScopes", "rpState", "codeChallenge",
+            "codeChallengeMethod", "nonce");
     private static final ObjectMapper JSON = new ObjectMapper();
 
     @Override
@@ -38,6 +41,18 @@ class OAuthAuthorizationAttributesConverter
                     throw new IllegalArgumentException("Authorization attribute is not allowlisted: " + field);
                 }
             });
+            JsonNode request = root.get("authorizationRequest");
+            if (request != null && !request.isNull()) {
+                if (!request.isObject()) {
+                    throw new IllegalArgumentException("Authorization request attributes must be a JSON object.");
+                }
+                request.fieldNames().forEachRemaining(field -> {
+                    if (!ALLOWED_REQUEST_FIELDS.contains(field)) {
+                        throw new IllegalArgumentException(
+                                "Authorization request attribute is not allowlisted: " + field);
+                    }
+                });
+            }
             return JSON.treeToValue(root, OAuthAuthorization.Attributes.class);
         } catch (JsonProcessingException exception) {
             throw new IllegalArgumentException("Cannot read allowlisted authorization attributes.", exception);

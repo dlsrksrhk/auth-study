@@ -15,17 +15,29 @@ public interface OAuthAuthorizationRepository {
         }
     }
 
+    record LockedCodeExchange(
+            OAuthAuthorizationCode code,
+            OAuthAuthorization authorization,
+            OAuthClient client) {
+        public LockedCodeExchange {
+            java.util.Objects.requireNonNull(code, "code");
+            java.util.Objects.requireNonNull(authorization, "authorization");
+            java.util.Objects.requireNonNull(client, "client");
+        }
+    }
+
     OAuthAuthorization save(OAuthAuthorization authorization);
     Optional<OAuthAuthorization> findById(String id);
-    Optional<OAuthAuthorization> findByState(String state);
+    Optional<OAuthAuthorization> findByServerStateHash(String serverStateHash);
     Optional<OAuthAuthorizationCode> findByCodeHash(String codeHash);
     Optional<OAuthAuthorizationCode> findByCodeHashForUpdate(String codeHash);
     /**
-     * Locks and consumes a code in an independent transaction. A confirmed invalid exchange must be
-     * returned as a value from {@code exchange}; throwing rolls the independent transaction back.
+     * Locks code, parent authorization, and current client in that stable order and consumes the code
+     * in an independent transaction. A confirmed invalid exchange must be returned as a value from
+     * {@code exchange}; throwing rolls the independent transaction back.
      */
     <T> Optional<CodeConsumption<T>> consumeCodeAtomically(
-            String codeHash, Instant consumedAt, Function<OAuthAuthorizationCode, T> exchange);
+            String codeHash, Instant consumedAt, Function<LockedCodeExchange, T> exchange);
     Optional<OAuthAccessToken> findByAccessTokenHash(String accessTokenHash);
     Optional<OAuthRefreshToken> findByRefreshTokenHash(String refreshTokenHash);
     Optional<OAuthRefreshToken> findRefreshByHashForUpdate(String refreshTokenHash);

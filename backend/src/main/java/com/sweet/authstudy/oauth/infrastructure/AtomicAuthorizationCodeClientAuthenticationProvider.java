@@ -1,13 +1,18 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
+import com.sweet.authstudy.oauth.domain.OAuthClient;
+import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.core.Authentication;
@@ -16,10 +21,7 @@ import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
-import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
-import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
-import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
@@ -34,7 +36,6 @@ import org.springframework.util.StringUtils;
  */
 public final class AtomicAuthorizationCodeClientAuthenticationProvider implements AuthenticationProvider {
 
-    private static final OAuth2TokenType CODE_TOKEN_TYPE = new OAuth2TokenType("code");
     private static final String S256 = "S256";
 
     private final RegisteredClientRepository registeredClients;
@@ -73,22 +74,33 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
 
         String rawCode = text(parameters.get(OAuth2ParameterNames.CODE));
         if (!StringUtils.hasText(rawCode)) throwInvalidGrant("code");
-        OAuth2Authorization authorization = authorizations.findByToken(rawCode, CODE_TOKEN_TYPE);
-        if (authorization == null) throwInvalidGrant("code");
-        OAuth2AuthorizationRequest authorizationRequest = authorization.getAttribute(
-                OAuth2AuthorizationRequest.class.getName());
-        if (authorizationRequest == null) throwInvalidGrant("code");
 
         String redirectUri = text(parameters.get(OAuth2ParameterNames.REDIRECT_URI));
         String verifier = text(parameters.get("code_verifier"));
-        var consumption = authorizations.consumeAuthorizationCode(rawCode, lockedCode -> {
-            boolean clientMatches = client.getId().equals(authorization.getRegisteredClientId())
-                    && client.getClientId().equals(authorizationRequest.getClientId());
-            boolean redirectMatches = lockedCode.redirectUri().toString().equals(redirectUri)
-                    && lockedCode.redirectUri().toString().equals(authorizationRequest.getRedirectUri());
-            boolean verifierMatches = validS256(verifier, lockedCode.codeChallenge())
-                    && S256.equals(authorizationRequest.getAdditionalParameters().get("code_challenge_method"));
-            return new ExchangeValidation(clientMatches && redirectMatches && verifierMatches);
+        var consumption = authorizations.consumeAuthorizationCode(rawCode, locked -> {
+            OAuthAuthorization authorization = locked.authorization();
+            OAuthClient currentClient = locked.client();
+            OAuthAuthorization.AuthorizationRequest request =
+                    authorization.attributes().authorizationRequest();
+            Instant now = clock.instant();
+            boolean clientMatches = currentClient.status() == OAuthClientStatus.ACTIVE
+                    && currentClient.id().toString().equals(client.getId())
+                    && currentClient.clientId().equals(client.getClientId())
+                    && authorization.registeredClientId() == currentClient.id()
+                    && authorization.companyId() == currentClient.companyId()
+                    && authorization.activeAt(now)
+                    && currentAuthenticationSnapshotMatches(clientAuthentication, client, currentClient, now);
+            boolean requestMatches = request != null
+                    && currentClient.allowsRedirect(URI.create(request.redirectUri()));
+            boolean redirectMatches = requestMatches
+                    && locked.code().redirectUri().toString().equals(redirectUri)
+                    && locked.code().redirectUri().toString().equals(request.redirectUri());
+            boolean verifierMatches = requestMatches
+                    && locked.code().codeChallenge().equals(request.codeChallenge())
+                    && validS256(verifier, locked.code().codeChallenge())
+                    && S256.equals(request.codeChallengeMethod());
+            return new ExchangeValidation(
+                    clientMatches && redirectMatches && verifierMatches, authorization);
         }).orElse(null);
         if (consumption == null
                 || consumption.consumption()
@@ -98,6 +110,10 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
             throwInvalidGrant("code_verifier");
         }
 
+        org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization =
+                authorizations.reconstructConsumedAuthorization(
+                rawCode, consumption.exchangeResult().orElseThrow().authorization());
+        if (authorization == null) throwInvalidGrant("code");
         authorizations.cacheConsumedAuthorization(rawCode, authorization);
         return new OAuth2ClientAuthenticationToken(client,
                 clientAuthentication.getClientAuthenticationMethod(),
@@ -141,6 +157,22 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
         }
     }
 
+    private boolean currentAuthenticationSnapshotMatches(
+            OAuth2ClientAuthenticationToken authentication, RegisteredClient registeredClient,
+            OAuthClient currentClient, Instant now) {
+        ClientAuthenticationMethod method = authentication.getClientAuthenticationMethod();
+        if (currentClient.publicClient()) return ClientAuthenticationMethod.NONE.equals(method);
+        if (!ClientAuthenticationMethod.CLIENT_SECRET_BASIC.equals(method)
+                && !ClientAuthenticationMethod.CLIENT_SECRET_POST.equals(method)) {
+            return false;
+        }
+        String authenticatedHash = registeredClient.getClientSecret();
+        return authenticatedHash != null && currentClient.secrets().stream().anyMatch(secret ->
+                authenticatedHash.equals(secret.secretHash())
+                        && secret.revokedAt() == null
+                        && (secret.expiresAt() == null || secret.expiresAt().isAfter(now)));
+    }
+
     private String text(Object value) {
         return value instanceof String text ? text : null;
     }
@@ -155,7 +187,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                 OAuth2ErrorCodes.INVALID_GRANT, "Invalid grant: " + parameter, null));
     }
 
-    private record ExchangeValidation(boolean valid) { }
+    private record ExchangeValidation(boolean valid, OAuthAuthorization authorization) { }
 
     public static final class Converter implements AuthenticationConverter {
         @Override

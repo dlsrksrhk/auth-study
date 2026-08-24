@@ -1,6 +1,8 @@
 package com.sweet.authstudy.oauth.acceptance;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -21,9 +23,12 @@ import java.time.LocalDate;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,9 +47,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @SpringBootTest
@@ -64,6 +72,7 @@ class AuthorizationCodePkceIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcClient jdbcClient;
+    @Autowired private PlatformTransactionManager transactionManager;
 
     @Test
     void discovery_driven_authorization_code_exchange_succeeds_exactly_once() throws Exception {
@@ -76,15 +85,113 @@ class AuthorizationCodePkceIntegrationTest {
                 jdbcInstant("select expires_at from oauth_authorization_code where authorization_id = :id", issued.authorizationId())))
                 .isEqualTo(Duration.ofSeconds(60));
 
-        mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER))
+        MvcResult tokenResult = mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.access_token").isNotEmpty())
-                .andExpect(jsonPath("$.token_type").value("Bearer"));
+                .andExpect(jsonPath("$.token_type").value("Bearer"))
+                .andReturn();
+        JsonNode tokens = objectMapper.readTree(tokenResult.getResponse().getContentAsByteArray());
+        String accessToken = tokens.path("access_token").asText();
+        assertThat(jdbcClient.sql("select code_hash from oauth_authorization_code where authorization_id = :id")
+                .param("id", issued.authorizationId()).query(String.class).single())
+                .isEqualTo(sha256(issued.code())).isNotEqualTo(issued.code());
+        assertThat(jdbcClient.sql("select code_challenge from oauth_authorization_code where authorization_id = :id")
+                .param("id", issued.authorizationId()).query(String.class).single()).isNotEqualTo(VERIFIER);
+        assertThat(jdbcClient.sql("select access_token_hash from oauth_access_token where authorization_id = :id")
+                .param("id", issued.authorizationId()).query(String.class).single())
+                .isEqualTo(sha256(accessToken)).isNotEqualTo(accessToken);
+        String persistedAuthorization = jdbcClient.sql(
+                        "select attributes::text from oauth_authorization where id = :id")
+                .param("id", issued.authorizationId()).query(String.class).single();
+        assertThat(persistedAuthorization).doesNotContain(
+                issued.code(), accessToken, VERIFIER);
 
         mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("invalid_grant"));
         assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+    }
+
+    @Test
+    void confidential_basic_client_uses_the_project_service_and_custom_atomic_provider() throws Exception {
+        String rawSecret = "confidential-secret-" + UUID.randomUUID();
+        Fixture fixture = fixture(false, rawSecret);
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+
+        MvcResult tokenResult = mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.access_token").isNotEmpty())
+                .andExpect(jsonPath("$.refresh_token").isNotEmpty())
+                .andReturn();
+        JsonNode tokens = objectMapper.readTree(tokenResult.getResponse().getContentAsByteArray());
+        String refreshToken = tokens.path("refresh_token").asText();
+
+        assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+        assertThat(accessTokenCount(issued.authorizationId())).isEqualTo(1L);
+        assertThat(jdbcClient.sql("select secret_hash from oauth_client_secret where client_id = :id")
+                .param("id", fixture.internalClientId()).query(String.class).single())
+                .startsWith("$2").doesNotContain(rawSecret);
+        assertThat(jdbcClient.sql("select refresh_token_hash from oauth_refresh_token where authorization_id = :id")
+                .param("id", issued.authorizationId()).query(String.class).single())
+                .isEqualTo(sha256(refreshToken)).isNotEqualTo(refreshToken);
+    }
+
+    @Test
+    void consent_required_pending_authorization_round_trips_without_a_task_nine_screen() throws Exception {
+        Fixture fixture = fixture(true);
+        Endpoints endpoints = discovery();
+        String rpState = "rp-state-" + UUID.randomUUID();
+        String nonce = "nonce-" + UUID.randomUUID();
+        MockHttpSession session = new MockHttpSession();
+
+        MvcResult pendingResult = mockMvc.perform(get(endpoints.authorizationPath())
+                        .session(session)
+                        .with(user(Long.toString(fixture.accountId())))
+                        .queryParam("response_type", "code")
+                        .queryParam("client_id", fixture.clientId())
+                        .queryParam("redirect_uri", CALLBACK.toString())
+                        .queryParam("scope", "openid profile")
+                        .queryParam("state", rpState)
+                        .queryParam("nonce", nonce)
+                        .queryParam("code_challenge", challenge(VERIFIER))
+                        .queryParam("code_challenge_method", "S256"))
+                .andExpect(status().isOk())
+                .andReturn();
+        String consentPage = pendingResult.getResponse().getContentAsString();
+        assertThat(consentPage).contains("Consent required", "action=\"/oauth2/authorize\"");
+        var stateMatcher = Pattern.compile("name=\"state\" value=\"([^\"]+)\"").matcher(consentPage);
+        assertThat(stateMatcher.find()).isTrue();
+        String consentState = stateMatcher.group(1);
+        assertThat(consentState).isNotBlank().isNotEqualTo(rpState);
+        assertThat(jdbcClient.sql("""
+                        select count(*) from oauth_authorization
+                        where server_state_hash = :stateHash
+                          and attributes -> 'authorizationRequest' ->> 'rpState' = :rpState
+                          and attributes -> 'authorizationRequest' ->> 'nonce' = :nonce
+                        """).param("stateHash", sha256(consentState)).param("rpState", rpState)
+                .param("nonce", nonce).query(Long.class).single()).isEqualTo(1L);
+
+        MvcResult approved = mockMvc.perform(post(endpoints.authorizationPath())
+                        .session(session)
+                        .with(user(Long.toString(fixture.accountId())))
+                        .with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId())
+                        .param("state", consentState)
+                        .param("scope", "openid", "profile"))
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+        URI callback = URI.create(approved.getResponse().getHeader("Location"));
+        assertThat(callback.getScheme() + "://" + callback.getAuthority() + callback.getPath())
+                .isEqualTo("https://rp.example/callback");
+        assertThat(query(callback, "state")).isEqualTo(rpState);
+        String code = query(callback, "code");
+        assertThat(code).isNotBlank();
+
+        mockMvc.perform(tokenRequest(endpoints, fixture, code, VERIFIER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.access_token").isNotEmpty());
     }
 
     @Test
@@ -194,6 +301,97 @@ class AuthorizationCodePkceIntegrationTest {
                 .param("id", issued.authorizationId()).query(Long.class).single()).isEqualTo(1L);
     }
 
+    @Test
+    void completed_authorization_revocation_while_exchange_waits_on_the_code_lock_prevents_token_issue()
+            throws Exception {
+        Fixture fixture = fixture();
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+
+        ExchangeResult result = exchangeAfterCommittedMutationWhileCodeLocked(
+                endpoints, fixture, issued, () -> jdbcClient.sql("""
+                        update oauth_authorization
+                           set status = 'REVOKED', revocation_reason = 'RACE_REVOKED', revoked_at = now()
+                         where id = :id
+                        """).param("id", issued.authorizationId()).update());
+
+        assertThat(result).isEqualTo(new ExchangeResult(400, "invalid_grant"));
+        assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+    }
+
+    @Test
+    void completed_client_disable_while_exchange_waits_on_the_code_lock_prevents_token_issue()
+            throws Exception {
+        Fixture fixture = fixture();
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+
+        ExchangeResult result = exchangeAfterCommittedMutationWhileCodeLocked(
+                endpoints, fixture, issued, () -> jdbcClient.sql("""
+                        update oauth_client set status = 'DISABLED', updated_at = now()
+                         where id = :id
+                        """).param("id", fixture.internalClientId()).update());
+
+        assertThat(result).isEqualTo(new ExchangeResult(401, "invalid_client"));
+        assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+    }
+
+    private ExchangeResult exchangeAfterCommittedMutationWhileCodeLocked(
+            Endpoints endpoints, Fixture fixture, IssuedCode issued, Runnable mutation) throws Exception {
+        CountDownLatch codeLocked = new CountDownLatch(1);
+        CountDownLatch releaseCode = new CountDownLatch(1);
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var locker = executor.submit(() -> transaction.executeWithoutResult(status -> {
+                jdbcClient.sql("select id from oauth_authorization_code where code_hash = :hash for update")
+                        .param("hash", sha256(issued.code())).query(Long.class).single();
+                codeLocked.countDown();
+                await(releaseCode);
+            }));
+            assertThat(codeLocked.await(10, TimeUnit.SECONDS)).isTrue();
+            var exchange = executor.submit(() ->
+                    exchangeAfterBarrier(new CyclicBarrier(1), endpoints, fixture, issued));
+            awaitBlockedCodeExchange();
+
+            mutation.run();
+            releaseCode.countDown();
+            locker.get(20, TimeUnit.SECONDS);
+            return exchange.get(20, TimeUnit.SECONDS);
+        } finally {
+            releaseCode.countDown();
+        }
+    }
+
+    private void awaitBlockedCodeExchange() {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            long blocked = jdbcClient.sql("""
+                    select count(*) from pg_stat_activity
+                     where pid <> pg_backend_pid()
+                       and datname = current_database()
+                       and state = 'active'
+                       and wait_event_type = 'Lock'
+                       and query ilike '%oauth_authorization_code%'
+                    """).query(Long.class).single();
+            if (blocked > 0) return;
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(20));
+        }
+        throw new AssertionError("Authorization-code exchange did not block on the code row lock.");
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(20, TimeUnit.SECONDS)) {
+                throw new AssertionError("Timed out waiting to release the authorization-code row lock.");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(exception);
+        }
+    }
+
     private ExchangeResult exchangeAfterBarrier(CyclicBarrier start, Endpoints endpoints,
             Fixture fixture, IssuedCode issued) throws Exception {
         start.await(10, TimeUnit.SECONDS);
@@ -236,13 +434,15 @@ class AuthorizationCodePkceIntegrationTest {
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder tokenRequest(
             Endpoints endpoints, Fixture fixture, String code, String verifier) {
-        return post(endpoints.tokenPath())
+        var request = post(endpoints.tokenPath())
                 .header("Origin", ISSUER)
                 .param("grant_type", "authorization_code")
-                .param("client_id", fixture.clientId())
                 .param("code", code)
                 .param("redirect_uri", CALLBACK.toString())
                 .param("code_verifier", verifier);
+        return fixture.rawSecret() == null
+                ? request.param("client_id", fixture.clientId())
+                : request.with(httpBasic(fixture.clientId(), fixture.rawSecret()));
     }
 
     private Endpoints discovery() throws Exception {
@@ -257,6 +457,14 @@ class AuthorizationCodePkceIntegrationTest {
     }
 
     private Fixture fixture() {
+        return fixture(false, null);
+    }
+
+    private Fixture fixture(boolean consentRequired) {
+        return fixture(consentRequired, null);
+    }
+
+    private Fixture fixture(boolean consentRequired, String rawSecret) {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         String code = "PKCE_" + suffix.toUpperCase();
         Instant now = Instant.now();
@@ -285,6 +493,8 @@ class AuthorizationCodePkceIntegrationTest {
                         """).param("companyId", companyId).param("userId", userId)
                 .param("email", suffix + "@example.com").param("now", Timestamp.from(now))
                 .query(Long.class).single();
+        jdbcClient.sql("insert into account_roles(account_id, role) values (:accountId, 'USER')")
+                .param("accountId", accountId).update();
         jdbcClient.sql("insert into oauth_subject(account_id, subject, created_at) values (:accountId, :subject, :now)")
                 .param("accountId", accountId).param("subject", UUID.randomUUID())
                 .param("now", Timestamp.from(now)).update();
@@ -292,17 +502,33 @@ class AuthorizationCodePkceIntegrationTest {
         long internalClientId = jdbcClient.sql("""
                         insert into oauth_client(company_id, client_id, display_name, status, trust,
                                                  public_client, created_at, updated_at)
-                        values (:companyId, :clientId, 'PKCE RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
-                                true, :now, :now) returning id
+                        values (:companyId, :clientId, 'PKCE RP', 'ACTIVE', :trust,
+                                :publicClient, :now, :now) returning id
                         """).param("companyId", companyId).param("clientId", clientId)
+                .param("trust", consentRequired ? "CONSENT_REQUIRED" : "TRUSTED_FIRST_PARTY")
+                .param("publicClient", rawSecret == null)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
+        if (rawSecret != null) {
+            jdbcClient.sql("""
+                            insert into oauth_client_secret(
+                                client_id, secret_hash, secret_hint, created_at, version)
+                            values (:clientId, :secretHash, :hint, :now, 0)
+                            """).param("clientId", internalClientId)
+                    .param("secretHash", new BCryptPasswordEncoder().encode(rawSecret))
+                    .param("hint", rawSecret.substring(rawSecret.length() - 4))
+                    .param("now", Timestamp.from(now)).update();
+        }
         jdbcClient.sql("""
                         insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
                         values (:clientId, :redirectUri, 'AUTHORIZATION')
                         """).param("clientId", internalClientId).param("redirectUri", CALLBACK.toString()).update();
         jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, 'openid')")
                 .param("clientId", internalClientId).update();
-        return new Fixture(accountId, internalClientId, clientId);
+        if (consentRequired) {
+            jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, 'profile')")
+                    .param("clientId", internalClientId).update();
+        }
+        return new Fixture(accountId, internalClientId, clientId, rawSecret);
     }
 
     private Instant jdbcInstant(String sql, String authorizationId) {
@@ -312,6 +538,11 @@ class AuthorizationCodePkceIntegrationTest {
     private Instant codeUsedAt(String authorizationId) {
         return jdbcClient.sql("select used_at from oauth_authorization_code where authorization_id = :id")
                 .param("id", authorizationId).query(Instant.class).optional().orElse(null);
+    }
+
+    private long accessTokenCount(String authorizationId) {
+        return jdbcClient.sql("select count(*) from oauth_access_token where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single();
     }
 
     private String query(URI uri, String name) {
@@ -339,7 +570,7 @@ class AuthorizationCodePkceIntegrationTest {
     }
 
     private record Endpoints(String authorizationPath, String tokenPath) { }
-    private record Fixture(long accountId, long internalClientId, String clientId) { }
+    private record Fixture(long accountId, long internalClientId, String clientId, String rawSecret) { }
     private record IssuedCode(String code, String authorizationId) { }
     private record ExchangeResult(int status, String error) { }
 

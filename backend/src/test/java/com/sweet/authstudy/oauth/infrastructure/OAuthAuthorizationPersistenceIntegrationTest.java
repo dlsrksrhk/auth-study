@@ -145,6 +145,24 @@ class OAuthAuthorizationPersistenceIntegrationTest {
     }
 
     @Test
+    void saving_an_existing_consent_replaces_removed_scope_rows() {
+        Fixture fixture = insertFixture("CONSENT_REPLACE");
+        OAuthConsent saved = consentRepository.save(OAuthConsent.create(
+                fixture.accountId(), fixture.clientId(), Set.of("openid", "profile"), CREATED_AT));
+        OAuthConsent narrowed = OAuthConsent.restore(
+                saved.id(), saved.principalAccountId(), saved.registeredClientId(), Set.of("openid"),
+                saved.createdAt(), saved.updatedAt().plusSeconds(1));
+
+        consentRepository.save(narrowed);
+
+        assertThat(consentRepository.findByAccountIdAndRegisteredClientId(
+                fixture.accountId(), fixture.clientId()).orElseThrow().scopes())
+                .containsExactly("openid");
+        assertThat(jdbcClient.sql("select scope from oauth_consent_scope where consent_id = :id")
+                .param("id", saved.id()).query(String.class).list()).containsExactly("openid");
+    }
+
+    @Test
     void repository_round_trip_preserves_allowlisted_json_and_non_secret_protocol_metadata() {
         Fixture fixture = insertFixture("ROUND_TRIP");
         OAuthAuthorization authorization = authorization(fixture, "authorization-round-trip");
@@ -290,6 +308,29 @@ class OAuthAuthorizationPersistenceIntegrationTest {
         assertThat(invalid.exchangeResult()).contains("INVALID_REDIRECT_URI");
         assertThat(replay.consumption()).isEqualTo(OAuthAuthorizationCode.Consumption.ALREADY_USED);
         assertThat(replay.exchangeResult()).isEmpty();
+    }
+
+    @Test
+    void atomic_code_callback_receives_fresh_locked_parent_authorization_and_client() {
+        Fixture fixture = insertFixture("CODE_FRESH_CONTEXT");
+        OAuthAuthorization authorization = authorization(fixture, "authorization-code-fresh-context");
+        authorization.attachAuthorizationCode(OAuthAuthorizationCode.issue(
+                authorization.id(), hash('9'), URI.create("https://rp.example/callback"),
+                "H".repeat(43), null, AUTHENTICATED_AT, CODE_EXPIRES_AT));
+        authorizationRepository.save(authorization);
+
+        OAuthAuthorizationRepository.CodeConsumption<String> consumed = authorizationRepository
+                .consumeCodeAtomically(hash('9'), AUTHENTICATED_AT.plusSeconds(1), exchange -> {
+                    assertThat(exchange.code().authorizationId()).isEqualTo(authorization.id());
+                    assertThat(exchange.authorization().id()).isEqualTo(authorization.id());
+                    assertThat(exchange.authorization().status()).isEqualTo(OAuthAuthorization.Status.ACTIVE);
+                    assertThat(exchange.client().id()).isEqualTo(fixture.clientId());
+                    assertThat(exchange.client().status()).isEqualTo(OAuthClientStatus.ACTIVE);
+                    assertThat(exchange.client().companyId()).isEqualTo(fixture.companyId());
+                    return "VALID";
+                }).orElseThrow();
+
+        assertThat(consumed.exchangeResult()).contains("VALID");
     }
 
     @Test
@@ -528,17 +569,17 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 "authorization_code", Set.of("openid", "profile"),
                 new OAuthAuthorization.Attributes(
                         "principal@example.com", "https://idp.localhost:8080/oauth2/authorize"),
-                "opaque-state", AUTHENTICATED_AT, CREATED_AT, REFRESH_EXPIRES_AT);
+                null, AUTHENTICATED_AT, CREATED_AT, REFRESH_EXPIRES_AT);
     }
 
     private int insertAuthorizationRow(String id, long clientId, UUID subject, long accountId, long companyId) {
         return jdbcClient.sql("""
                         insert into oauth_authorization(
                             id, registered_client_id, subject, principal_account_id, company_id,
-                            authorization_grant_type, authorized_scopes, attributes, state,
+                            authorization_grant_type, authorized_scopes, attributes, server_state_hash,
                             authenticated_at, status, created_at, expires_at)
                         values (:id, :clientId, :subject, :accountId, :companyId,
-                                'authorization_code', 'openid', cast(:attributes as jsonb), 'state',
+                                'authorization_code', 'openid', cast(:attributes as jsonb), null,
                                 :authenticatedAt, 'ACTIVE', :createdAt, :expiresAt)
                         """)
                 .param("id", id)
@@ -605,6 +646,8 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 .param("companyId", companyId).param("externalId", "client-" + suffix)
                 .param("code", code).param("now", Timestamp.from(CREATED_AT))
                 .query(Long.class).single();
+        jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, 'openid')")
+                .param("clientId", clientId).update();
         Fixture fixture = new Fixture(companyId, positionId, userId, accountId, clientId, subject);
         fixtures.add(fixture);
         return fixture;

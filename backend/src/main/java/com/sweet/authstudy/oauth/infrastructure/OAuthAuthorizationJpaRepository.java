@@ -2,13 +2,19 @@ package com.sweet.authstudy.oauth.infrastructure;
 
 import java.time.Instant;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizationJpaEntity, String> {
-    java.util.Optional<OAuthAuthorizationJpaEntity> findByState(String state);
+    java.util.Optional<OAuthAuthorizationJpaEntity> findByServerStateHash(String serverStateHash);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from OAuthAuthorizationJpaEntity a where a.id = :id")
+    java.util.Optional<OAuthAuthorizationJpaEntity> findByIdForUpdate(@Param("id") String id);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

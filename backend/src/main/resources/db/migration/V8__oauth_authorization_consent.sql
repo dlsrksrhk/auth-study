@@ -30,7 +30,7 @@ CREATE TABLE oauth_authorization (
     authorization_grant_type VARCHAR(100) NOT NULL,
     authorized_scopes TEXT NOT NULL,
     attributes JSONB NOT NULL,
-    state VARCHAR(1024),
+    server_state_hash VARCHAR(64),
     authenticated_at TIMESTAMPTZ NOT NULL,
     status VARCHAR(20) NOT NULL,
     revocation_reason VARCHAR(100),
@@ -49,7 +49,10 @@ CREATE TABLE oauth_authorization (
     CONSTRAINT ck_oauth_authorization_id_not_blank CHECK (btrim(id) <> ''),
     CONSTRAINT ck_oauth_authorization_grant_not_blank CHECK (btrim(authorization_grant_type) <> ''),
     CONSTRAINT ck_oauth_authorization_status CHECK (status IN ('ACTIVE', 'REVOKED')),
-    CONSTRAINT ck_oauth_authorization_time_order CHECK (expires_at > created_at)
+    CONSTRAINT ck_oauth_authorization_time_order CHECK (expires_at > created_at),
+    CONSTRAINT ck_oauth_authorization_server_state_hash CHECK (
+        server_state_hash IS NULL OR server_state_hash ~ '^[0-9a-f]{64}$'
+    )
 );
 
 CREATE INDEX ix_oauth_authorization_account ON oauth_authorization (principal_account_id);
@@ -75,8 +78,8 @@ CREATE TABLE oauth_authorization_code (
     CONSTRAINT ck_oauth_authorization_code_time_order CHECK (expires_at > issued_at)
 );
 
-CREATE UNIQUE INDEX uk_oauth_authorization_state
-    ON oauth_authorization(state) WHERE state IS NOT NULL;
+CREATE UNIQUE INDEX uk_oauth_authorization_server_state_hash
+    ON oauth_authorization(server_state_hash) WHERE server_state_hash IS NOT NULL;
 
 CREATE TABLE oauth_access_token (
     id BIGSERIAL PRIMARY KEY,

@@ -16,6 +16,9 @@ import java.util.Set;
 import java.util.UUID;
 
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.identity.domain.Account;
+import com.sweet.authstudy.identity.domain.AccountRepository;
+import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
@@ -46,16 +49,19 @@ public final class OAuthAuthorizationMapper {
     private static final String CODE_CHALLENGE = "code_challenge";
     private static final String CODE_CHALLENGE_METHOD = "code_challenge_method";
     private static final String NONCE = "nonce";
+    private static final String STATE_TOKEN_TYPE = "state";
 
     private final OAuthClientRepository clients;
     private final OAuthSubjectRepository subjects;
+    private final AccountRepository accounts;
     private final OAuthSecurityProperties properties;
     private final Clock clock;
 
     public OAuthAuthorizationMapper(OAuthClientRepository clients, OAuthSubjectRepository subjects,
-            OAuthSecurityProperties properties, Clock clock) {
+            AccountRepository accounts, OAuthSecurityProperties properties, Clock clock) {
         this.clients = clients;
         this.subjects = subjects;
+        this.accounts = accounts;
         this.properties = properties;
         this.clock = clock;
     }
@@ -71,9 +77,18 @@ public final class OAuthAuthorizationMapper {
                 .orElseThrow(() -> new IllegalArgumentException("Active OAuth client does not exist."));
         OAuthSubject subject = subjects.findByAccountId(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("OAuth subject does not exist for principal account id."));
+        Account account = accounts.findById(accountId)
+                .filter(candidate -> candidate.status() == AccountStatus.ACTIVE)
+                .orElseThrow(OAuthAuthorizationMapper::invalidOwnership);
+        if (account.companyId() == null || account.companyId() != client.companyId()) {
+            throw invalidOwnership();
+        }
         org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest request =
                 requiredAuthorizationRequest(source);
         validateRequest(client, request);
+        com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes attributes =
+                authorizationAttributes(source.getPrincipalName(), request);
+        String serverStateHash = serverStateHash(source);
 
         Instant createdAt = existing == null ? earliestIssuedAt(source) : existing.createdAt();
         Instant authenticatedAt = existing == null ? createdAt : existing.authenticatedAt();
@@ -84,18 +99,14 @@ public final class OAuthAuthorizationMapper {
                 ? com.sweet.authstudy.oauth.domain.OAuthAuthorization.create(
                         source.getId(),
                         com.sweet.authstudy.oauth.domain.OAuthAuthorization.Ownership.verified(
-                                client, subject, accountId, client.companyId()),
+                                client, subject, accountId, account.companyId()),
                         source.getAuthorizationGrantType().getValue(), source.getAuthorizedScopes(),
-                        new com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes(
-                                source.getPrincipalName(), request.getAuthorizationUri()),
-                        request.getState(), authenticatedAt, createdAt, expiresAt)
+                        attributes, serverStateHash, authenticatedAt, createdAt, expiresAt)
                 : com.sweet.authstudy.oauth.domain.OAuthAuthorization.restore(
                         existing.id(), existing.registeredClientId(), existing.subject(),
                         existing.principalAccountId(), existing.companyId(),
                         source.getAuthorizationGrantType().getValue(), source.getAuthorizedScopes(),
-                        new com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes(
-                                source.getPrincipalName(), request.getAuthorizationUri()),
-                        request.getState(), existing.authenticatedAt(), existing.status(),
+                        attributes, serverStateHash, existing.authenticatedAt(), existing.status(),
                         existing.revocationReason(), existing.createdAt(), existing.expiresAt(),
                         existing.revokedAt(), null, null, null);
 
@@ -107,6 +118,11 @@ public final class OAuthAuthorizationMapper {
 
     OAuth2Authorization toSpring(com.sweet.authstudy.oauth.domain.OAuthAuthorization source,
             String lookedUpToken, String lookedUpTokenType) {
+        return toSpring(source, lookedUpToken, lookedUpTokenType, false);
+    }
+
+    OAuth2Authorization toSpring(com.sweet.authstudy.oauth.domain.OAuthAuthorization source,
+            String lookedUpToken, String lookedUpTokenType, boolean activeConsumedCode) {
         Objects.requireNonNull(source, "authorization");
         if (source.status() != com.sweet.authstudy.oauth.domain.OAuthAuthorization.Status.ACTIVE
                 || source.revokedAt() != null) {
@@ -128,6 +144,9 @@ public final class OAuthAuthorizationMapper {
         builder.attribute(OAuth2AuthorizationRequest.class.getName(), request)
                 .attribute(Principal.class.getName(), UsernamePasswordAuthenticationToken.authenticated(
                         source.attributes().principalName(), "N/A", List.of()));
+        if (STATE_TOKEN_TYPE.equals(lookedUpTokenType) && lookedUpToken != null) {
+            builder.attribute("state", lookedUpToken);
+        }
 
         source.authorizationCode().ifPresent(code -> {
             String value = tokenValue(code.codeHash(), lookedUpToken, lookedUpTokenType, "code");
@@ -135,7 +154,7 @@ public final class OAuthAuthorizationMapper {
                     new org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode(
                             value, code.issuedAt(), code.expiresAt());
             builder.token(springCode, metadata -> {
-                if (code.usedAt() != null) {
+                if (code.usedAt() != null && !activeConsumedCode) {
                     metadata.put(OAuth2Authorization.Token.INVALIDATED_METADATA_NAME, true);
                 }
             });
@@ -220,10 +239,11 @@ public final class OAuthAuthorizationMapper {
         String hash = hashOrExisting(token.getToken().getTokenValue(), previous,
                 OAuthAccessToken::accessTokenHash);
         Map<String, Object> claims = token.getClaims();
-        String jti = nullableString(claims.get("jti"));
-        if (jti == null) jti = hash.substring(0, 32);
-        String audience = firstAudience(claims.get("aud"));
-        if (audience == null) audience = properties.userInfoAudience();
+        String jti = claims == null ? null : nullableString(claims.get("jti"));
+        String audience = claims == null ? null : firstAudience(claims.get("aud"));
+        if (jti == null || jti.isBlank() || audience == null) {
+            throw new IllegalArgumentException("Access token claims must contain jti and aud.");
+        }
         Instant revokedAt = previous != null && previous.accessTokenHash().equals(hash)
                 ? previous.revokedAt() : null;
         Long id = previous != null && previous.accessTokenHash().equals(hash) ? previous.id() : null;
@@ -283,20 +303,49 @@ public final class OAuthAuthorizationMapper {
 
     private OAuth2AuthorizationRequest authorizationRequest(
             com.sweet.authstudy.oauth.domain.OAuthAuthorization authorization, OAuthClient client) {
-        OAuthAuthorizationCode code = authorization.authorizationCode()
-                .orElseThrow(() -> new IllegalStateException("Authorization code metadata is required."));
+        com.sweet.authstudy.oauth.domain.OAuthAuthorization.AuthorizationRequest request =
+                authorization.attributes().authorizationRequest();
+        if (request == null) {
+            OAuthAuthorizationCode code = authorization.authorizationCode()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Allowlisted authorization request metadata is required."));
+            request = new com.sweet.authstudy.oauth.domain.OAuthAuthorization.AuthorizationRequest(
+                    code.redirectUri().toString(), authorization.authorizedScopes(), null,
+                    code.codeChallenge(), "S256", code.nonce());
+        }
+        com.sweet.authstudy.oauth.domain.OAuthAuthorization.AuthorizationRequest snapshot = request;
         return OAuth2AuthorizationRequest.authorizationCode()
                 .authorizationUri(authorization.attributes().authorizationRequestUri())
                 .clientId(client.clientId())
-                .redirectUri(code.redirectUri().toString())
-                .scopes(authorization.authorizedScopes())
-                .state(authorization.state())
+                .redirectUri(snapshot.redirectUri())
+                .scopes(snapshot.requestedScopes())
+                .state(snapshot.rpState())
                 .additionalParameters(parameters -> {
-                    parameters.put(CODE_CHALLENGE, code.codeChallenge());
-                    parameters.put(CODE_CHALLENGE_METHOD, "S256");
-                    if (code.nonce() != null) parameters.put(NONCE, code.nonce());
+                    parameters.put(CODE_CHALLENGE, snapshot.codeChallenge());
+                    parameters.put(CODE_CHALLENGE_METHOD, snapshot.codeChallengeMethod());
+                    if (snapshot.nonce() != null) parameters.put(NONCE, snapshot.nonce());
                 })
                 .build();
+    }
+
+    private com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes authorizationAttributes(
+            String principalName, OAuth2AuthorizationRequest request) {
+        return new com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes(
+                principalName, request.getAuthorizationUri(),
+                new com.sweet.authstudy.oauth.domain.OAuthAuthorization.AuthorizationRequest(
+                        request.getRedirectUri(), request.getScopes(), request.getState(),
+                        request.getAdditionalParameters().get(CODE_CHALLENGE).toString(),
+                        request.getAdditionalParameters().get(CODE_CHALLENGE_METHOD).toString(),
+                        nullableString(request.getAdditionalParameters().get(NONCE))));
+    }
+
+    private String serverStateHash(OAuth2Authorization authorization) {
+        if (authorization.getToken(
+                org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class) != null) {
+            return null;
+        }
+        String serverState = authorization.getAttribute("state");
+        return serverState == null ? null : sha256(serverState);
     }
 
     private RegisteredClient registeredClient(OAuthClient client) {
@@ -342,5 +391,9 @@ public final class OAuthAuthorizationMapper {
 
     private String nullableString(Object value) {
         return value == null ? null : value.toString();
+    }
+
+    private static IllegalArgumentException invalidOwnership() {
+        return new IllegalArgumentException("OAuth authorization ownership is invalid.");
     }
 }

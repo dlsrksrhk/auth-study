@@ -42,7 +42,8 @@ class OAuthAuthorizationJpaEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false, columnDefinition = "jsonb")
     private OAuthAuthorization.Attributes attributes;
-    private String state;
+    @Column(name = "server_state_hash")
+    private String serverStateHash;
     @Column(name = "authenticated_at", nullable = false, updatable = false)
     private Instant authenticatedAt;
     @Enumerated(EnumType.STRING)
@@ -80,7 +81,7 @@ class OAuthAuthorizationJpaEntity {
         }
         authorizedScopes = authorization.authorizedScopes().stream().sorted().collect(Collectors.joining(" "));
         attributes = authorization.attributes();
-        state = authorization.state();
+        serverStateHash = authorization.serverStateHash();
         status = authorization.status();
         revocationReason = authorization.revocationReason();
         revokedAt = authorization.revokedAt();
@@ -91,7 +92,7 @@ class OAuthAuthorizationJpaEntity {
         Set<String> scopes = authorizedScopes.isBlank() ? Set.of()
                 : Arrays.stream(authorizedScopes.split(" ")).collect(Collectors.toUnmodifiableSet());
         return OAuthAuthorization.restore(id, registeredClientId, subject, principalAccountId, companyId,
-                authorizationGrantType, scopes, attributes, state, authenticatedAt, status,
+                authorizationGrantType, scopes, attributes, serverStateHash, authenticatedAt, status,
                 revocationReason, createdAt, expiresAt, revokedAt, code, accessToken, refreshToken);
     }
 }

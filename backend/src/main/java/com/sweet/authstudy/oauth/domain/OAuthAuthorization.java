@@ -10,7 +10,32 @@ public final class OAuthAuthorization {
 
     public enum Status { ACTIVE, REVOKED }
 
-    public record Attributes(String principalName, String authorizationRequestUri) {
+    public record AuthorizationRequest(
+            String redirectUri,
+            Set<String> requestedScopes,
+            String rpState,
+            String codeChallenge,
+            String codeChallengeMethod,
+            String nonce) {
+        public AuthorizationRequest {
+            redirectUri = OAuthRefreshToken.requireText(redirectUri, "redirectUri");
+            requestedScopes = Set.copyOf(OAuthConsent.normalizeScopes(requestedScopes));
+            codeChallenge = OAuthRefreshToken.requireText(codeChallenge, "codeChallenge");
+            if (!codeChallenge.matches("[A-Za-z0-9_-]{43}")) {
+                throw new IllegalArgumentException("codeChallenge must be a PKCE S256 challenge.");
+            }
+            if (!"S256".equals(codeChallengeMethod)) {
+                throw new IllegalArgumentException("codeChallengeMethod must be S256.");
+            }
+        }
+    }
+
+    public record Attributes(String principalName, String authorizationRequestUri,
+            AuthorizationRequest authorizationRequest) {
+        public Attributes(String principalName, String authorizationRequestUri) {
+            this(principalName, authorizationRequestUri, null);
+        }
+
         public Attributes {
             principalName = OAuthRefreshToken.requireText(principalName, "principalName");
             authorizationRequestUri = OAuthRefreshToken.requireText(
@@ -61,7 +86,7 @@ public final class OAuthAuthorization {
     private final String authorizationGrantType;
     private final Set<String> authorizedScopes;
     private final Attributes attributes;
-    private final String state;
+    private final String serverStateHash;
     private final Instant authenticatedAt;
     private Status status;
     private String revocationReason;
@@ -74,7 +99,7 @@ public final class OAuthAuthorization {
 
     private OAuthAuthorization(String id, long registeredClientId, UUID subject, long principalAccountId,
             long companyId, String authorizationGrantType, Set<String> authorizedScopes,
-            Attributes attributes, String state, Instant authenticatedAt, Status status,
+            Attributes attributes, String serverStateHash, Instant authenticatedAt, Status status,
             String revocationReason, Instant createdAt, Instant expiresAt, Instant revokedAt,
             OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
             OAuthRefreshToken refreshToken) {
@@ -87,7 +112,10 @@ public final class OAuthAuthorization {
                 authorizationGrantType, "authorizationGrantType");
         this.authorizedScopes = Set.copyOf(OAuthConsent.normalizeScopes(authorizedScopes));
         this.attributes = Objects.requireNonNull(attributes, "attributes");
-        this.state = state;
+        if (serverStateHash != null && !serverStateHash.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("serverStateHash must be a lowercase SHA-256 hash.");
+        }
+        this.serverStateHash = serverStateHash;
         this.authenticatedAt = Objects.requireNonNull(authenticatedAt, "authenticatedAt");
         this.status = Objects.requireNonNull(status, "status");
         this.revocationReason = revocationReason;
@@ -103,23 +131,23 @@ public final class OAuthAuthorization {
     }
 
     public static OAuthAuthorization create(String id, Ownership ownership, String authorizationGrantType,
-            Set<String> authorizedScopes, Attributes attributes, String state, Instant authenticatedAt,
+            Set<String> authorizedScopes, Attributes attributes, String serverStateHash, Instant authenticatedAt,
             Instant createdAt, Instant expiresAt) {
         Objects.requireNonNull(ownership, "ownership");
         return new OAuthAuthorization(id, ownership.registeredClientId(), ownership.subject(),
                 ownership.principalAccountId(), ownership.companyId(),
-                authorizationGrantType, authorizedScopes, attributes, state, authenticatedAt,
+                authorizationGrantType, authorizedScopes, attributes, serverStateHash, authenticatedAt,
                 Status.ACTIVE, null, createdAt, expiresAt, null, null, null, null);
     }
 
     public static OAuthAuthorization restore(String id, long registeredClientId, UUID subject,
             long principalAccountId, long companyId, String authorizationGrantType,
-            Set<String> authorizedScopes, Attributes attributes, String state, Instant authenticatedAt,
+            Set<String> authorizedScopes, Attributes attributes, String serverStateHash, Instant authenticatedAt,
             Status status, String revocationReason, Instant createdAt, Instant expiresAt,
             Instant revokedAt, OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
             OAuthRefreshToken refreshToken) {
         return new OAuthAuthorization(id, registeredClientId, subject, principalAccountId, companyId,
-                authorizationGrantType, authorizedScopes, attributes, state, authenticatedAt, status,
+                authorizationGrantType, authorizedScopes, attributes, serverStateHash, authenticatedAt, status,
                 revocationReason, createdAt, expiresAt, revokedAt,
                 authorizationCode, accessToken, refreshToken);
     }
@@ -168,7 +196,7 @@ public final class OAuthAuthorization {
     public String authorizationGrantType() { return authorizationGrantType; }
     public Set<String> authorizedScopes() { return authorizedScopes; }
     public Attributes attributes() { return attributes; }
-    public String state() { return state; }
+    public String serverStateHash() { return serverStateHash; }
     public Instant authenticatedAt() { return authenticatedAt; }
     public Status status() { return status; }
     public String revocationReason() { return revocationReason; }

@@ -22,6 +22,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+import com.sweet.authstudy.identity.domain.Account;
+import com.sweet.authstudy.identity.domain.AccountRepository;
+import com.sweet.authstudy.identity.domain.AccountRole;
+import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
@@ -59,6 +63,7 @@ class SpringOAuth2AuthorizationServiceTest {
     private static final String CODE = "raw-authorization-code-that-must-never-be-persisted";
     private static final String ACCESS = "raw-access-token-that-must-never-be-persisted";
     private static final String REFRESH = "raw-refresh-token-that-must-never-be-persisted";
+    private static final String CONSENT_STATE = "server-generated-consent-state";
     private static final String CHALLENGE = challenge("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~");
     private static final URI CALLBACK = URI.create("https://rp.example/callback?exact=true");
     private static final UUID SUBJECT = UUID.fromString("efb84d88-1b98-4c80-8ab7-45c86ee4ef51");
@@ -67,6 +72,7 @@ class SpringOAuth2AuthorizationServiceTest {
     @Mock private OAuthConsentRepository consents;
     @Mock private OAuthClientRepository clients;
     @Mock private OAuthSubjectRepository subjects;
+    @Mock private AccountRepository accounts;
 
     private OAuthAuthorizationMapper mapper;
     private SpringOAuth2AuthorizationService service;
@@ -75,7 +81,7 @@ class SpringOAuth2AuthorizationServiceTest {
     @BeforeEach
     void setUp() {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
-        mapper = new OAuthAuthorizationMapper(clients, subjects, properties(), clock);
+        mapper = new OAuthAuthorizationMapper(clients, subjects, accounts, properties(), clock);
         service = new SpringOAuth2AuthorizationService(authorizations, mapper, clock);
         consentService = new SpringOAuth2AuthorizationConsentService(consents, clients, clock);
     }
@@ -96,7 +102,8 @@ class SpringOAuth2AuthorizationServiceTest {
         assertThat(authorization.subject()).isEqualTo(SUBJECT);
         assertThat(authorization.attributes().principalName()).isEqualTo("42");
         assertThat(authorization.authorizedScopes()).containsExactlyInAnyOrder("openid", "profile");
-        assertThat(authorization.state()).isEqualTo("opaque-state");
+        assertThat(authorization.serverStateHash()).isNull();
+        assertThat(authorization.attributes().authorizationRequest().rpState()).isEqualTo("opaque-state");
         assertThat(authorization.authorizationCode()).get().satisfies(code -> {
             assertThat(code.codeHash()).isEqualTo(sha256(CODE));
             assertThat(code.codeHash()).doesNotContain(CODE);
@@ -112,6 +119,60 @@ class SpringOAuth2AuthorizationServiceTest {
         });
         assertThat(authorization.refreshToken()).get().satisfies(token ->
                 assertThat(token.refreshTokenHash()).isEqualTo(sha256(REFRESH)));
+    }
+
+    @Test
+    void pending_consent_authorization_round_trips_the_allowlisted_request_by_hashed_server_state() {
+        stubOwnership(activeClient());
+        when(authorizations.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        org.springframework.security.oauth2.server.authorization.OAuth2Authorization pending =
+                org.springframework.security.oauth2.server.authorization.OAuth2Authorization
+                        .withRegisteredClient(registeredClient())
+                        .id("pending-authorization")
+                        .principalName("42")
+                        .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                        .attribute(OAuth2AuthorizationRequest.class.getName(), authorizationRequest())
+                        .attribute(Principal.class.getName(), UsernamePasswordAuthenticationToken.authenticated(
+                                "42", "N/A", List.of()))
+                        .attribute("state", CONSENT_STATE)
+                        .build();
+
+        service.save(pending);
+
+        ArgumentCaptor<OAuthAuthorization> saved = ArgumentCaptor.forClass(OAuthAuthorization.class);
+        verify(authorizations).save(saved.capture());
+        OAuthAuthorization persisted = saved.getValue();
+        assertThat(persisted.authorizationCode()).isEmpty();
+        assertThat(persisted.serverStateHash()).isEqualTo(sha256(CONSENT_STATE));
+        assertThat(persisted.attributes().authorizationRequest()).satisfies(request -> {
+            assertThat(request.redirectUri()).isEqualTo(CALLBACK.toString());
+            assertThat(request.requestedScopes()).containsExactlyInAnyOrder("openid", "profile");
+            assertThat(request.rpState()).isEqualTo("opaque-state");
+            assertThat(request.codeChallenge()).isEqualTo(CHALLENGE);
+            assertThat(request.codeChallengeMethod()).isEqualTo("S256");
+            assertThat(request.nonce()).isEqualTo("opaque-nonce");
+        });
+
+        when(authorizations.findByServerStateHash(sha256(CONSENT_STATE)))
+                .thenReturn(Optional.of(persisted));
+        when(clients.findById(22L)).thenReturn(Optional.of(activeClient()));
+
+        org.springframework.security.oauth2.server.authorization.OAuth2Authorization found =
+                service.findByToken(CONSENT_STATE, new OAuth2TokenType("state"));
+
+        assertThat(found.<String>getAttribute("state")).isEqualTo(CONSENT_STATE);
+        assertThat(found.getToken(org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class))
+                .isNull();
+        assertThat(found.<OAuth2AuthorizationRequest>getAttribute(OAuth2AuthorizationRequest.class.getName()))
+                .satisfies(request -> {
+                    assertThat(request.getRedirectUri()).isEqualTo(CALLBACK.toString());
+                    assertThat(request.getScopes()).containsExactlyInAnyOrder("openid", "profile");
+                    assertThat(request.getState()).isEqualTo("opaque-state");
+                    assertThat(request.getAdditionalParameters())
+                            .containsEntry("code_challenge", CHALLENGE)
+                            .containsEntry("code_challenge_method", "S256")
+                            .containsEntry("nonce", "opaque-nonce");
+                });
     }
 
     @Test
@@ -175,7 +236,7 @@ class SpringOAuth2AuthorizationServiceTest {
     @Test
     void null_token_type_uses_indexed_lookups_and_rejects_cross_type_hash_ambiguity() {
         OAuthAuthorization persisted = domainAuthorization();
-        when(authorizations.findByState(CODE)).thenReturn(Optional.empty());
+        when(authorizations.findByServerStateHash(sha256(CODE))).thenReturn(Optional.empty());
         when(authorizations.findByCodeHash(sha256(CODE)))
                 .thenReturn(Optional.of(persisted.authorizationCode().orElseThrow()));
         when(authorizations.findByAccessTokenHash(sha256(CODE)))
@@ -186,7 +247,7 @@ class SpringOAuth2AuthorizationServiceTest {
 
         assertThat(service.findByToken(CODE, null)).isNull();
 
-        verify(authorizations).findByState(CODE);
+        verify(authorizations).findByServerStateHash(sha256(CODE));
         verify(authorizations).findByCodeHash(sha256(CODE));
         verify(authorizations).findByAccessTokenHash(sha256(CODE));
         verify(authorizations).findByRefreshTokenHash(sha256(CODE));
@@ -242,6 +303,44 @@ class SpringOAuth2AuthorizationServiceTest {
     }
 
     @Test
+    void save_rejects_cross_company_ownership_from_the_authoritative_account_before_persistence() {
+        when(clients.findById(22L)).thenReturn(Optional.of(activeClient()));
+        when(subjects.findByAccountId(42L)).thenReturn(Optional.of(
+                OAuthSubject.restore(7L, 42L, SUBJECT, NOW.minusSeconds(300))));
+        when(accounts.findById(42L)).thenReturn(Optional.of(account(303L)));
+
+        assertThatThrownBy(() -> service.save(springAuthorization()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("OAuth authorization ownership is invalid.");
+        verify(authorizations, never()).save(any());
+    }
+
+    @Test
+    void save_rejects_access_tokens_without_real_jti_and_audience_claims_instead_of_synthesizing_them() {
+        stubOwnership(activeClient());
+        Instant codeIssued = NOW.minusSeconds(30);
+        OAuth2AccessToken accessToken = new OAuth2AccessToken(
+                OAuth2AccessToken.TokenType.BEARER, ACCESS, NOW, NOW.plusSeconds(300), Set.of("openid"));
+        org.springframework.security.oauth2.server.authorization.OAuth2Authorization missingClaims =
+                org.springframework.security.oauth2.server.authorization.OAuth2Authorization
+                        .withRegisteredClient(registeredClient())
+                        .id("missing-access-claims")
+                        .principalName("42")
+                        .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                        .authorizedScopes(Set.of("openid"))
+                        .attribute(OAuth2AuthorizationRequest.class.getName(), authorizationRequest())
+                        .token(new org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode(
+                                CODE, codeIssued, codeIssued.plusSeconds(60)))
+                        .accessToken(accessToken)
+                        .build();
+
+        assertThatThrownBy(() -> service.save(missingClaims))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Access token claims must contain jti and aud.");
+        verify(authorizations, never()).save(any());
+    }
+
+    @Test
     void consent_save_find_and_remove_use_the_account_and_registered_client_key() {
         OAuth2AuthorizationConsent spring = OAuth2AuthorizationConsent.withId("22", "42")
                 .scope("openid").scope("profile").build();
@@ -267,6 +366,23 @@ class SpringOAuth2AuthorizationServiceTest {
     }
 
     @Test
+    void consent_save_replaces_the_existing_scope_snapshot_instead_of_unioning_it() {
+        OAuthConsent existing = OAuthConsent.restore(
+                9L, 42L, 22L, Set.of("openid", "profile"), NOW.minusSeconds(60), NOW.minusSeconds(30));
+        OAuth2AuthorizationConsent narrowed = OAuth2AuthorizationConsent.withId("22", "42")
+                .scope("openid").build();
+        when(clients.findById(22L)).thenReturn(Optional.of(activeClient()));
+        when(consents.findByAccountIdAndRegisteredClientId(42L, 22L)).thenReturn(Optional.of(existing));
+        when(consents.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        consentService.save(narrowed);
+
+        ArgumentCaptor<OAuthConsent> saved = ArgumentCaptor.forClass(OAuthConsent.class);
+        verify(consents).save(saved.capture());
+        assertThat(saved.getValue().scopes()).containsExactly("openid");
+    }
+
+    @Test
     void disabled_removed_or_malformed_consent_keys_are_invisible() {
         when(clients.findById(22L)).thenReturn(Optional.of(disabledClient()));
 
@@ -288,6 +404,14 @@ class SpringOAuth2AuthorizationServiceTest {
         when(clients.findById(22L)).thenReturn(Optional.of(client));
         when(subjects.findByAccountId(42L)).thenReturn(Optional.of(
                 OAuthSubject.restore(7L, 42L, SUBJECT, NOW.minusSeconds(300))));
+        when(accounts.findById(42L)).thenReturn(Optional.of(account(202L)));
+    }
+
+    private Account account(long companyId) {
+        return Account.restore(
+                42L, companyId, 77L, "member@example.com", "hash", AccountStatus.ACTIVE,
+                false, 0, null, Set.of(AccountRole.USER), 0,
+                NOW.minusSeconds(300), NOW.minusSeconds(60));
     }
 
     private org.springframework.security.oauth2.server.authorization.OAuth2Authorization springAuthorization() {
@@ -318,8 +442,12 @@ class SpringOAuth2AuthorizationServiceTest {
         OAuthAuthorization authorization = OAuthAuthorization.restore(
                 "authorization-1", 22L, SUBJECT, 42L, 202L,
                 AuthorizationGrantType.AUTHORIZATION_CODE.getValue(), Set.of("openid", "profile"),
-                new OAuthAuthorization.Attributes("42", "http://idp.localhost:8080/oauth2/authorize"),
-                "opaque-state", NOW.minusSeconds(120), OAuthAuthorization.Status.ACTIVE, null,
+                new OAuthAuthorization.Attributes(
+                        "42", "http://idp.localhost:8080/oauth2/authorize",
+                        new OAuthAuthorization.AuthorizationRequest(
+                                CALLBACK.toString(), Set.of("openid", "profile"), "opaque-state",
+                                CHALLENGE, "S256", "opaque-nonce")),
+                null, NOW.minusSeconds(120), OAuthAuthorization.Status.ACTIVE, null,
                 NOW.minusSeconds(60), NOW.plus(Duration.ofDays(7)), null, null, null, null);
         authorization.attachAuthorizationCode(OAuthAuthorizationCode.issue(
                 authorization.id(), sha256(CODE), CALLBACK, CHALLENGE, "opaque-nonce",

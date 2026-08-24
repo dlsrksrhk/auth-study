@@ -10,6 +10,7 @@ import java.util.function.Function;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository.LockedCodeExchange;
 import org.springframework.context.annotation.Primary;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
@@ -69,7 +70,7 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
             if (cached != null) return cached.authorization();
         }
         if (STATE_TYPE.equals(value)) {
-            return authorizations.findByState(token)
+            return authorizations.findByServerStateHash(OAuthAuthorizationMapper.sha256(token))
                     .map(authorization -> mapper.toSpring(authorization, token, STATE_TYPE))
                     .orElse(null);
         }
@@ -96,10 +97,15 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     }
 
     public <T> Optional<OAuthAuthorizationRepository.CodeConsumption<T>> consumeAuthorizationCode(
-            String rawCode, Function<OAuthAuthorizationCode, T> exchange) {
+            String rawCode, Function<LockedCodeExchange, T> exchange) {
         Objects.requireNonNull(exchange, "exchange");
         return authorizations.consumeCodeAtomically(
                 OAuthAuthorizationMapper.sha256(rawCode), clock.instant(), exchange);
+    }
+
+    public org.springframework.security.oauth2.server.authorization.OAuth2Authorization reconstructConsumedAuthorization(
+            String rawCode, OAuthAuthorization authorization) {
+        return mapper.toSpring(authorization, rawCode, AUTHORIZATION_CODE_TYPE, true);
     }
 
     public void cacheConsumedAuthorization(String rawCode,
@@ -114,7 +120,8 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
             String token) {
         String hash = OAuthAuthorizationMapper.sha256(token);
         List<Match> matches = new ArrayList<>(4);
-        authorizations.findByState(token).ifPresent(value -> matches.add(new Match(value.id(), STATE_TYPE)));
+        authorizations.findByServerStateHash(hash)
+                .ifPresent(value -> matches.add(new Match(value.id(), STATE_TYPE)));
         authorizations.findByCodeHash(hash).ifPresent(value ->
                 matches.add(new Match(value.authorizationId(), AUTHORIZATION_CODE_TYPE)));
         authorizations.findByAccessTokenHash(hash).ifPresent(value ->

@@ -38,7 +38,7 @@ public final class SpringOAuth2AuthorizationConsentService implements OAuth2Auth
         OAuthConsent consent = consents.findByAccountIdAndRegisteredClientId(accountId, clientId)
                 .orElseGet(() -> OAuthConsent.create(accountId, clientId,
                         authorizationConsent.getScopes(), clock.instant()));
-        if (consent.id() != null) consent.grant(authorizationConsent.getScopes(), clock.instant());
+        if (consent.id() != null) consent.replaceScopes(authorizationConsent.getScopes(), clock.instant());
         consents.save(consent);
     }
 

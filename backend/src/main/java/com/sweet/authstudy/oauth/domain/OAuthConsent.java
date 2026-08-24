@@ -40,6 +40,12 @@ public final class OAuthConsent {
         updatedAt = Objects.requireNonNull(now, "now");
     }
 
+    public void replaceScopes(Set<String> suppliedScopes, Instant now) {
+        scopes.clear();
+        scopes.addAll(normalizeScopes(suppliedScopes));
+        updatedAt = Objects.requireNonNull(now, "now");
+    }
+
     public boolean covers(Set<String> requestedScopes) {
         return scopes.containsAll(normalizeScopes(requestedScopes));
     }
