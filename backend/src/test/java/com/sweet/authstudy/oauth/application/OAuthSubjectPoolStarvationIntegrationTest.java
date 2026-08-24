@@ -6,6 +6,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
@@ -28,6 +29,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest(properties = {
         "spring.datasource.hikari.maximum-pool-size=4",
@@ -48,6 +51,9 @@ class OAuthSubjectPoolStarvationIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Test
     void callers_equal_to_pool_size_converge_without_waiting_for_a_nested_connection() throws Exception {
@@ -76,6 +82,39 @@ class OAuthSubjectPoolStarvationIntegrationTest {
                 accountId)).isEqualTo(1L);
     }
 
+    @Test
+    void ambient_transactions_equal_to_pool_size_use_one_connection_each() throws Exception {
+        long accountId = insertAccount();
+        CyclicBarrier start = new CyclicBarrier(CALLERS);
+        CyclicBarrier ambientConnectionsAcquired = new CyclicBarrier(CALLERS);
+
+        List<OAuthSubject> subjects = new ArrayList<>();
+        try (var executor = Executors.newFixedThreadPool(CALLERS)) {
+            List<Future<OAuthSubject>> futures = new ArrayList<>();
+            for (int index = 0; index < CALLERS; index++) {
+                futures.add(executor.submit(() -> {
+                    start.await(5, TimeUnit.SECONDS);
+                    TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+                    return Objects.requireNonNull(transaction.execute(status -> {
+                        assertThat(jdbc.queryForObject("select 1", Integer.class)).isEqualTo(1);
+                        await(ambientConnectionsAcquired, "ambient transactions");
+                        return subjectService.getOrCreate(accountId);
+                    }));
+                }));
+            }
+            for (Future<OAuthSubject> future : futures) {
+                subjects.add(future.get(5, TimeUnit.SECONDS));
+            }
+        }
+
+        assertThat(subjects).extracting(OAuthSubject::subject)
+                .containsOnly(subjects.getFirst().subject());
+        assertThat(jdbc.queryForObject(
+                "select count(*) from oauth_subject where account_id = ?",
+                Long.class,
+                accountId)).isEqualTo(1L);
+    }
+
     private long insertAccount() {
         String suffix = UUID.randomUUID().toString();
         Timestamp now = Timestamp.from(Instant.parse("2026-08-21T00:00:00Z"));
@@ -84,6 +123,17 @@ class OAuthSubjectPoolStarvationIntegrationTest {
                 values (?, 'hash', 'ACTIVE', false, ?, ?)
                 returning id
                 """, Long.class, "pool-" + suffix + "@example.com", now, now);
+    }
+
+    private static void await(CyclicBarrier barrier, String operation) {
+        try {
+            barrier.await(5, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while coordinating " + operation + ".", exception);
+        } catch (BrokenBarrierException | TimeoutException exception) {
+            throw new IllegalStateException(operation + " did not reach the concurrency barrier.", exception);
+        }
     }
 
     @TestConfiguration(proxyBeanMethods = false)
@@ -116,6 +166,11 @@ class OAuthSubjectPoolStarvationIntegrationTest {
                 awaitFirstLookups();
             }
             return result;
+        }
+
+        @Override
+        public void insertIfAbsent(OAuthSubject subject) {
+            delegate.insertIfAbsent(subject);
         }
 
         @Override

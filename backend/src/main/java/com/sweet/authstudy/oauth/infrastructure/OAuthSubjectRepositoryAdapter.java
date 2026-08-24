@@ -21,6 +21,14 @@ public class OAuthSubjectRepositoryAdapter implements OAuthSubjectRepository {
     }
 
     @Override
+    public void insertIfAbsent(OAuthSubject subject) {
+        if (subject.id() != null) {
+            throw new IllegalArgumentException("Only a new OAuth subject can be inserted if absent.");
+        }
+        repository.insertIfAbsent(subject.accountId(), subject.subject(), subject.createdAt());
+    }
+
+    @Override
     public OAuthSubject save(OAuthSubject subject) {
         if (subject.id() != null) {
             return repository.findById(subject.id())

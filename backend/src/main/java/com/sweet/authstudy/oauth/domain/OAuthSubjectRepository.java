@@ -6,5 +6,7 @@ public interface OAuthSubjectRepository {
 
     Optional<OAuthSubject> findByAccountId(long accountId);
 
+    void insertIfAbsent(OAuthSubject subject);
+
     OAuthSubject save(OAuthSubject subject);
 }
