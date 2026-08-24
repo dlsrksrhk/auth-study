@@ -13,7 +13,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
-import java.util.Locale;
 import java.util.UUID;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
@@ -25,13 +24,13 @@ import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
-import com.sweet.authstudy.identity.domain.AccountRepository.LoginSnapshot;
 import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.identity.domain.RefreshToken;
 import com.sweet.authstudy.identity.domain.RefreshTokenRepository;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
+import org.springframework.context.event.EventListener;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -39,14 +38,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class AuthenticationService {
-    private static final String DUMMY_PASSWORD_HASH =
-            "$2a$12$Fw8G.hdiMekZD1U1oRYN4uD2RtUQY4mSCkZIxgn1Kp7R3Ki/6IiS2";
     private final AccountRepository accountRepository;
     private final CompanyRepository companyRepository;
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
+    private final CredentialAuthenticationService credentialAuthenticationService;
     private final AppSecurityProperties properties;
     private final Clock clock;
     private final TransactionTemplate transactions;
@@ -55,6 +53,7 @@ public class AuthenticationService {
     public AuthenticationService(AccountRepository accountRepository, CompanyRepository companyRepository,
             UserRepository userRepository, RefreshTokenRepository refreshTokenRepository,
             PasswordEncoder passwordEncoder, JwtTokenService jwtTokenService,
+            CredentialAuthenticationService credentialAuthenticationService,
             AppSecurityProperties properties, Clock clock, PlatformTransactionManager transactionManager) {
         this.accountRepository = accountRepository;
         this.companyRepository = companyRepository;
@@ -62,67 +61,22 @@ public class AuthenticationService {
         this.refreshTokenRepository = refreshTokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
+        this.credentialAuthenticationService = credentialAuthenticationService;
         this.properties = properties;
         this.clock = clock;
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
     public LoginResult login(LoginCommand command) {
-        if (command == null || command.email() == null || command.password() == null) {
-            throw unauthenticated();
-        }
-        LoginVerification verification = verifyPasswordOutsideWriteLock(command);
-        if (verification == null) throw unauthenticated();
-        LoginOutcome outcome = transactions.execute(status -> loginInTransaction(verification));
-        if (outcome == null || outcome.result() == null) throw unauthenticated();
-        return outcome.result();
-    }
-
-    private LoginVerification verifyPasswordOutsideWriteLock(LoginCommand command) {
+        CredentialAuthenticationResult credential = credentialAuthenticationService.authenticate(
+                new CredentialAuthenticationService.Command(
+                        command == null ? null : command.email(), command == null ? null : command.password()));
         Instant now = clock.instant();
-        LoginSnapshot snapshot = resolveLoginSnapshot(command.email());
-        if (snapshot == null || snapshot.status() != AccountStatus.ACTIVE) {
-            performDummyPasswordComparison(command.password());
-            return null;
-        }
-        if (snapshot.lockedUntil() != null && snapshot.lockedUntil().isAfter(now)) {
-            performDummyPasswordComparison(command.password());
-            return null;
-        }
-        boolean passwordMatched = passwordEncoder.matches(command.password(), snapshot.passwordHash());
-        return new LoginVerification(snapshot.accountId(), snapshot.passwordHash(), passwordMatched);
-    }
-
-    private LoginOutcome loginInTransaction(LoginVerification verification) {
-        Instant now = clock.instant();
-        Account account = accountRepository.findByIdForUpdate(verification.accountId()).orElse(null);
-        if (account == null || !account.passwordHash().equals(verification.passwordHash())) {
-            return LoginOutcome.failure();
-        }
-        if (account.status() != AccountStatus.ACTIVE
-                || account.lockedUntil() != null && account.lockedUntil().isAfter(now)) {
-            return LoginOutcome.failure();
-        }
-        if (account.lockedUntil() != null) account.clearFailedLogins(now);
-        if (!verification.passwordMatched()) {
-            int nextFailures = account.failedLoginAttempts() + 1;
-            Instant lockedUntil = nextFailures >= properties.loginLock().maxFailures()
-                    ? now.plus(properties.loginLock().lockDuration()) : null;
-            account.recordFailedLogin(lockedUntil, now);
-            accountRepository.save(account);
-            if (lockedUntil != null) refreshTokenRepository.revokeAllByAccountId(account.id(), now);
-            return LoginOutcome.failure();
-        }
-
-        HrUser user = account.userId() == null ? null : userRepository.findById(account.userId()).orElse(null);
-        if (!loginStateAllowed(account, user)) return LoginOutcome.failure();
-        account.clearFailedLogins(now);
-        account = accountRepository.save(account);
-        boolean passwordChangeOnly = account.mustChangePassword();
-        AuthenticatedAccount principal = principal(account, passwordChangeOnly);
-        AuthTokens access = jwtTokenService.issue(principal, passwordChangeOnly);
-        String rawRefresh = passwordChangeOnly ? null : issueRefresh(account.id(), UUID.randomUUID(), now);
-        return LoginOutcome.success(new LoginResult(access, passwordChangeOnly, rawRefresh));
+        AuthenticatedAccount principal = principal(credential);
+        AuthTokens access = jwtTokenService.issue(principal, credential.mustChangePassword());
+        String rawRefresh = credential.mustChangePassword() ? null
+                : issueRefresh(credential.accountId(), UUID.randomUUID(), now);
+        return new LoginResult(access, credential.mustChangePassword(), rawRefresh);
     }
 
     public RefreshResult refresh(String rawToken) {
@@ -201,26 +155,6 @@ public class AuthenticationService {
         });
     }
 
-    private LoginSnapshot resolveLoginSnapshot(String rawEmail) {
-        String email = rawEmail.trim().toLowerCase(Locale.ROOT);
-        LoginSnapshot system = accountRepository.findSystemLoginSnapshot(email).orElse(null);
-        if (system != null) return system;
-        int at = email.lastIndexOf('@');
-        if (at <= 0 || at == email.length() - 1) return null;
-        Company company = companyRepository.findByEmailDomain(email.substring(at + 1)).orElse(null);
-        if (company == null || company.status() != CompanyStatus.ACTIVE) return null;
-        return accountRepository.findCompanyLoginSnapshot(company.id(), email).orElse(null);
-    }
-
-    private boolean loginStateAllowed(Account account, HrUser user) {
-        if (account.companyId() == null) return true;
-        Company company = companyRepository.findById(account.companyId()).orElse(null);
-        if (company == null || company.status() != CompanyStatus.ACTIVE) return false;
-        if (user == null) return false;
-        return account.mustChangePassword() ? user.status() == UserStatus.PENDING || user.status() == UserStatus.ACTIVE
-                : user.status() == UserStatus.ACTIVE;
-    }
-
     private boolean refreshStateAllowed(Account account, Instant now) {
         if (account.status() != AccountStatus.ACTIVE || account.mustChangePassword()) return false;
         if (account.lockedUntil() != null && account.lockedUntil().isAfter(now)) return false;
@@ -234,6 +168,16 @@ public class AuthenticationService {
     private AuthenticatedAccount principal(Account account, boolean passwordChangeOnly) {
         return new AuthenticatedAccount(account.id(), account.companyId(), account.userId(),
                 account.roles(), passwordChangeOnly);
+    }
+
+    private AuthenticatedAccount principal(CredentialAuthenticationResult credential) {
+        return new AuthenticatedAccount(credential.accountId(), credential.companyId(), credential.userId(),
+                credential.roles(), credential.mustChangePassword());
+    }
+
+    @EventListener
+    public void revokeRefreshTokensOnAccountLock(CredentialAuthenticationService.AccountLocked event) {
+        refreshTokenRepository.revokeAllByAccountId(event.accountId(), event.lockedAt());
     }
 
     private String issueRefresh(long accountId, UUID familyId, Instant now) {
@@ -264,21 +208,12 @@ public class AuthenticationService {
         }
     }
 
-    private void performDummyPasswordComparison(String rawPassword) {
-        passwordEncoder.matches(rawPassword, DUMMY_PASSWORD_HASH);
-    }
-
     private ApiException unauthenticated() {
         return new ApiException(ErrorCode.UNAUTHENTICATED, "Authentication failed.");
     }
 
     public record MeResult(long accountId, String email, java.util.Set<com.sweet.authstudy.identity.domain.AccountRole> roles,
             String userCode, String userName, String companyCode) {}
-    private record LoginOutcome(LoginResult result) {
-        static LoginOutcome success(LoginResult result) { return new LoginOutcome(result); }
-        static LoginOutcome failure() { return new LoginOutcome(null); }
-    }
-    private record LoginVerification(long accountId, String passwordHash, boolean passwordMatched) {}
     private record RefreshOutcome(RefreshResult result) {
         static RefreshOutcome success(RefreshResult result) { return new RefreshOutcome(result); }
         static RefreshOutcome failure() { return new RefreshOutcome(null); }
