@@ -177,6 +177,34 @@ class OAuthRefreshAndRevocationIntegrationTest {
     }
 
     @Test
+    void concurrent_http_revocation_and_refresh_rotation_do_not_deadlock_and_leave_no_live_grant()
+            throws Exception {
+        Fixture fixture = fixture();
+        TokenPair initial = issueTokens(fixture);
+        String authorizationId = authorizationId(initial.refreshToken());
+        CyclicBarrier start = new CyclicBarrier(2);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var rotation = executor.submit(() -> concurrentRefresh(fixture, initial.refreshToken(), start));
+            var revocation = executor.submit(() -> concurrentRevoke(fixture, initial.refreshToken(), start));
+            RefreshResponse refresh = rotation.get(15, TimeUnit.SECONDS);
+            int revokeStatus = revocation.get(15, TimeUnit.SECONDS);
+
+            assertThat(revokeStatus).isEqualTo(200);
+            assertThat(refresh.status()).isIn(200, 400);
+            if (refresh.status() == 400) assertThat(refresh.error()).isEqualTo("invalid_grant");
+            if (refresh.refreshToken() != null) refresh(fixture, refresh.refreshToken(), 400);
+        }
+
+        assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
+                .param("id", authorizationId).query(String.class).single()).isEqualTo("REVOKED");
+        assertThat(jdbcClient.sql("""
+                select count(*) from oauth_refresh_token
+                 where authorization_id = :authorizationId and revoked_at is null
+                """).param("authorizationId", authorizationId).query(Long.class).single()).isZero();
+    }
+
+    @Test
     void used_root_reuse_serializes_with_active_successor_rotation_and_revokes_every_generation()
             throws Exception {
         Fixture fixture = fixture();
@@ -520,6 +548,16 @@ class OAuthRefreshAndRevocationIntegrationTest {
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsByteArray());
         return new RefreshResponse(result.getResponse().getStatus(),
                 body.path("refresh_token").asText(null), body.path("error").asText(null));
+    }
+
+    private int concurrentRevoke(Fixture fixture, String refreshToken, CyclicBarrier barrier)
+            throws Exception {
+        barrier.await(10, TimeUnit.SECONDS);
+        return mockMvc.perform(post("/oauth2/revoke")
+                        .with(httpBasic(fixture.clientId(), fixture.rawSecret()))
+                        .param("token", refreshToken)
+                        .param("token_type_hint", "refresh_token"))
+                .andReturn().getResponse().getStatus();
     }
 
     private TokenPair issueTokens(Fixture fixture) throws Exception {

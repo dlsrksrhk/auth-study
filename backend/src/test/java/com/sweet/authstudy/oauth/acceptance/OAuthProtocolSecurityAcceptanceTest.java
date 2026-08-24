@@ -183,6 +183,21 @@ class OAuthProtocolSecurityAcceptanceTest {
     }
 
     @Test
+    void protocol_cors_normalizes_bracketed_ipv6_origins_without_double_brackets() throws Exception {
+        registerClient("https://[::1]:8443/callback", true, true);
+        registerClient("https://[::1]:443/callback", true, true);
+
+        for (String origin : List.of("https://[::1]:8443", "https://[::1]")) {
+            mockMvc.perform(options("/oauth2/token")
+                            .header("Origin", origin)
+                            .header("Access-Control-Request-Method", "POST"))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Access-Control-Allow-Origin", origin))
+                    .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
+        }
+    }
+
+    @Test
     void task_12_protocol_event_boundary_is_present() {
         assertThatCode(() -> Class.forName(
                 "com.sweet.authstudy.oauth.application.OAuthProtocolEventService"))
@@ -512,6 +527,51 @@ class OAuthProtocolSecurityAcceptanceTest {
     }
 
     @Test
+    void token_endpoint_preserves_standard_errors_and_challenges_only_failed_basic_authentication()
+            throws Exception {
+        ProtocolFixture confidential = protocolFixture("rfc-errors-secret-" + UUID.randomUUID());
+        ProtocolFixture publicClient = protocolFixture();
+
+        MvcResult unsupported = mockMvc.perform(post("/oauth2/token")
+                        .with(httpBasic(confidential.clientId(), confidential.rawSecret()))
+                        .param("grant_type", "urn:example:unsupported"))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().doesNotExist("WWW-Authenticate")).andReturn();
+        assertExactError(unsupported, "unsupported_grant_type");
+
+        MvcResult unauthorized = mockMvc.perform(post("/oauth2/token")
+                        .with(httpBasic(confidential.clientId(), confidential.rawSecret()))
+                        .param("grant_type", "client_credentials"))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().doesNotExist("WWW-Authenticate")).andReturn();
+        assertExactError(unauthorized, "unauthorized_client");
+
+        MvcResult publicFailure = mockMvc.perform(post("/oauth2/token")
+                        .with(httpBasic(publicClient.clientId(), "attacker-secret"))
+                        .param("grant_type", "authorization_code")
+                        .param("code", "not-a-code"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", "Basic")).andReturn();
+        assertExactError(publicFailure, "invalid_client");
+
+        MvcResult nonBasicFailure = mockMvc.perform(post("/oauth2/token")
+                        .param("grant_type", "authorization_code")
+                        .param("client_id", "unregistered-public-client")
+                        .param("code", "not-a-code"))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().doesNotExist("WWW-Authenticate")).andReturn();
+        assertExactError(nonBasicFailure, "invalid_client");
+
+        MvcResult basicFailure = mockMvc.perform(post("/oauth2/token")
+                        .with(httpBasic(confidential.clientId(), "wrong-basic-secret"))
+                        .param("grant_type", "authorization_code")
+                        .param("code", "not-a-code"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", "Basic")).andReturn();
+        assertExactError(basicFailure, "invalid_client");
+    }
+
+    @Test
     void authorization_code_replay_returns_the_same_generic_error_and_records_only_safe_classification()
             throws Exception {
         ProtocolFixture fixture = protocolFixture();
@@ -673,7 +733,23 @@ class OAuthProtocolSecurityAcceptanceTest {
                 .containsEntry("account_id", fixture.accountId())
                 .containsEntry("company_id", fixture.companyId());
         assertThat(event.get("authorization_id")).isNotNull();
-        assertThat(event.get("metadata").toString()).doesNotContain(selected.refreshToken());
+        assertThat(event.get("metadata").toString()).contains("CLIENT_SECRET_BASIC")
+                .doesNotContain(selected.refreshToken());
+
+        ProtocolFixture publicFixture = protocolFixture();
+        TokenSet publicTokens = issueTokens(publicFixture);
+        mockMvc.perform(post("/oauth2/revoke")
+                        .param("client_id", publicFixture.clientId())
+                        .param("token", publicTokens.accessToken())
+                        .param("token_type_hint", "access_token"))
+                .andExpect(status().isOk());
+        String publicMetadata = jdbcClient.sql("""
+                select metadata::text from oauth_protocol_event
+                 where client_id = :clientId and event_type = 'AUTHORIZATION_REVOKED'
+                   and outcome = 'SUCCESS'
+                 order by id desc limit 1
+                """).param("clientId", publicFixture.clientId()).query(String.class).single();
+        assertThat(publicMetadata).contains("NONE").doesNotContain(publicTokens.accessToken());
     }
 
     @Test
@@ -912,18 +988,27 @@ class OAuthProtocolSecurityAcceptanceTest {
                 check (event_type <> 'AUTHORIZATION_CODE_EXCHANGED') not valid
                 """).update();
         try {
-            mockMvc.perform(post("/oauth2/token")
+            MvcResult failed = mockMvc.perform(post("/oauth2/token")
                             .with(httpBasic(fixture.clientId(), fixture.rawSecret()))
                             .param("grant_type", "authorization_code")
                             .param("code", code)
                             .param("redirect_uri", fixture.redirectUri())
                             .param("code_verifier", verifier))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isBadRequest()).andReturn();
+            assertThat(objectMapper.readTree(failed.getResponse().getContentAsByteArray()))
+                    .isEqualTo(objectMapper.readTree("{\"error\":\"server_error\"}"));
             assertThat(jdbcClient.sql("select used_at from oauth_authorization_code where code_hash = :hash")
                     .param("hash", sha256(code)).query(Timestamp.class).optional()).isEmpty();
         } finally {
             jdbcClient.sql("alter table oauth_protocol_event drop constraint reject_code_exchange_event").update();
         }
+        mockMvc.perform(post("/oauth2/token")
+                        .with(httpBasic(fixture.clientId(), fixture.rawSecret()))
+                        .param("grant_type", "authorization_code")
+                        .param("code", code)
+                        .param("redirect_uri", fixture.redirectUri())
+                        .param("code_verifier", verifier))
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -970,16 +1055,23 @@ class OAuthProtocolSecurityAcceptanceTest {
         } finally {
             dropConstraint("reject_refresh_event");
         }
+        mockMvc.perform(post("/oauth2/token")
+                        .with(httpBasic(refreshFixture.clientId(), refreshFixture.rawSecret()))
+                        .param("grant_type", "refresh_token")
+                        .param("refresh_token", refreshTokens.refreshToken()))
+                .andExpect(status().isOk());
 
         ProtocolFixture revokeFixture = protocolFixture("atomic-revoke-secret-" + UUID.randomUUID());
         TokenSet revokeTokens = issueTokens(revokeFixture);
         addRejectEventConstraint("reject_revoke_event", "AUTHORIZATION_REVOKED");
         try {
-            mockMvc.perform(post("/oauth2/revoke")
+            MvcResult response = mockMvc.perform(post("/oauth2/revoke")
                             .with(httpBasic(revokeFixture.clientId(), revokeFixture.rawSecret()))
                             .param("token", revokeTokens.refreshToken())
                             .param("token_type_hint", "refresh_token"))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isBadRequest()).andReturn();
+            assertThat(objectMapper.readTree(response.getResponse().getContentAsByteArray()))
+                    .isEqualTo(objectMapper.readTree("{\"error\":\"server_error\"}"));
             assertThat(jdbcClient.sql("""
                     select status from oauth_authorization where principal_account_id = :accountId
                     order by created_at desc limit 1
@@ -988,6 +1080,16 @@ class OAuthProtocolSecurityAcceptanceTest {
         } finally {
             dropConstraint("reject_revoke_event");
         }
+        mockMvc.perform(post("/oauth2/revoke")
+                        .with(httpBasic(revokeFixture.clientId(), revokeFixture.rawSecret()))
+                        .param("token", revokeTokens.refreshToken())
+                        .param("token_type_hint", "refresh_token"))
+                .andExpect(status().isOk());
+        assertThat(jdbcClient.sql("""
+                select status from oauth_authorization where principal_account_id = :accountId
+                order by created_at desc limit 1
+                """).param("accountId", revokeFixture.accountId()).query(String.class).single())
+                .isEqualTo("REVOKED");
     }
 
     @Test
@@ -1282,6 +1384,14 @@ class OAuthProtocolSecurityAcceptanceTest {
     private String sha256(String value) throws Exception {
         return java.util.HexFormat.of().formatHex(
                 MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.US_ASCII)));
+    }
+
+    private void assertExactError(MvcResult result, String error) throws Exception {
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsByteArray());
+        assertThat(body.fieldNames()).toIterable().containsExactly("error");
+        assertThat(body.path("error").asText()).isEqualTo(error);
+        assertThat(result.getResponse().getContentAsString())
+                .doesNotContain("Exception", "stack", "message", "attacker-secret", "wrong-basic-secret");
     }
 
     private ConsentPage beginConsent(ProtocolFixture fixture, MockHttpSession session, String state)

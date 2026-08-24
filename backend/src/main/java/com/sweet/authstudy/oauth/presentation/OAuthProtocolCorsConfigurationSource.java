@@ -82,7 +82,9 @@ public final class OAuthProtocolCorsConfigurationSource implements CorsConfigura
             return java.util.Optional.empty();
         }
         String host = uri.getHost().toLowerCase(Locale.ROOT);
-        if (host.indexOf(':') >= 0) host = "[" + host + "]";
+        if (host.indexOf(':') >= 0 && !(host.startsWith("[") && host.endsWith("]"))) {
+            host = "[" + host + "]";
+        }
         int port = uri.getPort();
         boolean defaultPort = port < 0 || "http".equals(scheme) && port == 80
                 || "https".equals(scheme) && port == 443;

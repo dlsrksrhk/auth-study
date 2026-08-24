@@ -42,11 +42,17 @@ public final class OAuthGrantRevocationAuthenticationProvider implements Authent
         OAuth2ClientAuthenticationToken client = request.getPrincipal()
                 instanceof OAuth2ClientAuthenticationToken candidate ? candidate : null;
         Instant now = clock.instant();
-        if (client != null && client.isAuthenticated() && client.getRegisteredClient() != null) {
-            Optional<String> authorizationId = authorizationId(request.getToken());
-            authorizationId.flatMap(authorizations::findById)
-                    .filter(authorization -> ownedBy(authorization, client))
-                    .ifPresent(authorization -> revoke(authorization, client, now));
+        try {
+            if (client != null && client.isAuthenticated() && client.getRegisteredClient() != null) {
+                Optional<String> authorizationId = authorizationId(request.getToken());
+                authorizationId.flatMap(authorizations::findById)
+                        .filter(authorization -> ownedBy(authorization, client))
+                        .ifPresent(authorization -> revoke(authorization, client, now));
+            }
+        } catch (OAuth2AuthenticationException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.SERVER_ERROR));
         }
         // Unknown, expired and foreign tokens are deliberately indistinguishable per RFC 7009.
         return new OAuth2TokenRevocationAuthenticationToken(

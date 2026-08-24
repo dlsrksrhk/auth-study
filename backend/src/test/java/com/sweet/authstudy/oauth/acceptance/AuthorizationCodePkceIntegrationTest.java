@@ -339,7 +339,7 @@ class AuthorizationCodePkceIntegrationTest {
                          where id = :id
                         """).param("id", fixture.internalClientId()).update());
 
-        assertThat(result).isEqualTo(new ExchangeResult(401, "invalid_client"));
+        assertThat(result).isEqualTo(new ExchangeResult(400, "invalid_client"));
         assertThat(codeUsedAt(issued.authorizationId())).isNotNull();
         assertThat(accessTokenCount(issued.authorizationId())).isZero();
     }

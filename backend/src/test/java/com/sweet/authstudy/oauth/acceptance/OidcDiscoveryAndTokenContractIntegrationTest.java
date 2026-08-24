@@ -225,8 +225,20 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
         String code = authorize(discovery.authorizationPath(), fixture, "missing-key-nonce");
         jdbcClient.sql("delete from oauth_signing_key").update();
         try {
-            assertThatThrownBy(() -> exchange(discovery.tokenPath(), fixture, code))
-                    .hasRootCauseMessage("Exactly one active OAuth signing key is required.");
+            MockHttpServletRequestBuilder request = post(discovery.tokenPath())
+                    .header("Origin", ISSUER)
+                    .param("grant_type", "authorization_code")
+                    .param("code", code)
+                    .param("redirect_uri", CALLBACK.toString())
+                    .param("code_verifier", VERIFIER);
+            if (fixture.rawSecret() == null) request.param("client_id", fixture.clientId());
+            else request.header("Authorization", basic(fixture.clientId(), fixture.rawSecret()));
+            MvcResult result = mockMvc.perform(request).andExpect(status().isBadRequest()).andReturn();
+            JsonNode error = objectMapper.readTree(result.getResponse().getContentAsByteArray());
+            assertThat(error.fieldNames()).toIterable().containsExactly("error");
+            assertThat(error.path("error").asText()).isEqualTo("server_error");
+            assertThat(result.getResponse().getContentAsString())
+                    .doesNotContain("Exactly one active", "signing key", "Exception", "stack");
         } finally {
             signingKeys.bootstrapIfAbsent(() -> generatedKey("restored-http-" + UUID.randomUUID()));
         }

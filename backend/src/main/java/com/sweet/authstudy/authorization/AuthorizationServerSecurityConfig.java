@@ -159,7 +159,7 @@ public class AuthorizationServerSecurityConfig {
                                         properties, clock, oauthClients, protocolEvents));
                             })
                             .errorResponseHandler((request, response, exception) ->
-                                    writeProtocolError(response, protocolErrorCode(exception))))
+                                    writeProtocolError(request, response, protocolErrorCode(exception))))
                     .tokenRevocationEndpoint(endpoint -> endpoint
                             .authenticationProviders(providers -> {
                                 providers.removeIf(org.springframework.security.oauth2.server.authorization.authentication
@@ -168,7 +168,7 @@ public class AuthorizationServerSecurityConfig {
                                         oauthAuthorizations, protocolEvents, clock));
                             })
                             .errorResponseHandler((request, response, exception) ->
-                                    writeProtocolError(response, protocolErrorCode(exception))))
+                                    writeProtocolError(request, response, protocolErrorCode(exception))))
                     .oidc(oidc -> oidc
                             .userInfoEndpoint(userInfo -> userInfo
                                     .authenticationProvider(userInfoProvider)
@@ -229,9 +229,8 @@ public class AuthorizationServerSecurityConfig {
                                                         ? OAuthProtocolEvent.Endpoint.REVOCATION
                                                         : OAuthProtocolEvent.Endpoint.TOKEN,
                                                 "reason", protocolFailureReason(errorCode),
-                                                "http_status", OAuth2ErrorCodes.INVALID_CLIENT.equals(errorCode)
-                                                        ? 401 : 400)));
-                                writeProtocolError(response, errorCode);
+                                                "http_status", protocolErrorStatus(request, errorCode))));
+                                writeProtocolError(request, response, errorCode);
                             })));
             http.oauth2ResourceServer(resourceServer -> resourceServer
                     .authenticationEntryPoint((request, response, exception) -> {
@@ -264,9 +263,7 @@ public class AuthorizationServerSecurityConfig {
                 .cors(cors -> cors.configurationSource(protocolCors))
                 .csrf(csrf -> csrf.ignoringRequestMatchers(request ->
                         "/oauth2/revoke".equals(request.getRequestURI())
-                                && request.getSession(false) == null
-                                && request.getHeader(HttpHeaders.AUTHORIZATION) != null
-                                && request.getHeader(HttpHeaders.AUTHORIZATION).startsWith("Basic ")))
+                                && request.getSession(false) == null))
                 .headers(headers -> headers
                         .frameOptions(frame -> frame.deny())
                         .referrerPolicy(referrer -> referrer.policy(
@@ -303,7 +300,8 @@ public class AuthorizationServerSecurityConfig {
         if (exception instanceof OAuth2AuthenticationException oauth) {
             return switch (oauth.getError().getErrorCode()) {
                 case OAuth2ErrorCodes.INVALID_CLIENT, OAuth2ErrorCodes.INVALID_GRANT,
-                        OAuth2ErrorCodes.INVALID_SCOPE, OAuth2ErrorCodes.INVALID_REQUEST ->
+                        OAuth2ErrorCodes.INVALID_SCOPE, OAuth2ErrorCodes.INVALID_REQUEST,
+                        OAuth2ErrorCodes.UNSUPPORTED_GRANT_TYPE, OAuth2ErrorCodes.UNAUTHORIZED_CLIENT ->
                         oauth.getError().getErrorCode();
                 default -> OAuth2ErrorCodes.SERVER_ERROR;
             };
@@ -321,14 +319,24 @@ public class AuthorizationServerSecurityConfig {
         };
     }
 
-    private static void writeProtocolError(HttpServletResponse response, String errorCode) throws IOException {
-        response.setStatus(OAuth2ErrorCodes.INVALID_CLIENT.equals(errorCode)
-                ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_BAD_REQUEST);
-        if (OAuth2ErrorCodes.INVALID_CLIENT.equals(errorCode)) {
+    private static void writeProtocolError(HttpServletRequest request,
+            HttpServletResponse response, String errorCode) throws IOException {
+        boolean challengedInvalidClient = protocolErrorStatus(request, errorCode)
+                == HttpServletResponse.SC_UNAUTHORIZED;
+        response.setStatus(protocolErrorStatus(request, errorCode));
+        if (challengedInvalidClient) {
             response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Basic");
         }
         new OAuth2ErrorHttpMessageConverter().write(new OAuth2Error(errorCode),
                 MediaType.APPLICATION_JSON, new ServletServerHttpResponse(response));
+    }
+
+    private static int protocolErrorStatus(HttpServletRequest request, String errorCode) {
+        String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
+        boolean basicAuthentication = authorization != null
+                && authorization.regionMatches(true, 0, "Basic ", 0, 6);
+        return OAuth2ErrorCodes.INVALID_CLIENT.equals(errorCode) && basicAuthentication
+                ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_BAD_REQUEST;
     }
 
     @Bean
@@ -459,9 +467,10 @@ public class AuthorizationServerSecurityConfig {
             }
             try {
                 chain.doFilter(request, response);
-            } catch (org.springframework.security.authentication.InternalAuthenticationServiceException exception) {
-                if (!response.isCommitted() && "/oauth2/token".equals(request.getRequestURI())) {
-                    writeProtocolError(response, OAuth2ErrorCodes.SERVER_ERROR);
+            } catch (RuntimeException exception) {
+                if (!response.isCommitted() && ("/oauth2/token".equals(request.getRequestURI())
+                        || "/oauth2/revoke".equals(request.getRequestURI()))) {
+                    writeProtocolError(request, response, OAuth2ErrorCodes.SERVER_ERROR);
                     return;
                 }
                 throw exception;

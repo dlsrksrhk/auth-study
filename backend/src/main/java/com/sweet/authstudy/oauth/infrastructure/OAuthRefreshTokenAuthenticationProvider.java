@@ -82,8 +82,12 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
         RegisteredClient registeredClient = clientPrincipal.getRegisteredClient();
         Instant exchangedAt = clock.instant();
         String refreshHash = OAuthAuthorizationMapper.sha256(grant.getRefreshToken());
-        EventSnapshot eventSnapshot = eventSnapshot(refreshHash);
-
+        final EventSnapshot eventSnapshot;
+        try {
+            eventSnapshot = eventSnapshot(refreshHash);
+        } catch (RuntimeException exception) {
+            throw serverError("The refresh token exchange could not be completed.");
+        }
         OAuthAuthorizationRepository.RefreshRotation<GeneratedResponse> rotation;
         try {
             rotation = authorizations.rotateRefreshAtomically(

@@ -15,6 +15,8 @@ import java.util.Base64;
 import java.util.Optional;
 import java.util.Set;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
@@ -51,6 +53,9 @@ class OAuthClientAuthenticationIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @MockitoBean
     private OAuthClientRepository clients;
@@ -100,6 +105,24 @@ class OAuthClientAuthenticationIntegrationTest {
                         .param("code_verifier", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("invalid_client"));
+    }
+
+    @Test
+    void unknown_authentication_infrastructure_failure_is_stable_server_error_without_oracle() throws Exception {
+        when(clients.findByClientId("fault-client"))
+                .thenThrow(new IllegalStateException("database-timeout internal-secret stack"));
+
+        var result = mockMvc.perform(post("/oauth2/token")
+                        .header("Authorization", basic("fault-client", "presented-secret"))
+                        .param("grant_type", "authorization_code")
+                        .param("code", "not-a-real-code"))
+                .andExpect(status().isBadRequest()).andReturn();
+
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsByteArray());
+        assertThat(body.fieldNames()).toIterable().containsExactly("error");
+        assertThat(body.path("error").asText()).isEqualTo("server_error");
+        assertThat(result.getResponse().getContentAsString())
+                .doesNotContain("database-timeout", "internal-secret", "stack", "presented-secret");
     }
 
     @Test

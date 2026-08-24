@@ -43,6 +43,8 @@ import org.springframework.util.StringUtils;
 public final class AtomicAuthorizationCodeClientAuthenticationProvider implements AuthenticationProvider {
 
     private static final String S256 = "S256";
+    private static final String PUBLIC_REVOCATION =
+            AtomicAuthorizationCodeClientAuthenticationProvider.class.getName() + ".publicRevocation";
 
     private final RegisteredClientRepository registeredClients;
     private final SpringOAuth2AuthorizationService authorizations;
@@ -79,22 +81,39 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
         OAuth2ClientAuthenticationToken clientAuthentication =
                 (OAuth2ClientAuthenticationToken) authentication;
         Map<String, Object> parameters = clientAuthentication.getAdditionalParameters();
+        if (Boolean.TRUE.equals(parameters.get(PUBLIC_REVOCATION))) {
+            return authenticatePublicRevocation(clientAuthentication);
+        }
         if (!"authorization_code".equals(parameters.get(OAuth2ParameterNames.GRANT_TYPE))) {
             return null;
         }
 
         String clientId = clientAuthentication.getPrincipal().toString();
-        RegisteredClient client = registeredClients.findByClientId(clientId);
+        RegisteredClient client;
+        try {
+            client = registeredClients.findByClientId(clientId);
+        } catch (RuntimeException exception) {
+            throw serverError();
+        }
         if (client == null
                 || !client.getClientAuthenticationMethods().contains(
                         clientAuthentication.getClientAuthenticationMethod())) {
+            throwInvalidClient("authentication_method");
+        }
+        if (ClientAuthenticationMethod.NONE.equals(clientAuthentication.getClientAuthenticationMethod())
+                && StringUtils.hasText(text(parameters.get(OAuth2ParameterNames.CLIENT_SECRET)))) {
             throwInvalidClient("authentication_method");
         }
         authenticateSecret(clientAuthentication, client);
 
         String rawCode = text(parameters.get(OAuth2ParameterNames.CODE));
         if (!StringUtils.hasText(rawCode)) throwInvalidGrant("code");
-        EventSnapshot eventSnapshot = eventSnapshot(rawCode, clientId);
+        EventSnapshot eventSnapshot;
+        try {
+            eventSnapshot = eventSnapshot(rawCode, clientId);
+        } catch (RuntimeException exception) {
+            throw serverError();
+        }
 
         String redirectUri = text(parameters.get(OAuth2ParameterNames.REDIRECT_URI));
         String verifier = text(parameters.get("code_verifier"));
@@ -138,9 +157,10 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                 }
                 return validation;
             });
+        } catch (OAuth2AuthenticationException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
-            throw new InternalAuthenticationServiceException(
-                    "The authorization code exchange could not be completed.");
+            throw serverError();
         }
         var consumption = consumed.orElse(null);
         if (consumption == null
@@ -167,6 +187,21 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
     @Override
     public boolean supports(Class<?> authentication) {
         return OAuth2ClientAuthenticationToken.class.isAssignableFrom(authentication);
+    }
+
+    private Authentication authenticatePublicRevocation(
+            OAuth2ClientAuthenticationToken authentication) {
+        RegisteredClient client;
+        try {
+            client = registeredClients.findByClientId(authentication.getPrincipal().toString());
+        } catch (RuntimeException exception) {
+            throw serverError();
+        }
+        if (client == null || !client.getClientAuthenticationMethods()
+                .contains(ClientAuthenticationMethod.NONE)) {
+            throwInvalidClient("authentication_method");
+        }
+        return new OAuth2ClientAuthenticationToken(client, ClientAuthenticationMethod.NONE, null);
     }
 
     private void authenticateSecret(OAuth2ClientAuthenticationToken authentication,
@@ -231,6 +266,11 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
                 OAuth2ErrorCodes.INVALID_GRANT, "Invalid grant: " + parameter, null));
     }
 
+    private InternalAuthenticationServiceException serverError() {
+        return new InternalAuthenticationServiceException(
+                "The authorization code exchange could not be completed.");
+    }
+
     private EventSnapshot eventSnapshot(String rawCode, String clientId) {
         if (domainAuthorizations == null || protocolEvents == null) return EventSnapshot.empty();
         return domainAuthorizations.findByCodeHash(OAuthAuthorizationMapper.sha256(rawCode))
@@ -277,6 +317,14 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
     public static final class Converter implements AuthenticationConverter {
         @Override
         public Authentication convert(HttpServletRequest request) {
+            if ("/oauth2/revoke".equals(request.getRequestURI())
+                    && request.getHeader("Authorization") == null) {
+                String clientId = single(request, OAuth2ParameterNames.CLIENT_ID, true);
+                if (clientId == null) return null;
+                return new OAuth2ClientAuthenticationToken(
+                        clientId, ClientAuthenticationMethod.NONE, null,
+                        Map.of(PUBLIC_REVOCATION, true));
+            }
             if (!"authorization_code".equals(request.getParameter(OAuth2ParameterNames.GRANT_TYPE))
                     || request.getHeader("Authorization") != null) {
                 return null;
