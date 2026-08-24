@@ -14,7 +14,7 @@ class OAuthAuthorizationAttributesConverter
         implements AttributeConverter<OAuthAuthorization.Attributes, String> {
 
     private static final Set<String> ALLOWED_FIELDS = Set.of(
-            "principalName", "authorizationRequestUri", "authorizationRequest");
+            "principalName", "authorizationRequestUri", "authorizationRequest", "sessionBinding");
     private static final Set<String> ALLOWED_REQUEST_FIELDS = Set.of(
             "redirectUri", "requestedScopes", "rpState", "codeChallenge",
             "codeChallengeMethod", "nonce");
@@ -43,6 +43,11 @@ class OAuthAuthorizationAttributesConverter
             });
             requireText(root, "principalName");
             requireText(root, "authorizationRequestUri");
+            requireNullableText(root, "sessionBinding");
+            JsonNode sessionBinding = root.get("sessionBinding");
+            if (sessionBinding != null && !sessionBinding.isNull()) {
+                java.util.UUID.fromString(sessionBinding.textValue());
+            }
             JsonNode request = root.get("authorizationRequest");
             if (request != null && !request.isNull()) {
                 if (!request.isObject()) {

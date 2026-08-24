@@ -82,7 +82,7 @@ class OAuthSigningKeyPersistenceIntegrationTest {
 
         assertThatThrownBy(() -> jdbcClient.sql("""
                 insert into oauth_protocol_event(occurred_at, correlation_id, event_type, outcome, metadata)
-                values (:now, 'correlation', 'TOKEN_ISSUED', 'SUCCESS', 'null'::jsonb)
+                values (:now, 'correlation', 'LOGIN_SUCCEEDED', 'SUCCESS', 'null'::jsonb)
                 """).param("now", Timestamp.from(Instant.now())).update())
                 .isInstanceOf(DataIntegrityViolationException.class);
     }

@@ -31,9 +31,14 @@ public final class OAuthAuthorization {
     }
 
     public record Attributes(String principalName, String authorizationRequestUri,
-            AuthorizationRequest authorizationRequest) {
+            AuthorizationRequest authorizationRequest, UUID sessionBinding) {
         public Attributes(String principalName, String authorizationRequestUri) {
-            this(principalName, authorizationRequestUri, null);
+            this(principalName, authorizationRequestUri, null, null);
+        }
+
+        public Attributes(String principalName, String authorizationRequestUri,
+                AuthorizationRequest authorizationRequest) {
+            this(principalName, authorizationRequestUri, authorizationRequest, null);
         }
 
         public Attributes {

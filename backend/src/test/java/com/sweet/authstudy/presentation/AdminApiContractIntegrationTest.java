@@ -1,6 +1,7 @@
 package com.sweet.authstudy.presentation;
 
 import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.http.HttpHeaders.AUTHORIZATION;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -295,7 +296,7 @@ class AdminApiContractIntegrationTest {
     }
 
     @Test
-    void validation_problem_has_stable_type_title_and_reuses_trace_id() throws Exception {
+    void validation_problem_has_stable_type_title_and_server_owned_trace_id() throws Exception {
         mvc.perform(post("/api/v1/admin/companies")
                         .header(AUTHORIZATION, "Bearer " + systemToken)
                         .header("X-Trace-Id", "trace-validation-1")
@@ -305,7 +306,8 @@ class AdminApiContractIntegrationTest {
                 .andExpect(jsonPath("$.type").value("https://auth-study.local/problems/validation-failed"))
                 .andExpect(jsonPath("$.title").value("Validation failed"))
                 .andExpect(jsonPath("$.status").value(400))
-                .andExpect(jsonPath("$.traceId").value("trace-validation-1"));
+                .andExpect(jsonPath("$.traceId").value(matchesPattern(
+                        "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")));
     }
 
     @Test

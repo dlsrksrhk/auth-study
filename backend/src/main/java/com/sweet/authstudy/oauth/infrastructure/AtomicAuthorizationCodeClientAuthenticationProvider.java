@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
@@ -19,6 +20,7 @@ import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.InternalAuthenticationServiceException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
@@ -96,35 +98,51 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
 
         String redirectUri = text(parameters.get(OAuth2ParameterNames.REDIRECT_URI));
         String verifier = text(parameters.get("code_verifier"));
-        var consumption = authorizations.consumeAuthorizationCode(rawCode, locked -> {
-            OAuthAuthorization authorization = locked.authorization();
-            OAuthClient currentClient = locked.client();
-            OAuthAuthorization.AuthorizationRequest request =
-                    authorization.attributes().authorizationRequest();
-            Instant now = clock.instant();
-            boolean clientMatches = currentClient.status() == OAuthClientStatus.ACTIVE
-                    && currentClient.id().toString().equals(client.getId())
-                    && currentClient.clientId().equals(client.getClientId())
-                    && authorization.registeredClientId() == currentClient.id()
-                    && authorization.companyId() == currentClient.companyId()
-                    && authorization.activeAt(now)
-                    && locked.principalActive()
-                    && currentAuthenticationSnapshotMatches(clientAuthentication, client, currentClient, now);
-            boolean requestMatches = request != null
-                    && currentClient.allowsRedirect(URI.create(request.redirectUri()));
-            boolean redirectMatches = requestMatches
-                    && locked.code().redirectUri().toString().equals(redirectUri)
-                    && locked.code().redirectUri().toString().equals(request.redirectUri());
-            boolean verifierMatches = requestMatches
-                    && locked.code().codeChallenge().equals(request.codeChallenge())
-                    && validS256(verifier, locked.code().codeChallenge())
-                    && S256.equals(request.codeChallengeMethod());
-            boolean valid = clientMatches && redirectMatches && verifierMatches;
-            return new ExchangeValidation(
-                    valid, authorization, currentClient.publicClient() ? null : client.getClientSecret(),
-                    valid ? OAuthAuthorizationCodeExchangeBinding.captureLocked(
-                            locked.code(), authorization, currentClient) : null);
-        }).orElse(null);
+        Optional<OAuthAuthorizationRepository.CodeConsumption<ExchangeValidation>> consumed;
+        try {
+            consumed = authorizations.consumeAuthorizationCode(rawCode, locked -> {
+                OAuthAuthorization authorization = locked.authorization();
+                OAuthClient currentClient = locked.client();
+                OAuthAuthorization.AuthorizationRequest request =
+                        authorization.attributes().authorizationRequest();
+                Instant now = clock.instant();
+                boolean clientMatches = currentClient.status() == OAuthClientStatus.ACTIVE
+                        && currentClient.id().toString().equals(client.getId())
+                        && currentClient.clientId().equals(client.getClientId())
+                        && authorization.registeredClientId() == currentClient.id()
+                        && authorization.companyId() == currentClient.companyId()
+                        && authorization.activeAt(now)
+                        && locked.principalActive()
+                        && currentAuthenticationSnapshotMatches(clientAuthentication, client, currentClient, now);
+                boolean requestMatches = request != null
+                        && currentClient.allowsRedirect(URI.create(request.redirectUri()));
+                boolean redirectMatches = requestMatches
+                        && locked.code().redirectUri().toString().equals(redirectUri)
+                        && locked.code().redirectUri().toString().equals(request.redirectUri());
+                boolean verifierMatches = requestMatches
+                        && locked.code().codeChallenge().equals(request.codeChallenge())
+                        && validS256(verifier, locked.code().codeChallenge())
+                        && S256.equals(request.codeChallengeMethod());
+                boolean valid = clientMatches && redirectMatches && verifierMatches;
+                ExchangeValidation validation = new ExchangeValidation(
+                        valid, authorization, currentClient.publicClient() ? null : client.getClientSecret(),
+                        valid ? OAuthAuthorizationCodeExchangeBinding.captureLocked(
+                                locked.code(), authorization, currentClient) : null);
+                if (valid && protocolEvents != null) {
+                    protocolEvents.successRequired(OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_EXCHANGED,
+                            new OAuthProtocolEventService.Context(currentClient.clientId(), authorization.subject(),
+                                    authorization.principalAccountId(), authorization.companyId(), authorization.id()),
+                            OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                                    "endpoint", "TOKEN", "grant_type", "AUTHORIZATION_CODE",
+                                    "scopes", authorization.authorizedScopes())));
+                }
+                return validation;
+            });
+        } catch (RuntimeException exception) {
+            throw new InternalAuthenticationServiceException(
+                    "The authorization code exchange could not be completed.");
+        }
+        var consumption = consumed.orElse(null);
         if (consumption == null
                 || consumption.consumption()
                         != com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode.Consumption.CONSUMED
@@ -240,7 +258,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
             protocolEvents.failure(OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_REPLAY_REJECTED,
                     snapshot.context(), "invalid_grant", metadata);
         } else {
-            protocolEvents.failure(OAuthProtocolEvent.EventType.TOKEN_ISSUED,
+            protocolEvents.failure(OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_EXCHANGED,
                     snapshot.context(), "invalid_grant", metadata);
         }
     }

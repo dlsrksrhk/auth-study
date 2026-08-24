@@ -6,9 +6,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.OAuthPublicClientRedirectRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -17,12 +15,14 @@ import org.springframework.web.cors.CorsConfigurationSource;
 
 public final class OAuthProtocolCorsConfigurationSource implements CorsConfigurationSource {
 
-    private final OAuthClientRepository clients;
+    private final OAuthPublicClientRedirectRepository redirects;
     private final String issuerOrigin;
 
-    public OAuthProtocolCorsConfigurationSource(OAuthClientRepository clients, URI issuer) {
-        this.clients = clients;
-        this.issuerOrigin = origin(issuer);
+    public OAuthProtocolCorsConfigurationSource(
+            OAuthPublicClientRedirectRepository redirects, URI issuer) {
+        this.redirects = redirects;
+        this.issuerOrigin = origin(issuer)
+                .orElseThrow(() -> new IllegalArgumentException("Issuer must have a valid HTTP origin."));
     }
 
     @Override
@@ -50,11 +50,9 @@ public final class OAuthProtocolCorsConfigurationSource implements CorsConfigura
 
     private Set<String> activePublicOrigins() {
         Set<String> origins = new LinkedHashSet<>();
-        clients.findAll().stream()
-                .filter(OAuthClient::publicClient)
-                .filter(client -> client.status() == OAuthClientStatus.ACTIVE)
-                .flatMap(client -> client.redirectUris().stream())
+        redirects.findActivePublicAuthorizationRedirectUris().stream()
                 .map(OAuthProtocolCorsConfigurationSource::origin)
+                .flatMap(java.util.Optional::stream)
                 .forEach(origins::add);
         return origins;
     }
@@ -65,12 +63,29 @@ public final class OAuthProtocolCorsConfigurationSource implements CorsConfigura
                 || path.equals("/oauth2/token");
     }
 
-    private static String origin(URI uri) {
+    private static java.util.Optional<String> origin(String value) {
+        try {
+            return origin(URI.create(value));
+        } catch (IllegalArgumentException exception) {
+            return java.util.Optional.empty();
+        }
+    }
+
+    private static java.util.Optional<String> origin(URI uri) {
+        if (!uri.isAbsolute() || uri.isOpaque() || uri.getUserInfo() != null
+                || uri.getFragment() != null || uri.getHost() == null || uri.getHost().isBlank()
+                || uri.getPort() == 0 || uri.getPort() > 65535) {
+            return java.util.Optional.empty();
+        }
         String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
+        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+            return java.util.Optional.empty();
+        }
         String host = uri.getHost().toLowerCase(Locale.ROOT);
+        if (host.indexOf(':') >= 0) host = "[" + host + "]";
         int port = uri.getPort();
         boolean defaultPort = port < 0 || "http".equals(scheme) && port == 80
                 || "https".equals(scheme) && port == 443;
-        return scheme + "://" + host + (defaultPort ? "" : ":" + port);
+        return java.util.Optional.of(scheme + "://" + host + (defaultPort ? "" : ":" + port));
     }
 }

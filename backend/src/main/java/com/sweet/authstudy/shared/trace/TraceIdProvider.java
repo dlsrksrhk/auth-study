@@ -5,7 +5,6 @@ import java.util.UUID;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -16,8 +15,9 @@ public class TraceIdProvider {
     public static final String MDC_KEY = "traceId";
 
     public String initialize(HttpServletRequest request) {
-        String incoming = request.getHeader(HEADER);
-        String traceId = StringUtils.hasText(incoming) ? incoming : UUID.randomUUID().toString();
+        // Correlation identifiers are server-owned. An untrusted header may contain a credential
+        // or response-splitting data, so it is never copied into MDC, logs, or persistence.
+        String traceId = UUID.randomUUID().toString();
         request.setAttribute(ATTRIBUTE, traceId);
         MDC.put(MDC_KEY, traceId);
         return traceId;
@@ -26,10 +26,10 @@ public class TraceIdProvider {
     public String current() {
         if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
             Object traceId = attributes.getRequest().getAttribute(ATTRIBUTE);
-            if (traceId instanceof String value && StringUtils.hasText(value)) return value;
+            if (traceId instanceof String value && !value.isBlank()) return value;
         }
         String traceId = MDC.get(MDC_KEY);
-        return StringUtils.hasText(traceId) ? traceId : UUID.randomUUID().toString();
+        return traceId != null && !traceId.isBlank() ? traceId : UUID.randomUUID().toString();
     }
 
     public void clear(HttpServletRequest request) {

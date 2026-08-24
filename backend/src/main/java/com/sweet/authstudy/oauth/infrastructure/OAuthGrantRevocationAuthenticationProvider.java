@@ -15,6 +15,9 @@ import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationToken;
 
@@ -68,14 +71,31 @@ public final class OAuthGrantRevocationAuthenticationProvider implements Authent
     }
 
     private void revoke(OAuthAuthorization authorization, OAuth2ClientAuthenticationToken client, Instant now) {
-        authorizations.revokeAuthorization(authorization.id(), now);
-        events.success(OAuthProtocolEvent.EventType.TOKEN_REVOKED,
-                new OAuthProtocolEventService.Context(client.getRegisteredClient().getClientId(),
-                        authorization.subject(), authorization.principalAccountId(),
-                        authorization.companyId(), authorization.id()),
-                OAuthProtocolEvent.Metadata.from(java.util.Map.of(
-                        "endpoint", OAuthProtocolEvent.Endpoint.REVOCATION,
-                        "authentication_method", OAuthProtocolEvent.AuthenticationMethod.CLIENT_SECRET_BASIC)));
+        try {
+            authorizations.revokeAuthorization(authorization.id(), now, () ->
+                    events.successRequired(OAuthProtocolEvent.EventType.AUTHORIZATION_REVOKED,
+                        new OAuthProtocolEventService.Context(client.getRegisteredClient().getClientId(),
+                                authorization.subject(), authorization.principalAccountId(),
+                                authorization.companyId(), authorization.id()),
+                        OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                                "endpoint", OAuthProtocolEvent.Endpoint.REVOCATION,
+                                "authentication_method", authenticationMethod(client)))));
+        } catch (OAuthProtocolEventService.RequiredEventPersistenceException exception) {
+            throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.SERVER_ERROR));
+        }
+    }
+
+    private OAuthProtocolEvent.AuthenticationMethod authenticationMethod(
+            OAuth2ClientAuthenticationToken client) {
+        if (org.springframework.security.oauth2.core.ClientAuthenticationMethod.NONE.equals(
+                client.getClientAuthenticationMethod())) {
+            return OAuthProtocolEvent.AuthenticationMethod.NONE;
+        }
+        if (org.springframework.security.oauth2.core.ClientAuthenticationMethod.CLIENT_SECRET_POST.equals(
+                client.getClientAuthenticationMethod())) {
+            return OAuthProtocolEvent.AuthenticationMethod.CLIENT_SECRET_POST;
+        }
+        return OAuthProtocolEvent.AuthenticationMethod.CLIENT_SECRET_BASIC;
     }
 
     private static String sha256(String value) {

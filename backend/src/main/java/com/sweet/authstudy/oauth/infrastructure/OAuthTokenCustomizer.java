@@ -62,6 +62,9 @@ public class OAuthTokenCustomizer implements OAuth2TokenCustomizer<JwtEncodingCo
         claims.put("exp", issuedAt.plus(properties.idTokenTtl()));
         claims.put("iat", issuedAt);
         claims.put("auth_time", java.util.Date.from(authorization.authenticatedAt()));
+        if (authorization.attributes().sessionBinding() != null) {
+            claims.put("sid", authorization.attributes().sessionBinding().toString());
+        }
         String nonce = authorization.attributes().authorizationRequest() == null
                 ? null : authorization.attributes().authorizationRequest().nonce();
         if (nonce != null) claims.put("nonce", nonce);

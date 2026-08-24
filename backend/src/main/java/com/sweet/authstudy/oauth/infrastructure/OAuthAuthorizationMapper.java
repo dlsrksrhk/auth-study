@@ -91,7 +91,7 @@ public final class OAuthAuthorizationMapper {
                 requiredAuthorizationRequest(source);
         validateRequest(client, request);
         com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes attributes =
-                authorizationAttributes(source.getPrincipalName(), request);
+                authorizationAttributes(source, request, existing);
         String serverStateHash = serverStateHash(source);
 
         Instant createdAt = existing == null ? earliestIssuedAt(source) : existing.createdAt();
@@ -443,14 +443,24 @@ public final class OAuthAuthorizationMapper {
     }
 
     private com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes authorizationAttributes(
-            String principalName, OAuth2AuthorizationRequest request) {
+            OAuth2Authorization source, OAuth2AuthorizationRequest request,
+            com.sweet.authstudy.oauth.domain.OAuthAuthorization existing) {
+        java.util.UUID sessionBinding = existing == null ? sessionBinding(source)
+                : existing.attributes().sessionBinding();
         return new com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes(
-                principalName, request.getAuthorizationUri(),
+                source.getPrincipalName(), request.getAuthorizationUri(),
                 new com.sweet.authstudy.oauth.domain.OAuthAuthorization.AuthorizationRequest(
                         request.getRedirectUri(), request.getScopes(), request.getState(),
                         request.getAdditionalParameters().get(CODE_CHALLENGE).toString(),
                         request.getAdditionalParameters().get(CODE_CHALLENGE_METHOD).toString(),
-                        nullableString(request.getAdditionalParameters().get(NONCE))));
+                        nullableString(request.getAdditionalParameters().get(NONCE))),
+                sessionBinding);
+    }
+
+    private java.util.UUID sessionBinding(OAuth2Authorization source) {
+        Object principal = source.getAttribute(Principal.class.getName());
+        return principal instanceof IdpSessionAuthentication idp
+                ? idp.sessionBinding() : null;
     }
 
     private String serverStateHash(OAuth2Authorization authorization) {

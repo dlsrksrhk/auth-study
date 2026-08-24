@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.Consumer;
 
 public interface OAuthAuthorizationRepository {
     enum RefreshRotationStatus { ROTATED, REUSED, INVALID }
@@ -137,9 +138,15 @@ public interface OAuthAuthorizationRepository {
      * Reuse is returned as a value so family revocation commits before the protocol layer emits
      * {@code invalid_grant}.
      */
+    default <T> RefreshRotation<T> rotateRefreshAtomically(
+            String refreshTokenHash, Instant exchangedAt,
+            Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange) {
+        return rotateRefreshAtomically(refreshTokenHash, exchangedAt, exchange, ignored -> { });
+    }
     <T> RefreshRotation<T> rotateRefreshAtomically(
             String refreshTokenHash, Instant exchangedAt,
-            Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange);
+            Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange,
+            Consumer<RefreshSuccess<T>> afterPersistence);
     Optional<OAuthAccessToken> findByAccessTokenHash(String accessTokenHash);
     Optional<OAuthRefreshToken> findByRefreshTokenHash(String refreshTokenHash);
     Optional<OAuthRefreshToken> findRefreshByHashForUpdate(String refreshTokenHash);
@@ -148,7 +155,10 @@ public interface OAuthAuthorizationRepository {
     OAuthRefreshToken saveRefreshToken(OAuthRefreshToken token);
     void remove(String authorizationId);
     /** Revokes one RP grant, including every access token and refresh generation it owns. */
-    void revokeAuthorization(String authorizationId, Instant revokedAt);
+    default void revokeAuthorization(String authorizationId, Instant revokedAt) {
+        revokeAuthorization(authorizationId, revokedAt, () -> { });
+    }
+    void revokeAuthorization(String authorizationId, Instant revokedAt, Runnable afterRevocation);
     void revokeFamily(UUID familyId, Instant revokedAt);
     void lockByAccountId(long accountId);
     void lockByCompanyId(long companyId);

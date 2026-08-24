@@ -30,13 +30,14 @@ import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequ
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 
 @Service
 @Primary
-public final class SpringOAuth2AuthorizationService implements OAuth2AuthorizationService {
+public class SpringOAuth2AuthorizationService implements OAuth2AuthorizationService {
 
     static final String AUTHORIZATION_CODE_TYPE = "code";
     static final String STATE_TYPE = "state";
@@ -72,6 +73,7 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
     }
 
     @Override
+    @Transactional
     public void save(org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization) {
         Assert.notNull(authorization, "authorization cannot be null");
         CachedAuthorization consumed = cachedAuthorization();
@@ -89,7 +91,6 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
                         != OAuthAuthorizationRepository.CodeFinalizationResult.FINALIZED) {
                     throwInvalidGrant();
                 }
-                recordCodeExchange(consumed.binding());
                 return;
             }
             OAuthConsentService.ApprovalDecision staged = consentDecisions == null
@@ -98,6 +99,10 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
                 try {
                     consentCoordinator.approve(authorization, staged);
                 } catch (RuntimeException exception) {
+                    if (exception instanceof OAuthProtocolEventService.RequiredEventPersistenceException) {
+                        throw authorizationRequestError(
+                                authorization, exception, OAuth2ErrorCodes.SERVER_ERROR);
+                    }
                     throw authorizationRequestError(authorization, exception);
                 }
                 return;
@@ -112,6 +117,8 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
         } catch (IllegalArgumentException exception) {
             if (codeFinalization) throwInvalidGrant();
             throw exception;
+        } catch (OAuthProtocolEventService.RequiredEventPersistenceException exception) {
+            throw authorizationRequestError(authorization, exception, OAuth2ErrorCodes.SERVER_ERROR);
         } finally {
             clearConsumedAuthorization();
             if (consentDecisions != null) consentDecisions.clear();
@@ -270,30 +277,20 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
                 "scopes", eventScopes, "redirect_validated", true));
         if (source.getToken(
                 org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class) != null) {
-            protocolEvents.success(OAuthProtocolEvent.EventType.AUTHORIZATION_REQUESTED, context, metadata);
-            protocolEvents.success(OAuthProtocolEvent.EventType.CODE_ISSUED, context, metadata);
-        } else {
-            protocolEvents.success(OAuthProtocolEvent.EventType.AUTHORIZATION_REQUESTED, context, metadata);
+            protocolEvents.successRequired(
+                    OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_ISSUED, context, metadata);
         }
-    }
-
-    private void recordCodeExchange(OAuthAuthorizationCodeExchangeBinding binding) {
-        if (protocolEvents == null) return;
-        authorizations.findById(binding.authorizationId()).ifPresent(authorization -> {
-            OAuthProtocolEventService.Context context = new OAuthProtocolEventService.Context(
-                    binding.authorizationRequest().clientId(), authorization.subject(),
-                    authorization.principalAccountId(), authorization.companyId(), authorization.id());
-            OAuthProtocolEvent.Metadata metadata = OAuthProtocolEvent.Metadata.from(java.util.Map.of(
-                    "endpoint", "TOKEN", "grant_type", "AUTHORIZATION_CODE",
-                    "scopes", authorization.authorizedScopes()));
-            protocolEvents.success(OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_EXCHANGED, context, metadata);
-            protocolEvents.success(OAuthProtocolEvent.EventType.TOKEN_ISSUED, context, metadata);
-        });
     }
 
     private OAuth2AuthorizationCodeRequestAuthenticationException authorizationRequestError(
             org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization,
             RuntimeException cause) {
+        return authorizationRequestError(authorization, cause, OAuth2ErrorCodes.INVALID_REQUEST);
+    }
+
+    private OAuth2AuthorizationCodeRequestAuthenticationException authorizationRequestError(
+            org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization,
+            RuntimeException cause, String errorCode) {
         OAuth2AuthorizationRequest request = authorization.getAttribute(OAuth2AuthorizationRequest.class.getName());
         Object sourcePrincipal = authorization.getAttribute(Principal.class.getName());
         Authentication principal = sourcePrincipal instanceof Authentication authentication
@@ -304,7 +301,9 @@ public final class SpringOAuth2AuthorizationService implements OAuth2Authorizati
                         request.getRedirectUri(), request.getState(), request.getScopes(),
                         request.getAdditionalParameters());
         return new OAuth2AuthorizationCodeRequestAuthenticationException(new OAuth2Error(
-                OAuth2ErrorCodes.INVALID_REQUEST, "The consent decision is stale or invalid.", null),
+                errorCode, errorCode.equals(OAuth2ErrorCodes.SERVER_ERROR)
+                        ? "The authorization request could not be completed."
+                        : "The consent decision is stale or invalid.", null),
                 cause, token);
     }
 

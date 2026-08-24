@@ -12,9 +12,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.reset;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -34,7 +31,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
 import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
-import com.sweet.authstudy.oauth.domain.OAuthProtocolEventRepository;
 import com.sweet.authstudy.oauth.presentation.IdpLoginController;
 import com.sweet.authstudy.oauth.presentation.IdpSessionAuthentication;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
@@ -58,7 +54,6 @@ import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -81,7 +76,6 @@ class OAuthProtocolSecurityAcceptanceTest {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired @Qualifier("oauthJwtEncoder") private JwtEncoder jwtEncoder;
     @Autowired @Qualifier("oauthJwtDecoder") private JwtDecoder jwtDecoder;
-    @MockitoSpyBean private OAuthProtocolEventRepository protocolEventRepository;
 
     @Test
     void idp_browser_pages_and_authorization_redirects_send_no_referrer_frame_denial_and_self_only_csp()
@@ -126,6 +120,8 @@ class OAuthProtocolSecurityAcceptanceTest {
         registerClient(publicOrigin + "/callback", true, true);
         registerClient(inactiveOrigin + "/callback", false, true);
         registerClient(confidentialOrigin + "/callback", true, false);
+        registerClient("https:legacy-hostless", true, true);
+        registerClient("https://legacy.localhost:bad/callback", true, true);
 
         for (CorsCase allowed : List.of(
                 new CorsCase("/.well-known/openid-configuration", "GET"),
@@ -220,7 +216,8 @@ class OAuthProtocolSecurityAcceptanceTest {
     void protocol_event_service_persists_only_the_sanitized_typed_event_contract() throws Exception {
         OAuthProtocolEvent event = OAuthProtocolEvent.create(
                 Instant.parse("2026-08-25T00:00:00Z"), "trace-safe-123",
-                OAuthProtocolEvent.EventType.TOKEN_ISSUED, OAuthProtocolEvent.Outcome.SUCCESS,
+                OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_EXCHANGED,
+                OAuthProtocolEvent.Outcome.SUCCESS,
                 "public-rp", UUID.fromString("00000000-0000-0000-0000-000000000123"),
                 null, null, null, null,
                 OAuthProtocolEvent.Metadata.from(Map.of(
@@ -236,7 +233,7 @@ class OAuthProtocolSecurityAcceptanceTest {
                 from oauth_protocol_event where correlation_id = 'trace-safe-123'
                 """).query().singleRow();
         assertThat(row).containsEntry("correlation_id", "trace-safe-123")
-                .containsEntry("event_type", "TOKEN_ISSUED")
+                .containsEntry("event_type", "AUTHORIZATION_CODE_EXCHANGED")
                 .containsEntry("outcome", "SUCCESS")
                 .containsEntry("client_id", "public-rp")
                 .containsEntry("subject", "00000000-0000-0000-0000-000000000123");
@@ -284,7 +281,7 @@ class OAuthProtocolSecurityAcceptanceTest {
         List<Map<String, Object>> failures = jdbcClient.sql("""
                 select outcome, client_id, error_code, metadata::text
                   from oauth_protocol_event
-                 where event_type = 'AUTHORIZATION_REQUESTED' and outcome = 'FAILURE'
+                 where event_type = 'AUTHORIZATION_REQUEST_VALIDATED' and outcome = 'FAILURE'
                  order by id desc limit 2
                 """).query().listOfRows();
         assertThat(failures).hasSize(2).allSatisfy(event -> assertThat(event)
@@ -318,7 +315,7 @@ class OAuthProtocolSecurityAcceptanceTest {
                 .doesNotContain("Exception", "stack", "client_secret", "code_verifier", "not-a-real-code");
         Map<String, Object> event = jdbcClient.sql("""
                 select outcome, error_code, metadata::text from oauth_protocol_event
-                 where event_type = 'TOKEN_ISSUED' and outcome = 'FAILURE'
+                 where event_type = 'AUTHORIZATION_CODE_EXCHANGED' and outcome = 'FAILURE'
                  order by id desc limit 1
                 """).query().singleRow();
         assertThat(event).containsEntry("outcome", "FAILURE").containsEntry("error_code", "invalid_grant");
@@ -331,7 +328,7 @@ class OAuthProtocolSecurityAcceptanceTest {
         String verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
         String state = "state-" + UUID.randomUUID();
         MvcResult authorization = mockMvc.perform(get("/oauth2/authorize")
-                        .with(user(Long.toString(fixture.accountId())))
+                        .session(idpSession(fixture))
                         .queryParam("response_type", "code")
                         .queryParam("client_id", fixture.clientId())
                         .queryParam("redirect_uri", fixture.redirectUri())
@@ -360,17 +357,22 @@ class OAuthProtocolSecurityAcceptanceTest {
                  order by id
                 """).param("clientId", fixture.clientId()).query().listOfRows();
         assertThat(events).extracting(row -> row.get("event_type"))
-                .contains("AUTHORIZATION_REQUESTED", "CODE_ISSUED", "TOKEN_ISSUED");
+                .containsExactly("AUTHORIZATION_REQUEST_VALIDATED", "AUTHORIZATION_CODE_ISSUED",
+                        "AUTHORIZATION_CODE_EXCHANGED");
         assertThat(events).allSatisfy(event -> {
             assertThat(event).containsEntry("outcome", "SUCCESS")
                     .containsEntry("client_id", fixture.clientId())
-                    .containsEntry("subject", fixture.subject().toString())
-                    .containsEntry("account_id", fixture.accountId())
                     .containsEntry("company_id", fixture.companyId());
-            assertThat(event.get("authorization_id")).isNotNull();
             assertThat(event.get("error_code")).isNull();
             assertThat(event.get("metadata").toString()).doesNotContain(
                     code, verifier, "access_token", "refresh_token", "secret", "password");
+        });
+        assertThat(events.getFirst().get("subject")).isNull();
+        assertThat(events.getFirst().get("authorization_id")).isNull();
+        assertThat(events.subList(1, events.size())).allSatisfy(event -> {
+            assertThat(event).containsEntry("subject", fixture.subject().toString())
+                    .containsEntry("account_id", fixture.accountId());
+            assertThat(event.get("authorization_id")).isNotNull();
         });
     }
 
@@ -415,12 +417,13 @@ class OAuthProtocolSecurityAcceptanceTest {
                 select event_type, outcome, client_id, subject::text, account_id, company_id,
                        error_code, metadata::text
                   from oauth_protocol_event
-                 where client_id = :clientId and event_type in ('LOGIN_FAILED', 'LOGIN_SUCCEEDED')
+                 where client_id = :clientId
+                   and event_type in ('LOGIN_REQUIRED', 'LOGIN_FAILED', 'LOGIN_SUCCEEDED')
                  order by id
                 """).param("clientId", fixture.clientId()).query().listOfRows();
         assertThat(loginEvents).extracting(row -> row.get("event_type"))
-                .containsExactly("LOGIN_FAILED", "LOGIN_SUCCEEDED");
-        assertThat(loginEvents.getFirst()).containsEntry("outcome", "FAILURE")
+                .containsExactly("LOGIN_REQUIRED", "LOGIN_FAILED", "LOGIN_SUCCEEDED");
+        assertThat(loginEvents.get(1)).containsEntry("outcome", "FAILURE")
                 .containsEntry("error_code", "login_failed")
                 .containsEntry("company_id", fixture.companyId());
         assertThat(loginEvents.getLast()).containsEntry("outcome", "SUCCESS")
@@ -458,11 +461,11 @@ class OAuthProtocolSecurityAcceptanceTest {
                        authorization_id, error_code, metadata::text
                   from oauth_protocol_event
                  where client_id = :clientId
-                   and event_type in ('TOKEN_REFRESHED', 'TOKEN_REUSE_DETECTED')
+                   and event_type in ('REFRESH_ROTATED', 'REFRESH_REUSE_DETECTED')
                  order by id
                 """).param("clientId", fixture.clientId()).query().listOfRows();
         assertThat(events).extracting(row -> row.get("event_type"))
-                .containsExactly("TOKEN_REFRESHED", "TOKEN_REUSE_DETECTED");
+                .containsExactly("REFRESH_ROTATED", "REFRESH_REUSE_DETECTED");
         assertThat(events.getFirst()).containsEntry("outcome", "SUCCESS");
         assertThat(events.getLast()).containsEntry("outcome", "FAILURE")
                 .containsEntry("error_code", "invalid_grant");
@@ -473,6 +476,39 @@ class OAuthProtocolSecurityAcceptanceTest {
             assertThat(event.get("authorization_id")).isNotNull();
             assertThat(event.get("metadata").toString()).doesNotContain(tokens.refreshToken());
         });
+    }
+
+    @Test
+    void refresh_scope_escalation_returns_invalid_scope_without_consuming_the_refresh_token()
+            throws Exception {
+        ProtocolFixture fixture = protocolFixture("scope-secret-" + UUID.randomUUID());
+        TokenSet tokens = issueTokens(fixture);
+
+        MvcResult excessive = mockMvc.perform(post("/oauth2/token")
+                        .with(httpBasic(fixture.clientId(), fixture.rawSecret()))
+                        .param("grant_type", "refresh_token")
+                        .param("refresh_token", tokens.refreshToken())
+                        .param("scope", "openid email"))
+                .andExpect(status().isBadRequest()).andReturn();
+        JsonNode error = objectMapper.readTree(excessive.getResponse().getContentAsByteArray());
+        assertThat(error.fieldNames()).toIterable().containsExactly("error");
+        assertThat(error.path("error").asText()).isEqualTo("invalid_scope");
+
+        mockMvc.perform(post("/oauth2/token")
+                        .with(httpBasic(fixture.clientId(), fixture.rawSecret()))
+                        .param("grant_type", "refresh_token")
+                        .param("refresh_token", tokens.refreshToken()))
+                .andExpect(status().isOk());
+        Map<String, Object> event = jdbcClient.sql("""
+                select event_type, outcome, error_code, metadata::text
+                  from oauth_protocol_event
+                 where client_id = :clientId and event_type = 'REFRESH_ROTATED'
+                   and outcome = 'FAILURE'
+                 order by id desc limit 1
+                """).param("clientId", fixture.clientId()).query().singleRow();
+        assertThat(event).containsEntry("error_code", "invalid_scope");
+        assertThat(event.get("metadata").toString()).contains("INVALID_SCOPE")
+                .doesNotContain(tokens.refreshToken());
     }
 
     @Test
@@ -529,11 +565,11 @@ class OAuthProtocolSecurityAcceptanceTest {
                        authorization_id, error_code, metadata::text
                   from oauth_protocol_event
                  where client_id = :clientId
-                   and event_type in ('USERINFO_SERVED', 'USERINFO_REJECTED')
+                   and event_type in ('USERINFO_SUCCEEDED', 'USERINFO_DENIED')
                  order by id
                 """).param("clientId", fixture.clientId()).query().listOfRows();
         assertThat(events).extracting(row -> row.get("event_type"))
-                .containsExactly("USERINFO_SERVED", "USERINFO_REJECTED");
+                .containsExactly("USERINFO_SUCCEEDED", "USERINFO_DENIED");
         assertThat(events.getFirst()).containsEntry("outcome", "SUCCESS");
         assertThat(events.getLast()).containsEntry("outcome", "DENIED")
                 .containsEntry("error_code", "invalid_token");
@@ -543,6 +579,49 @@ class OAuthProtocolSecurityAcceptanceTest {
                     .containsEntry("company_id", fixture.companyId());
             assertThat(event.get("authorization_id")).isNotNull();
             assertThat(event.get("metadata").toString()).doesNotContain(tokens.accessToken());
+        });
+    }
+
+    @Test
+    void every_userinfo_rejection_layer_records_one_sanitized_denied_event() throws Exception {
+        long before = jdbcClient.sql("select coalesce(max(id), 0) from oauth_protocol_event")
+                .query(Long.class).single();
+        mockMvc.perform(get("/userinfo"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/userinfo").header("Authorization", "Bearer not-a-jwt"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/userinfo").header("Authorization", "Bearer "
+                        + signedAccessToken(Instant.now().minusSeconds(120), Instant.now().minusSeconds(60))))
+                .andExpect(status().isUnauthorized());
+
+        ProtocolFixture signedFixture = protocolFixture();
+        TokenSet signed = issueTokens(signedFixture);
+        String[] segments = signed.accessToken().split("\\.");
+        segments[2] = (segments[2].startsWith("a") ? "b" : "a") + segments[2].substring(1);
+        mockMvc.perform(get("/userinfo").header("Authorization", "Bearer " + String.join(".", segments)))
+                .andExpect(status().isUnauthorized());
+
+        ProtocolFixture structuralFixture = protocolFixture();
+        TokenSet structural = issueTokens(structuralFixture);
+        jdbcClient.sql("""
+                update oauth_authorization set id_token_issued_at = null, id_token_expires_at = null
+                 where id = (select authorization_id from oauth_access_token
+                              where access_token_hash = :hash)
+                """).param("hash", sha256(structural.accessToken())).update();
+        mockMvc.perform(get("/userinfo").header("Authorization", "Bearer " + structural.accessToken()))
+                .andExpect(status().isUnauthorized());
+
+        List<Map<String, Object>> denied = jdbcClient.sql("""
+                select event_type, outcome, client_id, subject::text, error_code, metadata::text
+                  from oauth_protocol_event
+                 where id > :before and event_type = 'USERINFO_DENIED'
+                 order by id
+                """).param("before", before).query().listOfRows();
+        assertThat(denied).hasSize(5).allSatisfy(event -> {
+            assertThat(event).containsEntry("outcome", "DENIED")
+                    .containsEntry("error_code", "invalid_token");
+            assertThat(event.get("metadata").toString()).contains("USERINFO", "INVALID_TOKEN")
+                    .doesNotContain("not-a-jwt", structural.accessToken(), signed.accessToken());
         });
     }
 
@@ -586,7 +665,7 @@ class OAuthProtocolSecurityAcceptanceTest {
                 select event_type, outcome, client_id, subject::text, account_id, company_id,
                        authorization_id, error_code, metadata::text
                   from oauth_protocol_event
-                 where client_id = :clientId and event_type = 'TOKEN_REVOKED'
+                 where client_id = :clientId and event_type = 'AUTHORIZATION_REVOKED'
                  order by id desc limit 1
                 """).param("clientId", fixture.clientId()).query().singleRow();
         assertThat(event).containsEntry("outcome", "SUCCESS")
@@ -628,7 +707,7 @@ class OAuthProtocolSecurityAcceptanceTest {
         Map<String, Object> failedEvent = jdbcClient.sql("""
                 select outcome, client_id, subject::text, error_code, metadata::text
                   from oauth_protocol_event
-                 where event_type = 'TOKEN_REVOKED' and outcome = 'FAILURE'
+                 where event_type = 'AUTHORIZATION_REVOKED' and outcome = 'FAILURE'
                  order by id desc limit 1
                 """).query().singleRow();
         assertThat(failedEvent).containsEntry("outcome", "FAILURE")
@@ -678,6 +757,31 @@ class OAuthProtocolSecurityAcceptanceTest {
                 .andReturn();
         assertBrowserHeaders(replay);
         assertThat(replay.getResponse().getContentAsString()).doesNotContain(tokens.idToken());
+    }
+
+    @Test
+    void rp_logout_rejects_a_same_user_client_and_second_hint_from_a_different_idp_session()
+            throws Exception {
+        ProtocolFixture fixture = protocolFixture();
+        TokenSet tokens = issueTokens(fixture);
+        String sid = jwtDecoder.decode(tokens.idToken()).getClaimAsString("sid");
+        assertThat(sid).isNotBlank().matches("[0-9a-f-]{36}");
+
+        MockHttpSession differentSession = idpSession(fixture, tokens.idToken(), false);
+        mockMvc.perform(logoutRequest(differentSession, tokens.idToken(), fixture.clientId(),
+                        fixture.postLogoutRedirectUri(), "cross-session"))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().doesNotExist("Location"))
+                .andExpect(forwardedUrl("/idp/error"));
+        assertThat(differentSession.isInvalid()).isFalse();
+
+        MockHttpSession boundSession = idpSession(fixture, tokens.idToken(), true);
+        mockMvc.perform(logoutRequest(boundSession, tokens.idToken(), fixture.clientId(),
+                        fixture.postLogoutRedirectUri(), "bound-session"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location",
+                        fixture.postLogoutRedirectUri() + "?state=bound-session"));
+        assertThat(boundSession.isInvalid()).isTrue();
     }
 
     @Test
@@ -762,13 +866,13 @@ class OAuthProtocolSecurityAcceptanceTest {
                        authorization_id, error_code, metadata::text
                   from oauth_protocol_event
                  where client_id in (:approved, :denied)
-                   and event_type in ('CONSENT_APPROVED', 'CONSENT_DENIED')
+                   and event_type in ('CONSENT_GRANTED', 'CONSENT_DENIED')
                  order by id
                 """).param("approved", approvedFixture.clientId())
                 .param("denied", deniedFixture.clientId()).query().listOfRows();
         assertThat(events).hasSize(2);
         assertThat(events).anySatisfy(event -> assertThat(event)
-                .containsEntry("event_type", "CONSENT_APPROVED")
+                .containsEntry("event_type", "CONSENT_GRANTED")
                 .containsEntry("outcome", "SUCCESS")
                 .containsEntry("client_id", approvedFixture.clientId())
                 .containsEntry("subject", approvedFixture.subject().toString())
@@ -785,21 +889,177 @@ class OAuthProtocolSecurityAcceptanceTest {
     }
 
     @Test
-    void protocol_event_storage_failure_never_rolls_back_or_changes_the_oauth_result() throws Exception {
+    void required_code_exchange_event_failure_rolls_back_code_consumption() throws Exception {
         ProtocolFixture fixture = protocolFixture("event-failure-secret-" + UUID.randomUUID());
-        doThrow(new IllegalStateException("event storage unavailable"))
-                .when(protocolEventRepository).save(any(OAuthProtocolEvent.class));
+        String verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+        MvcResult authorization = mockMvc.perform(get("/oauth2/authorize")
+                        .session(idpSession(fixture))
+                        .queryParam("response_type", "code")
+                        .queryParam("client_id", fixture.clientId())
+                        .queryParam("redirect_uri", fixture.redirectUri())
+                        .queryParam("scope", "openid profile")
+                        .queryParam("state", "atomic-event-state")
+                        .queryParam("nonce", "atomic-event-nonce")
+                        .queryParam("code_challenge", challenge(verifier))
+                        .queryParam("code_challenge_method", "S256"))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        String code = UriComponentsBuilder.fromUri(
+                        URI.create(authorization.getResponse().getHeader("Location"))).build()
+                .getQueryParams().getFirst("code");
+
+        jdbcClient.sql("""
+                alter table oauth_protocol_event add constraint reject_code_exchange_event
+                check (event_type <> 'AUTHORIZATION_CODE_EXCHANGED') not valid
+                """).update();
         try {
-            TokenSet tokens = issueTokens(fixture);
-            assertThat(tokens.accessToken()).isNotBlank();
-            assertThat(tokens.refreshToken()).isNotBlank();
-            assertThat(jdbcClient.sql("""
-                    select count(*) from oauth_authorization
-                     where principal_account_id = :accountId and status = 'ACTIVE'
-                    """).param("accountId", fixture.accountId()).query(Long.class).single()).isOne();
+            mockMvc.perform(post("/oauth2/token")
+                            .with(httpBasic(fixture.clientId(), fixture.rawSecret()))
+                            .param("grant_type", "authorization_code")
+                            .param("code", code)
+                            .param("redirect_uri", fixture.redirectUri())
+                            .param("code_verifier", verifier))
+                    .andExpect(status().isBadRequest());
+            assertThat(jdbcClient.sql("select used_at from oauth_authorization_code where code_hash = :hash")
+                    .param("hash", sha256(code)).query(Timestamp.class).optional()).isEmpty();
         } finally {
-            reset(protocolEventRepository);
+            jdbcClient.sql("alter table oauth_protocol_event drop constraint reject_code_exchange_event").update();
         }
+    }
+
+    @Test
+    void required_consent_refresh_and_revoke_events_are_atomic_with_protocol_state() throws Exception {
+        ProtocolFixture consentFixture = protocolFixture();
+        jdbcClient.sql("update oauth_client set trust = 'CONSENT_REQUIRED' where client_id = :clientId")
+                .param("clientId", consentFixture.clientId()).update();
+        MockHttpSession consentSession = idpSession(consentFixture);
+        ConsentPage consent = beginConsent(consentFixture, consentSession, "atomic-consent-state");
+        addRejectEventConstraint("reject_consent_event", "CONSENT_GRANTED");
+        try {
+            MvcResult response = mockMvc.perform(post("/oauth2/authorize").session(consentSession).with(csrf())
+                            .header("Origin", ISSUER)
+                            .param("client_id", consentFixture.clientId())
+                            .param("state", consent.serverState())
+                            .param("scope", "openid", "profile"))
+                    .andExpect(status().is3xxRedirection()).andReturn();
+            assertThat(UriComponentsBuilder.fromUri(
+                            URI.create(response.getResponse().getHeader("Location"))).build()
+                    .getQueryParams().getFirst("error")).isEqualTo("server_error");
+            assertThat(jdbcClient.sql("""
+                    select count(*) from oauth_consent c join oauth_client oc on oc.id = c.registered_client_id
+                     where c.principal_account_id = :accountId and oc.client_id = :clientId
+                    """).param("accountId", consentFixture.accountId())
+                    .param("clientId", consentFixture.clientId()).query(Long.class).single()).isZero();
+        } finally {
+            dropConstraint("reject_consent_event");
+        }
+
+        ProtocolFixture refreshFixture = protocolFixture("atomic-refresh-secret-" + UUID.randomUUID());
+        TokenSet refreshTokens = issueTokens(refreshFixture);
+        addRejectEventConstraint("reject_refresh_event", "REFRESH_ROTATED");
+        try {
+            MvcResult response = mockMvc.perform(post("/oauth2/token")
+                            .with(httpBasic(refreshFixture.clientId(), refreshFixture.rawSecret()))
+                            .param("grant_type", "refresh_token")
+                            .param("refresh_token", refreshTokens.refreshToken()))
+                    .andExpect(status().isBadRequest()).andReturn();
+            assertThat(objectMapper.readTree(response.getResponse().getContentAsByteArray()))
+                    .isEqualTo(objectMapper.readTree("{\"error\":\"server_error\"}"));
+            assertThat(jdbcClient.sql("select used_at from oauth_refresh_token where refresh_token_hash = :hash")
+                    .param("hash", sha256(refreshTokens.refreshToken()))
+                    .query(Timestamp.class).optional()).isEmpty();
+        } finally {
+            dropConstraint("reject_refresh_event");
+        }
+
+        ProtocolFixture revokeFixture = protocolFixture("atomic-revoke-secret-" + UUID.randomUUID());
+        TokenSet revokeTokens = issueTokens(revokeFixture);
+        addRejectEventConstraint("reject_revoke_event", "AUTHORIZATION_REVOKED");
+        try {
+            mockMvc.perform(post("/oauth2/revoke")
+                            .with(httpBasic(revokeFixture.clientId(), revokeFixture.rawSecret()))
+                            .param("token", revokeTokens.refreshToken())
+                            .param("token_type_hint", "refresh_token"))
+                    .andExpect(status().isBadRequest());
+            assertThat(jdbcClient.sql("""
+                    select status from oauth_authorization where principal_account_id = :accountId
+                    order by created_at desc limit 1
+                    """).param("accountId", revokeFixture.accountId()).query(String.class).single())
+                    .isEqualTo("ACTIVE");
+        } finally {
+            dropConstraint("reject_revoke_event");
+        }
+    }
+
+    @Test
+    void server_owned_trace_ids_keep_protocol_post_state_intact_for_malicious_headers() throws Exception {
+        ProtocolFixture codeFixture = protocolFixture();
+        String sensitiveTrace = "password=ProtocolPassword1234!";
+        TokenSet codeTokens = issueTokens(codeFixture, sensitiveTrace);
+        assertThat(codeTokens.accessToken()).isNotBlank();
+
+        ProtocolFixture refreshFixture = protocolFixture("trace-refresh-secret-" + UUID.randomUUID());
+        TokenSet refreshTokens = issueTokens(refreshFixture);
+        String oversizedTrace = "x".repeat(256);
+        MvcResult refresh = mockMvc.perform(post("/oauth2/token")
+                        .with(httpBasic(refreshFixture.clientId(), refreshFixture.rawSecret()))
+                        .header("X-Trace-Id", oversizedTrace)
+                        .param("grant_type", "refresh_token")
+                        .param("refresh_token", refreshTokens.refreshToken()))
+                .andExpect(status().isOk()).andReturn();
+        String rotatedRefresh = objectMapper.readTree(refresh.getResponse().getContentAsByteArray())
+                .path("refresh_token").asText();
+        assertThat(rotatedRefresh).isNotBlank().isNotEqualTo(refreshTokens.refreshToken());
+
+        ProtocolFixture consentFixture = protocolFixture();
+        jdbcClient.sql("update oauth_client set trust = 'CONSENT_REQUIRED' where client_id = :clientId")
+                .param("clientId", consentFixture.clientId()).update();
+        MockHttpSession consentSession = idpSession(consentFixture);
+        ConsentPage consent = beginConsent(consentFixture, consentSession, "trace-consent-state");
+        String splitTrace = "trace-safe\r\npassword=attacker";
+        MvcResult approval = mockMvc.perform(post("/oauth2/authorize").session(consentSession).with(csrf())
+                        .header("Origin", ISSUER)
+                        .header("X-Trace-Id", splitTrace)
+                        .param("client_id", consentFixture.clientId())
+                        .param("state", consent.serverState())
+                        .param("scope", "openid", "profile"))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        assertThat(UriComponentsBuilder.fromUri(
+                        URI.create(approval.getResponse().getHeader("Location"))).build()
+                .getQueryParams().getFirst("code")).isNotBlank();
+
+        ProtocolFixture logoutFixture = protocolFixture();
+        TokenSet logoutTokens = issueTokens(logoutFixture);
+        MockHttpSession logoutSession = idpSession(logoutFixture, logoutTokens.idToken());
+        mockMvc.perform(logoutRequest(logoutSession, logoutTokens.idToken(), logoutFixture.clientId(),
+                        logoutFixture.postLogoutRedirectUri(), "trace-logout")
+                        .header("X-Trace-Id", logoutTokens.idToken()))
+                .andExpect(status().is3xxRedirection());
+        assertThat(logoutSession.isInvalid()).isTrue();
+
+        Long leaked = jdbcClient.sql("""
+                select count(*) from oauth_protocol_event
+                 where correlation_id in (:sensitive, :oversized, :split, :logoutToken)
+                    or metadata::text like :sensitivePattern
+                    or metadata::text like :logoutPattern
+                """)
+                .param("sensitive", sensitiveTrace)
+                .param("oversized", oversizedTrace)
+                .param("split", splitTrace)
+                .param("logoutToken", logoutTokens.idToken())
+                .param("sensitivePattern", "%" + sensitiveTrace + "%")
+                .param("logoutPattern", "%" + logoutTokens.idToken() + "%")
+                .query(Long.class).single();
+        assertThat(leaked).isZero();
+        assertThat(jdbcClient.sql("""
+                select count(*) from oauth_protocol_event
+                 where client_id in (:codeClient, :refreshClient, :consentClient, :logoutClient)
+                   and correlation_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+                """)
+                .param("codeClient", codeFixture.clientId())
+                .param("refreshClient", refreshFixture.clientId())
+                .param("consentClient", consentFixture.clientId())
+                .param("logoutClient", logoutFixture.clientId())
+                .query(Long.class).single()).isZero();
     }
 
     private void assertBrowserHeaders(MvcResult result) {
@@ -924,9 +1184,13 @@ class OAuthProtocolSecurityAcceptanceTest {
     }
 
     private TokenSet issueTokens(ProtocolFixture fixture) throws Exception {
+        return issueTokens(fixture, null);
+    }
+
+    private TokenSet issueTokens(ProtocolFixture fixture, String traceId) throws Exception {
         String verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
         MvcResult authorization = mockMvc.perform(get("/oauth2/authorize")
-                        .with(user(Long.toString(fixture.accountId())))
+                        .session(idpSession(fixture))
                         .queryParam("response_type", "code")
                         .queryParam("client_id", fixture.clientId())
                         .queryParam("redirect_uri", fixture.redirectUri())
@@ -945,6 +1209,7 @@ class OAuthProtocolSecurityAcceptanceTest {
                         .param("code_verifier", verifier);
         if (fixture.rawSecret() == null) tokenRequest.param("client_id", fixture.clientId());
         else tokenRequest.with(httpBasic(fixture.clientId(), fixture.rawSecret()));
+        if (traceId != null) tokenRequest.header("X-Trace-Id", traceId);
         MvcResult token = mockMvc.perform(tokenRequest)
                 .andExpect(status().isOk()).andReturn();
         JsonNode json = objectMapper.readTree(token.getResponse().getContentAsByteArray());
@@ -964,12 +1229,19 @@ class OAuthProtocolSecurityAcceptanceTest {
     }
 
     private MockHttpSession idpSession(ProtocolFixture fixture, String idToken) {
+        return idpSession(fixture, idToken, true);
+    }
+
+    private MockHttpSession idpSession(ProtocolFixture fixture, String idToken, boolean bindHint) {
         MockHttpSession session = new MockHttpSession();
         Instant authenticatedAt = idToken == null ? Instant.now()
                 : jwtDecoder.decode(idToken).getClaimAsInstant("auth_time");
         var authentication = new IdpSessionAuthentication(fixture.accountId(), fixture.companyId(),
                 fixture.userId(), java.util.Set.of(com.sweet.authstudy.identity.domain.AccountRole.USER),
-                fixture.subject(), authenticatedAt);
+                fixture.subject(), authenticatedAt,
+                idToken != null && bindHint
+                        ? UUID.fromString(jwtDecoder.decode(idToken).getClaimAsString("sid"))
+                        : UUID.randomUUID());
         var context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(authentication);
         session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context);
@@ -996,6 +1268,20 @@ class OAuthProtocolSecurityAcceptanceTest {
                 .claim("auth_time", java.util.Date.from(authTime.truncatedTo(ChronoUnit.SECONDS))).build();
         return jwtEncoder.encode(JwtEncoderParameters.from(
                 JwsHeader.with(SignatureAlgorithm.RS256).build(), claims)).getTokenValue();
+    }
+
+    private String signedAccessToken(Instant issuedAt, Instant expiresAt) {
+        JwtClaimsSet claims = JwtClaimsSet.builder().issuer(ISSUER).subject(UUID.randomUUID().toString())
+                .audience(List.of("auth-study-userinfo")).issuedAt(issuedAt).expiresAt(expiresAt)
+                .claim("client_id", "invalid-entry-client").claim("scope", "openid")
+                .id(UUID.randomUUID().toString()).build();
+        return jwtEncoder.encode(JwtEncoderParameters.from(
+                JwsHeader.with(SignatureAlgorithm.RS256).build(), claims)).getTokenValue();
+    }
+
+    private String sha256(String value) throws Exception {
+        return java.util.HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.US_ASCII)));
     }
 
     private ConsentPage beginConsent(ProtocolFixture fixture, MockHttpSession session, String state)
@@ -1028,6 +1314,15 @@ class OAuthProtocolSecurityAcceptanceTest {
         } catch (ReflectiveOperationException exception) {
             throw new IllegalArgumentException("protocol metadata boundary is missing", exception);
         }
+    }
+
+    private void addRejectEventConstraint(String constraint, String eventType) {
+        jdbcClient.sql("alter table oauth_protocol_event add constraint " + constraint
+                + " check (event_type <> '" + eventType + "') not valid").update();
+    }
+
+    private void dropConstraint(String constraint) {
+        jdbcClient.sql("alter table oauth_protocol_event drop constraint " + constraint).update();
     }
 
     private void recordProtocolEvent(OAuthProtocolEvent event) {

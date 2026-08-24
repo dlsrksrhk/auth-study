@@ -115,7 +115,9 @@ public final class OAuthClient {
     }
 
     private static void validateRedirect(URI uri) {
-        if (uri.getFragment() != null || uri.getUserInfo() != null) {
+        if (!uri.isAbsolute() || uri.isOpaque() || uri.getHost() == null || uri.getHost().isBlank()
+                || uri.getFragment() != null || uri.getUserInfo() != null
+                || uri.getPort() == 0 || uri.getPort() > 65535) {
             throw invalidRedirect();
         }
         boolean localHttp = "http".equals(uri.getScheme())

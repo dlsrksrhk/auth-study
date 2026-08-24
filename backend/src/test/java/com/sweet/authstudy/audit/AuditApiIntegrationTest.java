@@ -1,6 +1,7 @@
 package com.sweet.authstudy.audit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.http.HttpHeaders.AUTHORIZATION;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -81,7 +82,8 @@ class AuditApiIntegrationTest {
                         .param("page", "0").param("size", "1").param("sort", "occurredAt"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1))
-                .andExpect(jsonPath("$.content[0].traceId").value(traceId))
+                .andExpect(jsonPath("$.content[0].traceId").value(matchesPattern(
+                        "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")))
                 .andExpect(jsonPath("$.content[0].details.passwordHash").doesNotExist());
 
         mvc.perform(get("/api/v1/admin/companies/{companyCode}/audit-logs", code)

@@ -58,6 +58,7 @@ public final class OidcLogoutSuccessHandler implements AuthenticationProvider, A
                 || request.getSessionId() == null
                 || request.getClientId() == null || !request.getClientId().equals(clientId)
                 || !session.sub().toString().equals(jwt.getSubject())
+                || !session.sessionBinding().equals(sessionBinding(jwt))
                 || session.companyId() == null || session.companyId() != client.companyId()
                 || jwt.getClaimAsInstant("auth_time") == null
                 || !session.authenticatedAt().truncatedTo(ChronoUnit.SECONDS)
@@ -86,6 +87,15 @@ public final class OidcLogoutSuccessHandler implements AuthenticationProvider, A
             throw invalidRequest();
         }
         return jwt.getAudience().getFirst();
+    }
+
+    private java.util.UUID sessionBinding(Jwt jwt) {
+        try {
+            String sid = jwt.getClaimAsString("sid");
+            return sid == null ? null : java.util.UUID.fromString(sid);
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
     }
 
     private boolean registeredRedirect(OAuthClient client, String value) {

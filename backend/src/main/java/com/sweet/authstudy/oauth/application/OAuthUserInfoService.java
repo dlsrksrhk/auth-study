@@ -153,15 +153,14 @@ public final class OAuthUserInfoService {
 
     private void recordSuccess(OAuthUserInfoClaimSource.Snapshot snapshot) {
         if (protocolEvents == null) return;
-        protocolEvents.success(OAuthProtocolEvent.EventType.USERINFO_SERVED, eventContext(snapshot),
+        protocolEvents.success(OAuthProtocolEvent.EventType.USERINFO_SUCCEEDED, eventContext(snapshot),
                 eventMetadata(snapshot, null));
     }
 
     private void recordRejected(OAuthUserInfoClaimSource.Snapshot snapshot) {
         if (protocolEvents == null) return;
-        protocolEvents.denied(OAuthProtocolEvent.EventType.USERINFO_REJECTED,
-                snapshot == null ? OAuthProtocolEventService.Context.empty() : eventContext(snapshot),
-                "invalid_token", eventMetadata(snapshot, "INVALID_TOKEN"));
+        protocolEvents.userInfoDenied(
+                snapshot == null ? OAuthProtocolEventService.Context.empty() : eventContext(snapshot));
     }
 
     private OAuthProtocolEventService.Context eventContext(OAuthUserInfoClaimSource.Snapshot snapshot) {

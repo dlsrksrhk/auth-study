@@ -90,8 +90,9 @@ public class OAuthConsentDecisionCoordinator implements OAuthConsentDecisionServ
                 decision.clientId(), decision.sub(), decision.accountId(), decision.companyId(), completed.id());
         OAuthProtocolEvent.Metadata metadata = OAuthProtocolEvent.Metadata.from(java.util.Map.of(
                 "endpoint", "CONSENT", "scopes", decision.requestedScopes(), "redirect_validated", true));
-        protocolEvents.successAfterCommit(OAuthProtocolEvent.EventType.CONSENT_APPROVED, eventContext, metadata);
-        protocolEvents.successAfterCommit(OAuthProtocolEvent.EventType.CODE_ISSUED, eventContext, metadata);
+        protocolEvents.successRequired(OAuthProtocolEvent.EventType.CONSENT_GRANTED, eventContext, metadata);
+        protocolEvents.successRequired(
+                OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_ISSUED, eventContext, metadata);
     }
 
     @Transactional

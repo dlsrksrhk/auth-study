@@ -84,16 +84,23 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
         String refreshHash = OAuthAuthorizationMapper.sha256(grant.getRefreshToken());
         EventSnapshot eventSnapshot = eventSnapshot(refreshHash);
 
-        OAuthAuthorizationRepository.RefreshRotation<GeneratedResponse> rotation =
-                authorizations.rotateRefreshAtomically(
-                        refreshHash, exchangedAt,
-                        locked -> generate(grant, clientPrincipal, registeredClient, locked, exchangedAt));
+        OAuthAuthorizationRepository.RefreshRotation<GeneratedResponse> rotation;
+        try {
+            rotation = authorizations.rotateRefreshAtomically(
+                    refreshHash, exchangedAt,
+                    locked -> generate(grant, clientPrincipal, registeredClient, locked, exchangedAt),
+                    ignored -> recordRefreshSuccessRequired(eventSnapshot));
+        } catch (InvalidRefreshScopeException exception) {
+            recordInvalidScope(eventSnapshot);
+            throw invalidScope();
+        } catch (RuntimeException exception) {
+            throw serverError("The refresh token exchange could not be completed.");
+        }
         if (rotation.status() != OAuthAuthorizationRepository.RefreshRotationStatus.ROTATED) {
             recordFailure(rotation.status(), eventSnapshot);
             throw invalidGrant();
         }
         GeneratedResponse response = rotation.result().orElseThrow();
-        recordRefreshSuccess(eventSnapshot);
         return new OAuth2AccessTokenAuthenticationToken(
                 registeredClient, clientPrincipal, response.accessToken(), response.refreshToken());
     }
@@ -109,10 +116,12 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
         if (!currentClientMatches(clientPrincipal, registeredClient, locked, exchangedAt)
                 || !locked.principalActive()
                 || !locked.consentActive()
-                || !locked.authorization().activeAt(exchangedAt)
-                || !locked.current().authorizedScopes().containsAll(scopes)
-                || !locked.client().scopes().containsAll(scopes)) {
+                || !locked.authorization().activeAt(exchangedAt)) {
             return Optional.empty();
+        }
+        if (!locked.current().authorizedScopes().containsAll(scopes)
+                || !locked.client().scopes().containsAll(scopes)) {
+            throw new InvalidRefreshScopeException();
         }
         org.springframework.security.oauth2.server.authorization.OAuth2Authorization springAuthorization =
                 mapper.toSpring(locked.authorization(), grant.getRefreshToken(),
@@ -215,6 +224,11 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
                 OAuth2ErrorCodes.INVALID_GRANT, "Invalid refresh token grant.", null));
     }
 
+    private OAuth2AuthenticationException invalidScope() {
+        return new OAuth2AuthenticationException(new OAuth2Error(
+                OAuth2ErrorCodes.INVALID_SCOPE, "Invalid refresh token scope.", null));
+    }
+
     private OAuth2AuthenticationException serverError(String description) {
         return new OAuth2AuthenticationException(new OAuth2Error(
                 OAuth2ErrorCodes.SERVER_ERROR, description, null));
@@ -232,20 +246,26 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
                 .orElseGet(EventSnapshot::empty);
     }
 
-    private void recordRefreshSuccess(EventSnapshot snapshot) {
+    private void recordRefreshSuccessRequired(EventSnapshot snapshot) {
         if (protocolEvents == null) return;
-        protocolEvents.success(OAuthProtocolEvent.EventType.TOKEN_REFRESHED, snapshot.context(),
+        protocolEvents.successRequired(OAuthProtocolEvent.EventType.REFRESH_ROTATED, snapshot.context(),
                 refreshMetadata(snapshot, null));
+    }
+
+    private void recordInvalidScope(EventSnapshot snapshot) {
+        if (protocolEvents == null) return;
+        protocolEvents.failure(OAuthProtocolEvent.EventType.REFRESH_ROTATED, snapshot.context(),
+                "invalid_scope", refreshMetadata(snapshot, "INVALID_SCOPE"));
     }
 
     private void recordFailure(OAuthAuthorizationRepository.RefreshRotationStatus status,
             EventSnapshot snapshot) {
         if (protocolEvents == null) return;
         if (status == OAuthAuthorizationRepository.RefreshRotationStatus.REUSED) {
-            protocolEvents.failure(OAuthProtocolEvent.EventType.TOKEN_REUSE_DETECTED, snapshot.context(),
+            protocolEvents.failure(OAuthProtocolEvent.EventType.REFRESH_REUSE_DETECTED, snapshot.context(),
                     "invalid_grant", refreshMetadata(snapshot, "TOKEN_REUSE"));
         } else {
-            protocolEvents.failure(OAuthProtocolEvent.EventType.TOKEN_REFRESHED, snapshot.context(),
+            protocolEvents.failure(OAuthProtocolEvent.EventType.REFRESH_ROTATED, snapshot.context(),
                     "invalid_grant", refreshMetadata(snapshot, "INVALID_GRANT"));
         }
     }
@@ -265,6 +285,7 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
     }
 
     private record GeneratedResponse(OAuth2AccessToken accessToken, OAuth2RefreshToken refreshToken) { }
+    private static final class InvalidRefreshScopeException extends RuntimeException { }
     private record EventSnapshot(OAuthProtocolEventService.Context context, Set<String> scopes) {
         private static EventSnapshot empty() {
             return new EventSnapshot(OAuthProtocolEventService.Context.empty(), Set.of());

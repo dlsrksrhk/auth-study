@@ -182,7 +182,8 @@ public class IdpLoginController {
         request.changeSessionId();
         Instant now = clock.instant();
         IdpSessionAuthentication refreshed = new IdpSessionAuthentication(
-                idp.accountId(), idp.companyId(), idp.userId(), idp.roles(), idp.sub(), idp.authenticatedAt());
+                idp.accountId(), idp.companyId(), idp.userId(), idp.roles(), idp.sub(), idp.authenticatedAt(),
+                idp.sessionBinding());
         establishAuthentication(session, refreshed, false, now);
         addSessionCookie(response, properties, session.getId());
         protocolEvents.success(OAuthProtocolEvent.EventType.PASSWORD_CHANGED,

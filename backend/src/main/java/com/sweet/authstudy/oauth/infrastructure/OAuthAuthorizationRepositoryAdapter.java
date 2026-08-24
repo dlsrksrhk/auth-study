@@ -197,7 +197,17 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     public <T> RefreshRotation<T> rotateRefreshAtomically(
             String refreshTokenHash, Instant exchangedAt,
             Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange) {
+        return rotateRefreshAtomically(refreshTokenHash, exchangedAt, exchange, ignored -> { });
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public <T> RefreshRotation<T> rotateRefreshAtomically(
+            String refreshTokenHash, Instant exchangedAt,
+            Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange,
+            java.util.function.Consumer<RefreshSuccess<T>> afterPersistence) {
         java.util.Objects.requireNonNull(exchange, "exchange");
+        java.util.Objects.requireNonNull(afterPersistence, "afterPersistence");
         String candidateAuthorizationId = refreshTokens
                 .findAuthorizationIdByRefreshTokenHash(refreshTokenHash).orElse(null);
         if (candidateAuthorizationId == null) {
@@ -258,6 +268,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
         currentEntity.updateFrom(current);
         refreshTokens.saveAndFlush(currentEntity);
         accessTokens.saveAndFlush(OAuthAccessTokenJpaEntity.from(success.accessToken()));
+        afterPersistence.accept(success);
         return new RefreshRotation<>(RefreshRotationStatus.ROTATED, Optional.of(success.result()));
     }
 
@@ -420,10 +431,18 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     @Override
     @Transactional
     public void revokeAuthorization(String authorizationId, Instant revokedAt) {
+        revokeAuthorization(authorizationId, revokedAt, () -> { });
+    }
+
+    @Override
+    @Transactional
+    public void revokeAuthorization(String authorizationId, Instant revokedAt, Runnable afterRevocation) {
+        java.util.Objects.requireNonNull(afterRevocation, "afterRevocation");
         lockGrantScopes(java.util.List.of(authorizationId));
         accessTokens.revokeByAuthorizationId(authorizationId, revokedAt);
         refreshTokens.revokeByAuthorizationId(authorizationId, revokedAt);
         authorizations.revokeById(authorizationId, "RP_REVOKED", revokedAt);
+        afterRevocation.run();
     }
 
     @Override

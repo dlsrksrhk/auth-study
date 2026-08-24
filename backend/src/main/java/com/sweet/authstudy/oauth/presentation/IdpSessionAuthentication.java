@@ -25,9 +25,15 @@ public final class IdpSessionAuthentication implements Authentication {
     private final Set<AccountRole> roles;
     private final UUID sub;
     private final Instant authenticatedAt;
+    private final UUID sessionBinding;
 
     public IdpSessionAuthentication(long accountId, Long companyId, Long userId,
             Set<AccountRole> roles, UUID sub, Instant authenticatedAt) {
+        this(accountId, companyId, userId, roles, sub, authenticatedAt, UUID.randomUUID());
+    }
+
+    public IdpSessionAuthentication(long accountId, Long companyId, Long userId,
+            Set<AccountRole> roles, UUID sub, Instant authenticatedAt, UUID sessionBinding) {
         if (accountId <= 0) throw new IllegalArgumentException("accountId must be positive.");
         this.accountId = accountId;
         this.companyId = companyId;
@@ -35,6 +41,7 @@ public final class IdpSessionAuthentication implements Authentication {
         this.roles = Set.copyOf(roles);
         this.sub = java.util.Objects.requireNonNull(sub, "sub");
         this.authenticatedAt = java.util.Objects.requireNonNull(authenticatedAt, "authenticatedAt");
+        this.sessionBinding = java.util.Objects.requireNonNull(sessionBinding, "sessionBinding");
     }
 
     public long accountId() { return accountId; }
@@ -43,6 +50,7 @@ public final class IdpSessionAuthentication implements Authentication {
     public Set<AccountRole> roles() { return roles; }
     public UUID sub() { return sub; }
     public Instant authenticatedAt() { return authenticatedAt; }
+    public UUID sessionBinding() { return sessionBinding; }
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {

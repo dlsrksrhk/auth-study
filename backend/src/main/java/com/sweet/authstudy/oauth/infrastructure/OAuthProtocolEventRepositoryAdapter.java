@@ -17,8 +17,18 @@ public class OAuthProtocolEventRepositoryAdapter implements OAuthProtocolEventRe
     }
 
     @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public OAuthProtocolEvent saveRequired(OAuthProtocolEvent event) {
+        return persist(event);
+    }
+
+    @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public OAuthProtocolEvent save(OAuthProtocolEvent event) {
+    public OAuthProtocolEvent saveBestEffort(OAuthProtocolEvent event) {
+        return persist(event);
+    }
+
+    private OAuthProtocolEvent persist(OAuthProtocolEvent event) {
         if (event.id() != null) throw new IllegalArgumentException("Protocol events are append-only.");
         OAuthProtocolEventJpaEntity entity = OAuthProtocolEventJpaEntity.from(event);
         entityManager.persist(entity);

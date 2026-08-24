@@ -18,4 +18,15 @@ interface OAuthClientJpaRepository extends JpaRepository<OAuthClientJpaEntity, L
     Optional<OAuthClientJpaEntity> findByIdForUpdate(@Param("id") long id);
 
     List<OAuthClientJpaEntity> findAllByCompanyId(long companyId);
+
+    @Query(value = """
+            select r.redirect_uri
+              from oauth_client_redirect_uri r
+              join oauth_client c on c.id = r.client_id
+             where c.status = 'ACTIVE'
+               and c.public_client = true
+               and r.purpose = 'AUTHORIZATION'
+             order by r.redirect_uri
+            """, nativeQuery = true)
+    List<String> findActivePublicAuthorizationRedirectUris();
 }

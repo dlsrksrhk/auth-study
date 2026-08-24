@@ -31,6 +31,8 @@ class OAuthClientTest {
             "https://user@rp.example/callback",
             "http://rp.example/callback",
             "http://localhost/callback",
+            "https:callback",
+            "https:///callback",
             "ftp://rp.example/callback"
     })
     void creation_rejects_unsafe_redirect_uris(String redirect) {

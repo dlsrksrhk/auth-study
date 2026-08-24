@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.matchesPattern;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
@@ -228,13 +229,14 @@ class TenantAuthorizationIntegrationTest {
     }
 
     @Test
-    void security_problem_reuses_trace_id_and_preserves_bearer_challenge() throws Exception {
+    void security_problem_uses_server_owned_trace_id_and_preserves_bearer_challenge() throws Exception {
         mvc.perform(get("/api/v1/auth/me").header("X-Trace-Id", "trace-security-1"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("WWW-Authenticate", org.hamcrest.Matchers.containsString("Bearer")))
                 .andExpect(jsonPath("$.type").value("https://auth-study.local/problems/unauthenticated"))
                 .andExpect(jsonPath("$.title").value("Authentication required"))
-                .andExpect(jsonPath("$.traceId").value("trace-security-1"))
+                .andExpect(jsonPath("$.traceId").value(matchesPattern(
+                        "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")))
                 .andExpect(jsonPath("$.fieldErrors").isArray());
     }
 }
