@@ -24,6 +24,14 @@ interface OAuthAccessTokenJpaRepository extends JpaRepository<OAuthAccessTokenJp
     @Query(value = """
             update oauth_access_token set revoked_at = :at
              where revoked_at is null and authorization_id in
+                   (select id from oauth_authorization where company_id = :companyId)
+            """, nativeQuery = true)
+    int revokeByCompanyId(@Param("companyId") long companyId, @Param("at") Instant at);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            update oauth_access_token set revoked_at = :at
+             where revoked_at is null and authorization_id in
                    (select id from oauth_authorization where registered_client_id = :clientId)
             """, nativeQuery = true)
     int revokeByClientId(@Param("clientId") long clientId, @Param("at") Instant at);

@@ -30,6 +30,7 @@ import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.identity.application.PasswordGenerator;
 import com.sweet.authstudy.identity.application.AccountService;
+import com.sweet.authstudy.identity.application.OAuthGrantRevocationPort;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.shared.error.ApiException;
@@ -51,6 +52,7 @@ public class UserService {
     private final PasswordGenerator passwordGenerator;
     private final PasswordEncoder passwordEncoder;
     private final AccountService accountService;
+    private final OAuthGrantRevocationPort oauthGrants;
     private final TenantGuard tenantGuard;
     private final AdministrativeTargetGuard targetGuard;
     private final AuditService auditService;
@@ -66,6 +68,7 @@ public class UserService {
             PasswordGenerator passwordGenerator,
             PasswordEncoder passwordEncoder,
             AccountService accountService,
+            OAuthGrantRevocationPort oauthGrants,
             TenantGuard tenantGuard,
             AdministrativeTargetGuard targetGuard,
             AuditService auditService,
@@ -79,6 +82,7 @@ public class UserService {
         this.passwordGenerator = passwordGenerator;
         this.passwordEncoder = passwordEncoder;
         this.accountService = accountService;
+        this.oauthGrants = oauthGrants;
         this.tenantGuard = tenantGuard;
         this.targetGuard = targetGuard;
         this.auditService = auditService;
@@ -141,6 +145,15 @@ public class UserService {
         return auditedTransactions.execute(failurePlan, () -> {
             if (status == null) {
                 throw new ApiException(ErrorCode.VALIDATION_FAILED, "User status is required.");
+            }
+            if (status == UserStatus.LOCKED || status == UserStatus.RESIGNED) {
+                Company identifiedCompany = findCompany(companyCode);
+                tenantGuard.requireCompanyAccess(actor, identifiedCompany.id());
+                HrUser identifiedUser = findUser(identifiedCompany.id(), userCode);
+                Account identifiedAccount = accountRepository.findByUserId(identifiedUser.id())
+                        .orElseThrow(() -> new ApiException(
+                                ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+                oauthGrants.revokeAccount(identifiedAccount.id(), clock.instant());
             }
             Company company = findLockedCompany(companyCode);
             tenantGuard.requireCompanyAccess(actor, company.id());
@@ -231,6 +244,14 @@ public class UserService {
             AuthenticatedAccount actor, String companyCode, String userCode) {
         AuditFailurePlan failurePlan = new AuditFailurePlan();
         return auditedTransactions.execute(failurePlan, () -> {
+            Company identifiedCompany = findCompany(companyCode);
+            tenantGuard.requireCompanyAccess(actor, identifiedCompany.id());
+            requireActive(identifiedCompany);
+            HrUser identifiedUser = findUser(identifiedCompany.id(), userCode);
+            Account identifiedAccount = accountRepository.findByUserId(identifiedUser.id())
+                    .orElseThrow(() -> new ApiException(
+                            ErrorCode.RESOURCE_NOT_FOUND, "User account was not found."));
+            oauthGrants.revokeAccount(identifiedAccount.id(), clock.instant());
             Company company = findLockedCompany(companyCode);
             tenantGuard.requireCompanyAccess(actor, company.id());
             requireActive(company);

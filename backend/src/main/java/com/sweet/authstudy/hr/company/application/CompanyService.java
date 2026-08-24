@@ -17,6 +17,7 @@ import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.hr.position.application.PositionService;
 import com.sweet.authstudy.identity.application.AccountService;
+import com.sweet.authstudy.identity.application.OAuthGrantRevocationPort;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
@@ -34,6 +35,7 @@ public class CompanyService {
     private final PositionService positionService;
     private final TenantGuard tenantGuard;
     private final AccountService accountService;
+    private final OAuthGrantRevocationPort oauthGrants;
     private final AuditService auditService;
     private final AuditedTransactionExecutor auditedTransactions;
     private final Clock clock;
@@ -41,11 +43,13 @@ public class CompanyService {
     public CompanyService(
             CompanyRepository companyRepository, PositionService positionService,
             TenantGuard tenantGuard, AccountService accountService,
-            AuditService auditService, AuditedTransactionExecutor auditedTransactions, Clock clock) {
+            OAuthGrantRevocationPort oauthGrants, AuditService auditService,
+            AuditedTransactionExecutor auditedTransactions, Clock clock) {
         this.companyRepository = companyRepository;
         this.positionService = positionService;
         this.tenantGuard = tenantGuard;
         this.accountService = accountService;
+        this.oauthGrants = oauthGrants;
         this.auditService = auditService;
         this.auditedTransactions = auditedTransactions;
         this.clock = clock;
@@ -72,6 +76,11 @@ public class CompanyService {
         return auditedTransactions.execute(failurePlan, () -> {
             tenantGuard.requireSystemAdmin(actor);
             Company identified = findCompany(normalizeCode(code));
+            CompanyStatus requestedStatus = requireStatus(command.status());
+            var now = clock.instant();
+            if (requestedStatus == CompanyStatus.INACTIVE) {
+                oauthGrants.revokeCompany(identified.id(), now);
+            }
             Company company = companyRepository.findLockedById(identified.id())
                     .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
             CompanyStatus previousStatus = company.status();
@@ -82,7 +91,7 @@ public class CompanyService {
             if (company.version() != command.version()) {
                 throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "Company version does not match.");
             }
-            company.update(normalizeRequiredValue(command.name()), requireStatus(command.status()), clock.instant());
+            company.update(normalizeRequiredValue(command.name()), requestedStatus, now);
             Company saved = companyRepository.save(company);
             if (previousStatus != CompanyStatus.INACTIVE && saved.status() == CompanyStatus.INACTIVE) {
                 accountService.revokeAllRefreshTokensForCompany(saved.id());

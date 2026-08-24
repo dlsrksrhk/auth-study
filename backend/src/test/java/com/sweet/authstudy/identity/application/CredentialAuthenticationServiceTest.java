@@ -26,6 +26,7 @@ import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountRepository.LoginSnapshot;
 import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.identity.domain.AccountStatus;
+import com.sweet.authstudy.identity.domain.RefreshTokenRepository;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
@@ -34,7 +35,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -53,6 +53,8 @@ class CredentialAuthenticationServiceTest {
     private final AccountRepository accountRepository = mock(AccountRepository.class);
     private final CompanyRepository companyRepository = mock(CompanyRepository.class);
     private final UserRepository userRepository = mock(UserRepository.class);
+    private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
+    private final OAuthGrantRevocationPort oauthGrants = mock(OAuthGrantRevocationPort.class);
     private final PasswordEncoder passwordEncoder = spy(new BCryptPasswordEncoder(4));
     private CredentialAuthenticationService service;
 
@@ -60,7 +62,8 @@ class CredentialAuthenticationServiceTest {
     void setUp() {
         service = new CredentialAuthenticationService(
                 accountRepository, companyRepository, userRepository, passwordEncoder,
-                properties(), Clock.fixed(NOW, ZoneOffset.UTC), new NoOpTransactionManager());
+                properties(), Clock.fixed(NOW, ZoneOffset.UTC), new NoOpTransactionManager(),
+                refreshTokenRepository, oauthGrants);
     }
 
     @Test
@@ -119,10 +122,7 @@ class CredentialAuthenticationServiceTest {
     }
 
     @Test
-    void locks_on_the_fifth_failed_attempt_for_exactly_the_configured_duration_and_publishes_it() {
-        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
-        service = new CredentialAuthenticationService(accountRepository, companyRepository, userRepository,
-                passwordEncoder, properties(), Clock.fixed(NOW, ZoneOffset.UTC), new NoOpTransactionManager(), events);
+    void locks_on_the_fifth_failed_attempt_and_directly_revokes_hr_and_oauth_grants() {
         Account account = companyAccount(false, UserStatus.ACTIVE);
         when(accountRepository.findSystemLoginSnapshot(EMAIL)).thenReturn(Optional.empty());
         when(companyRepository.findByEmailDomain("acme.local")).thenReturn(Optional.of(activeCompany()));
@@ -138,7 +138,9 @@ class CredentialAuthenticationServiceTest {
 
         assertThat(account.failedLoginAttempts()).isEqualTo(5);
         assertThat(account.lockedUntil()).isEqualTo(NOW.plus(java.time.Duration.ofMinutes(15)));
-        verify(events).publishEvent(new CredentialAuthenticationService.AccountLocked(ACCOUNT_ID, NOW));
+        verify(oauthGrants, org.mockito.Mockito.times(5)).lockAccountScope(ACCOUNT_ID);
+        verify(refreshTokenRepository).revokeAllByAccountId(ACCOUNT_ID, NOW);
+        verify(oauthGrants).revokeAccount(ACCOUNT_ID, NOW);
     }
 
     @Test

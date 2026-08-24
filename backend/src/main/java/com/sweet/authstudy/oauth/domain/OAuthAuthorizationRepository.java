@@ -6,6 +6,42 @@ import java.util.UUID;
 import java.util.function.Function;
 
 public interface OAuthAuthorizationRepository {
+    enum RefreshRotationStatus { ROTATED, REUSED, INVALID }
+
+    record LockedRefreshExchange(
+            OAuthRefreshToken current,
+            OAuthAuthorization authorization,
+            OAuthClient client,
+            boolean principalActive,
+            boolean consentActive) {
+        public LockedRefreshExchange {
+            java.util.Objects.requireNonNull(current, "current");
+            java.util.Objects.requireNonNull(authorization, "authorization");
+            java.util.Objects.requireNonNull(client, "client");
+        }
+    }
+
+    record RefreshSuccess<T>(
+            OAuthAccessToken accessToken,
+            OAuthRefreshToken successor,
+            T result) {
+        public RefreshSuccess {
+            java.util.Objects.requireNonNull(accessToken, "accessToken");
+            java.util.Objects.requireNonNull(successor, "successor");
+            java.util.Objects.requireNonNull(result, "result");
+        }
+    }
+
+    record RefreshRotation<T>(RefreshRotationStatus status, Optional<T> result) {
+        public RefreshRotation {
+            java.util.Objects.requireNonNull(status, "status");
+            java.util.Objects.requireNonNull(result, "result");
+            if ((status == RefreshRotationStatus.ROTATED) != result.isPresent()) {
+                throw new IllegalArgumentException("Only a rotated refresh exchange has a result.");
+            }
+        }
+    }
+
     record CodeConsumption<T>(
             OAuthAuthorizationCode.Consumption consumption,
             Optional<T> exchangeResult) {
@@ -93,9 +129,17 @@ public interface OAuthAuthorizationRepository {
      * Linearizes an authorization-code exchange at token persistence. Locks code, parent
      * authorization, current client, company, account, and user in that order, then merges only
      * issued token metadata onto the locked current aggregate. Future identity-to-OAuth revocation
-     * must run after the identity transaction commits instead of acquiring these locks in reverse.
+     * must acquire OAuth scope locks before taking identity rows in the same application transaction.
      */
     CodeFinalizationResult finalizeAuthorizationCodeExchange(CodeFinalization finalization, Instant finalizedAt);
+    /**
+     * Locks refresh, parent authorization, client, company, account, and user in that order.
+     * Reuse is returned as a value so family revocation commits before the protocol layer emits
+     * {@code invalid_grant}.
+     */
+    <T> RefreshRotation<T> rotateRefreshAtomically(
+            String refreshTokenHash, Instant exchangedAt,
+            Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange);
     Optional<OAuthAccessToken> findByAccessTokenHash(String accessTokenHash);
     Optional<OAuthRefreshToken> findByRefreshTokenHash(String refreshTokenHash);
     Optional<OAuthRefreshToken> findRefreshByHashForUpdate(String refreshTokenHash);
@@ -104,6 +148,10 @@ public interface OAuthAuthorizationRepository {
     OAuthRefreshToken saveRefreshToken(OAuthRefreshToken token);
     void remove(String authorizationId);
     void revokeFamily(UUID familyId, Instant revokedAt);
+    void lockByAccountId(long accountId);
+    void lockByCompanyId(long companyId);
+    void lockByClientId(long registeredClientId);
     void revokeByAccountId(long accountId, Instant revokedAt);
+    void revokeByCompanyId(long companyId, Instant revokedAt);
     void revokeByClientId(long registeredClientId, Instant revokedAt);
 }

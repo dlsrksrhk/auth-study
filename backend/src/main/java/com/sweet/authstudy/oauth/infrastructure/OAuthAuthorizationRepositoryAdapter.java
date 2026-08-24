@@ -24,6 +24,7 @@ import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
 import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
@@ -40,6 +41,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     private final OAuthAccessTokenJpaRepository accessTokens;
     private final OAuthRefreshTokenJpaRepository refreshTokens;
     private final OAuthClientJpaRepository clients;
+    private final OAuthConsentJpaRepository consents;
     private final CompanyRepository companies;
     private final AccountRepository accounts;
     private final UserRepository users;
@@ -48,6 +50,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     public OAuthAuthorizationRepositoryAdapter(OAuthAuthorizationJpaRepository authorizations,
             OAuthAuthorizationCodeJpaRepository codes, OAuthAccessTokenJpaRepository accessTokens,
             OAuthRefreshTokenJpaRepository refreshTokens, OAuthClientJpaRepository clients,
+            OAuthConsentJpaRepository consents,
             CompanyRepository companies, AccountRepository accounts, UserRepository users,
             OAuthSecurityProperties properties) {
         this.authorizations = authorizations;
@@ -55,6 +58,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
         this.accessTokens = accessTokens;
         this.refreshTokens = refreshTokens;
         this.clients = clients;
+        this.consents = consents;
         this.companies = companies;
         this.accounts = accounts;
         this.users = users;
@@ -186,6 +190,84 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
             refreshTokens.saveAndFlush(OAuthRefreshTokenJpaEntity.from(finalization.refreshToken()));
         }
         return CodeFinalizationResult.FINALIZED;
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public <T> RefreshRotation<T> rotateRefreshAtomically(
+            String refreshTokenHash, Instant exchangedAt,
+            Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange) {
+        java.util.Objects.requireNonNull(exchange, "exchange");
+        OAuthRefreshTokenJpaEntity currentEntity = refreshTokens
+                .findByRefreshTokenHashForUpdate(refreshTokenHash).orElse(null);
+        if (currentEntity == null) {
+            return new RefreshRotation<>(RefreshRotationStatus.INVALID, Optional.empty());
+        }
+        OAuthRefreshToken current = currentEntity.toDomain();
+        if (current.usedAt() != null) {
+            refreshTokens.revokeFamily(current.familyId(), exchangedAt);
+            return new RefreshRotation<>(RefreshRotationStatus.REUSED, Optional.empty());
+        }
+        if (current.revokedAt() != null || current.expiredAt(exchangedAt)) {
+            return new RefreshRotation<>(RefreshRotationStatus.INVALID, Optional.empty());
+        }
+
+        OAuthAuthorizationJpaEntity authorizationEntity = authorizations
+                .findByIdForUpdate(current.authorizationId()).orElse(null);
+        if (authorizationEntity == null) {
+            return new RefreshRotation<>(RefreshRotationStatus.INVALID, Optional.empty());
+        }
+        OAuthAccessToken previousAccess = accessTokens
+                .findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(current.authorizationId())
+                .map(OAuthAccessTokenJpaEntity::toDomain).orElse(null);
+        OAuthAuthorization authorization = authorizationEntity.toDomain(null, previousAccess, current);
+        OAuthClientJpaEntity clientEntity = clients.findByIdForUpdate(authorization.registeredClientId())
+                .orElse(null);
+        if (clientEntity == null) {
+            return new RefreshRotation<>(RefreshRotationStatus.INVALID, Optional.empty());
+        }
+        OAuthClient client = clientEntity.toDomain();
+        boolean principalActive = lockAndValidatePrincipal(authorization, client, exchangedAt);
+        boolean consentActive = client.trust() == OAuthClientTrust.TRUSTED_FIRST_PARTY
+                || consents.findForUpdate(
+                        authorization.principalAccountId(), authorization.registeredClientId())
+                        .map(consent -> consent.toDomain().scopes()
+                                .containsAll(authorization.authorizedScopes()))
+                        .orElse(false);
+        Optional<RefreshSuccess<T>> generated = exchange.apply(
+                new LockedRefreshExchange(
+                        current, authorization, client, principalActive, consentActive));
+        if (generated.isEmpty()) {
+            return new RefreshRotation<>(RefreshRotationStatus.INVALID, Optional.empty());
+        }
+
+        RefreshSuccess<T> success = generated.orElseThrow();
+        if (!validRefreshSuccess(success, current, authorization, exchangedAt)) {
+            return new RefreshRotation<>(RefreshRotationStatus.INVALID, Optional.empty());
+        }
+        OAuthRefreshToken successor = refreshTokens
+                .saveAndFlush(OAuthRefreshTokenJpaEntity.from(success.successor())).toDomain();
+        current.markUsed(exchangedAt, successor);
+        currentEntity.updateFrom(current);
+        refreshTokens.saveAndFlush(currentEntity);
+        accessTokens.saveAndFlush(OAuthAccessTokenJpaEntity.from(success.accessToken()));
+        return new RefreshRotation<>(RefreshRotationStatus.ROTATED, Optional.of(success.result()));
+    }
+
+    private boolean validRefreshSuccess(RefreshSuccess<?> success, OAuthRefreshToken current,
+            OAuthAuthorization authorization, Instant exchangedAt) {
+        OAuthAccessToken accessToken = success.accessToken();
+        OAuthRefreshToken successor = success.successor();
+        return authorization.activeAt(exchangedAt)
+                && authorization.id().equals(accessToken.authorizationId())
+                && authorization.id().equals(successor.authorizationId())
+                && current.familyId().equals(successor.familyId())
+                && current.expiresAt().equals(successor.expiresAt())
+                && !successor.issuedAt().isBefore(exchangedAt)
+                && successor.issuedAt().isBefore(successor.expiresAt())
+                && accessToken.issuedAt().equals(successor.issuedAt())
+                && accessToken.expiresAt().equals(accessToken.issuedAt().plus(properties.accessTokenTtl()))
+                && !accessToken.expiresAt().isAfter(authorization.expiresAt());
     }
 
     private boolean validFinalization(CodeFinalization finalization, Instant finalizedAt,
@@ -332,7 +414,29 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
 
     @Override
     @Transactional
+    public void lockByAccountId(long accountId) {
+        refreshTokens.lockByAccountId(accountId);
+        authorizations.lockByAccountId(accountId);
+    }
+
+    @Override
+    @Transactional
+    public void lockByCompanyId(long companyId) {
+        refreshTokens.lockByCompanyId(companyId);
+        authorizations.lockByCompanyId(companyId);
+    }
+
+    @Override
+    @Transactional
+    public void lockByClientId(long registeredClientId) {
+        refreshTokens.lockByClientId(registeredClientId);
+        authorizations.lockByClientId(registeredClientId);
+    }
+
+    @Override
+    @Transactional
     public void revokeByAccountId(long accountId, Instant revokedAt) {
+        lockByAccountId(accountId);
         accessTokens.revokeByAccountId(accountId, revokedAt);
         refreshTokens.revokeByAccountId(accountId, revokedAt);
         authorizations.revokeByAccountId(accountId, "ACCOUNT_REVOKED", revokedAt);
@@ -340,7 +444,17 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
 
     @Override
     @Transactional
+    public void revokeByCompanyId(long companyId, Instant revokedAt) {
+        lockByCompanyId(companyId);
+        accessTokens.revokeByCompanyId(companyId, revokedAt);
+        refreshTokens.revokeByCompanyId(companyId, revokedAt);
+        authorizations.revokeByCompanyId(companyId, "COMPANY_REVOKED", revokedAt);
+    }
+
+    @Override
+    @Transactional
     public void revokeByClientId(long registeredClientId, Instant revokedAt) {
+        lockByClientId(registeredClientId);
         accessTokens.revokeByClientId(registeredClientId, revokedAt);
         refreshTokens.revokeByClientId(registeredClientId, revokedAt);
         authorizations.revokeByClientId(registeredClientId, "CLIENT_REVOKED", revokedAt);

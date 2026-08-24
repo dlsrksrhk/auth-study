@@ -30,7 +30,6 @@ import com.sweet.authstudy.identity.domain.RefreshTokenRepository;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
-import org.springframework.context.event.EventListener;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -45,6 +44,7 @@ public class AuthenticationService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
     private final CredentialAuthenticationService credentialAuthenticationService;
+    private final OAuthGrantRevocationPort oauthGrants;
     private final AppSecurityProperties properties;
     private final Clock clock;
     private final TransactionTemplate transactions;
@@ -54,7 +54,8 @@ public class AuthenticationService {
             UserRepository userRepository, RefreshTokenRepository refreshTokenRepository,
             PasswordEncoder passwordEncoder, JwtTokenService jwtTokenService,
             CredentialAuthenticationService credentialAuthenticationService,
-            AppSecurityProperties properties, Clock clock, PlatformTransactionManager transactionManager) {
+            AppSecurityProperties properties, Clock clock, PlatformTransactionManager transactionManager,
+            OAuthGrantRevocationPort oauthGrants) {
         this.accountRepository = accountRepository;
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
@@ -62,6 +63,7 @@ public class AuthenticationService {
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
         this.credentialAuthenticationService = credentialAuthenticationService;
+        this.oauthGrants = oauthGrants;
         this.properties = properties;
         this.clock = clock;
         this.transactions = new TransactionTemplate(transactionManager);
@@ -140,17 +142,25 @@ public class AuthenticationService {
 
     public void changePassword(AuthenticatedAccount principal, ChangePasswordCommand command) {
         if (principal == null || command == null) throw unauthenticated();
+        Account snapshot = accountRepository.findById(principal.accountId())
+                .orElseThrow(this::unauthenticated);
+        if (command.currentPassword() == null
+                || !passwordEncoder.matches(command.currentPassword(), snapshot.passwordHash())) {
+            throw unauthenticated();
+        }
+        validateNewPassword(command.newPassword());
         transactions.executeWithoutResult(status -> {
+            Instant now = clock.instant();
+            oauthGrants.revokeAccount(principal.accountId(), now);
             Account account = accountRepository.findByIdForUpdate(principal.accountId())
                     .orElseThrow(this::unauthenticated);
-            if (command.currentPassword() == null
+            if (!snapshot.passwordHash().equals(account.passwordHash())
                     || !passwordEncoder.matches(command.currentPassword(), account.passwordHash())) {
                 throw unauthenticated();
             }
-            validateNewPassword(command.newPassword());
-            account.changePassword(passwordEncoder.encode(command.newPassword()), clock.instant());
+            account.changePassword(passwordEncoder.encode(command.newPassword()), now);
             accountRepository.save(account);
-            refreshTokenRepository.revokeAllByAccountId(account.id(), clock.instant());
+            refreshTokenRepository.revokeAllByAccountId(account.id(), now);
         });
     }
 
@@ -184,11 +194,6 @@ public class AuthenticationService {
     private AuthenticatedAccount principal(CredentialAuthenticationResult credential) {
         return new AuthenticatedAccount(credential.accountId(), credential.companyId(), credential.userId(),
                 credential.roles(), credential.mustChangePassword());
-    }
-
-    @EventListener
-    public void revokeRefreshTokensOnAccountLock(CredentialAuthenticationService.AccountLocked event) {
-        refreshTokenRepository.revokeAllByAccountId(event.accountId(), event.lockedAt());
     }
 
     private String issueRefresh(long accountId, UUID familyId, Instant now) {

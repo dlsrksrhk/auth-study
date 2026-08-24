@@ -14,6 +14,7 @@ import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.identity.domain.AccountRole;
+import com.sweet.authstudy.identity.application.OAuthGrantRevocationPort;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
@@ -37,6 +38,7 @@ public class OAuthClientService {
     private final TenantGuard tenantGuard;
     private final PasswordEncoder passwordEncoder;
     private final OAuthClientSecretGenerator secretGenerator;
+    private final OAuthGrantRevocationPort oauthGrants;
     private final Clock clock;
 
     public OAuthClientService(
@@ -45,12 +47,14 @@ public class OAuthClientService {
             TenantGuard tenantGuard,
             PasswordEncoder passwordEncoder,
             OAuthClientSecretGenerator secretGenerator,
+            OAuthGrantRevocationPort oauthGrants,
             Clock clock) {
         this.companyRepository = companyRepository;
         this.clientRepository = clientRepository;
         this.tenantGuard = tenantGuard;
         this.passwordEncoder = passwordEncoder;
         this.secretGenerator = secretGenerator;
+        this.oauthGrants = oauthGrants;
         this.clock = clock;
     }
 
@@ -94,10 +98,14 @@ public class OAuthClientService {
         }
         OAuthClientTrust trust = requireUpdateTrust(actor, client.trust(), command.trust());
         OAuthClientStatus status = requireStatus(command.status());
+        Instant now = clock.instant();
+        if (status == OAuthClientStatus.DISABLED) {
+            oauthGrants.revokeClient(client.id(), now);
+        }
         try {
             client.update(
                     required(command.displayName()), status, trust, command.redirectUris(),
-                    command.postLogoutRedirectUris(), command.scopes(), clock.instant());
+                    command.postLogoutRedirectUris(), command.scopes(), now);
         } catch (IllegalArgumentException | NullPointerException exception) {
             throw validation(exception.getMessage());
         }
@@ -116,6 +124,7 @@ public class OAuthClientService {
             throw invalidState("A disabled OAuth client secret cannot be rotated.");
         }
         Instant now = clock.instant();
+        oauthGrants.revokeClient(client.id(), now);
         String rawSecret = secretGenerator.generateClientSecret();
         client.revokeActiveSecrets(now);
         client = clientRepository.save(client);
@@ -123,6 +132,19 @@ public class OAuthClientService {
         OAuthClient saved = clientRepository.save(client);
         return new ClientSecretResult(
                 OAuthClientView.from(saved, context.company().code()), rawSecret);
+    }
+
+    @Transactional
+    public OAuthClientView revokeSecret(AuthenticatedAccount actor, String clientId) {
+        ClientContext context = requireClientAccess(actor, clientId);
+        OAuthClient client = context.client();
+        if (client.publicClient()) {
+            throw invalidState("A public OAuth client has no secret.");
+        }
+        Instant now = clock.instant();
+        oauthGrants.revokeClient(client.id(), now);
+        client.revokeActiveSecrets(now);
+        return OAuthClientView.from(clientRepository.save(client), context.company().code());
     }
 
     @Transactional(readOnly = true)

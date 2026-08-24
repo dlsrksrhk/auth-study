@@ -48,7 +48,8 @@ class AuthenticationServiceTest {
         AuthenticationService service = new AuthenticationService(
                 mock(AccountRepository.class), mock(CompanyRepository.class), mock(UserRepository.class),
                 refreshTokenRepository, mock(PasswordEncoder.class), jwtTokenService, credentialAuthentication,
-                properties(), Clock.fixed(NOW, ZoneOffset.UTC), new NoOpTransactionManager());
+                properties(), Clock.fixed(NOW, ZoneOffset.UTC), new NoOpTransactionManager(),
+                mock(OAuthGrantRevocationPort.class));
 
         AuthTokens.LoginResult result = service.login(
                 new AuthCommands.LoginCommand("admin@acme.local", "Valid1234!", "127.0.0.1"));

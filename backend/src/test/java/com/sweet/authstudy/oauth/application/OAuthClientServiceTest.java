@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 import java.net.URI;
 import java.time.Clock;
@@ -25,6 +26,7 @@ import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.identity.domain.AccountRole;
+import com.sweet.authstudy.identity.application.OAuthGrantRevocationPort;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
@@ -49,8 +51,9 @@ class OAuthClientServiceTest {
     private final InMemoryOAuthClientRepository clients = new InMemoryOAuthClientRepository();
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder(4);
     private final QueueGenerator generator = new QueueGenerator();
+    private final OAuthGrantRevocationPort oauthGrants = mock(OAuthGrantRevocationPort.class);
     private final OAuthClientService service = new OAuthClientService(
-            companies, clients, new TenantGuard(companies), passwordEncoder, generator,
+            companies, clients, new TenantGuard(companies), passwordEncoder, generator, oauthGrants,
             Clock.fixed(NOW, ZoneOffset.UTC));
 
     private Company acme;
@@ -292,6 +295,21 @@ class OAuthClientServiceTest {
                         assertThat(passwordEncoder.matches("first-raw-secret-1111", secret.secretHash())).isTrue());
         assertThat(service.find(companyAdmin(41L), "rotate-client").toString())
                 .doesNotContain(rotated.oneTimeSecret());
+        verify(oauthGrants).revokeClient(stored.id(), NOW);
+    }
+
+    @Test
+    void explicit_secret_revocation_revokes_the_client_grants_and_leaves_no_active_secret() {
+        generator.clientIds.add("revoke-secret-client");
+        generator.secrets.add("revoke-secret-value-1111");
+        service.create(systemAdmin(), createCommand("ACME", false, OAuthClientTrust.CONSENT_REQUIRED));
+
+        OAuthClientView revoked = service.revokeSecret(systemAdmin(), "revoke-secret-client");
+
+        OAuthClient stored = clients.findByClientId("revoke-secret-client").orElseThrow();
+        assertThat(revoked.clientId()).isEqualTo("revoke-secret-client");
+        assertThat(stored.secrets()).allMatch(secret -> NOW.equals(secret.revokedAt()));
+        verify(oauthGrants).revokeClient(stored.id(), NOW);
     }
 
     @Test

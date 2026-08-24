@@ -14,9 +14,13 @@ import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.application.IdpSessionStateService;
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.infrastructure.OAuthClientSecretPasswordEncoder;
+import com.sweet.authstudy.oauth.infrastructure.OAuthAuthorizationMapper;
+import com.sweet.authstudy.oauth.infrastructure.OAuthRefreshTokenAuthenticationProvider;
+import com.sweet.authstudy.oauth.infrastructure.OAuthTokenCustomizer;
 import com.sweet.authstudy.oauth.infrastructure.OidcUserInfoMapper;
 import com.sweet.authstudy.oauth.infrastructure.OidcUserInfoAuthorizationService;
 import com.sweet.authstudy.oauth.infrastructure.AtomicAuthorizationCodeClientAuthenticationProvider;
@@ -44,6 +48,7 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.OAuth2Token;
 import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
@@ -53,6 +58,11 @@ import org.springframework.security.oauth2.server.authorization.oidc.authenticat
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
+import org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator;
+import org.springframework.security.oauth2.server.authorization.token.JwtGenerator;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2AccessTokenGenerator;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2RefreshTokenGenerator;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
@@ -74,6 +84,9 @@ public class AuthorizationServerSecurityConfig {
             AuthorizationServerSettings authorizationServerSettings,
             RegisteredClientRepository registeredClients,
             OAuthClientRepository oauthClients,
+            OAuthAuthorizationRepository oauthAuthorizations,
+            OAuthAuthorizationMapper authorizationMapper,
+            OAuthTokenCustomizer tokenCustomizer,
             IdpSessionStateService sessionStates,
             OAuthConsentService oauthConsents,
             OidcUserInfoMapper userInfoMapper,
@@ -94,10 +107,15 @@ public class AuthorizationServerSecurityConfig {
             OidcUserInfoAuthenticationProvider userInfoProvider =
                     new OidcUserInfoAuthenticationProvider(userInfoAuthorizations);
             userInfoProvider.setUserInfoMapper(userInfoMapper);
+            JwtGenerator jwtGenerator = new JwtGenerator(oauthJwtEncoder);
+            jwtGenerator.setJwtCustomizer(tokenCustomizer);
+            OAuth2TokenGenerator<OAuth2Token> tokenGenerator = new DelegatingOAuth2TokenGenerator(
+                    jwtGenerator, new OAuth2AccessTokenGenerator(), new OAuth2RefreshTokenGenerator());
             OAuth2AuthorizationServerConfigurer authorizationServer =
                     OAuth2AuthorizationServerConfigurer.authorizationServer();
             http.setSharedObject(JwtEncoder.class, oauthJwtEncoder);
             http.setSharedObject(JwtDecoder.class, oauthJwtDecoder);
+            http.setSharedObject(OAuth2TokenGenerator.class, tokenGenerator);
             http.with(authorizationServer, server -> server
                     .registeredClientRepository(registeredClients)
                     .authorizationService(authorizationService)
@@ -117,6 +135,14 @@ public class AuthorizationServerSecurityConfig {
                                         return approved == null || !approved.getScopes().containsAll(
                                                 context.getAuthorizationRequest().getScopes());
                                     }))))
+                    .tokenEndpoint(endpoint -> endpoint.authenticationProviders(providers -> {
+                        providers.removeIf(
+                                org.springframework.security.oauth2.server.authorization.authentication
+                                        .OAuth2RefreshTokenAuthenticationProvider.class::isInstance);
+                        providers.add(0, new OAuthRefreshTokenAuthenticationProvider(
+                                oauthAuthorizations, authorizationMapper, tokenGenerator,
+                                properties, clock));
+                    }))
                     .oidc(oidc -> oidc.userInfoEndpoint(userInfo -> userInfo
                             .authenticationProvider(userInfoProvider)
                             .userInfoMapper(userInfoMapper)

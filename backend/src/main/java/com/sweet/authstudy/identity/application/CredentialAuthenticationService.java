@@ -14,11 +14,10 @@ import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountRepository.LoginSnapshot;
 import com.sweet.authstudy.identity.domain.AccountStatus;
+import com.sweet.authstudy.identity.domain.RefreshTokenRepository;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -36,19 +35,13 @@ public class CredentialAuthenticationService {
     private final AppSecurityProperties properties;
     private final Clock clock;
     private final TransactionTemplate transactions;
-    private final ApplicationEventPublisher eventPublisher;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final OAuthGrantRevocationPort oauthGrants;
 
     public CredentialAuthenticationService(AccountRepository accountRepository, CompanyRepository companyRepository,
             UserRepository userRepository, PasswordEncoder passwordEncoder, AppSecurityProperties properties,
-            Clock clock, PlatformTransactionManager transactionManager) {
-        this(accountRepository, companyRepository, userRepository, passwordEncoder, properties, clock,
-                transactionManager, event -> { });
-    }
-
-    @Autowired
-    public CredentialAuthenticationService(AccountRepository accountRepository, CompanyRepository companyRepository,
-            UserRepository userRepository, PasswordEncoder passwordEncoder, AppSecurityProperties properties,
-            Clock clock, PlatformTransactionManager transactionManager, ApplicationEventPublisher eventPublisher) {
+            Clock clock, PlatformTransactionManager transactionManager, RefreshTokenRepository refreshTokenRepository,
+            OAuthGrantRevocationPort oauthGrants) {
         this.accountRepository = accountRepository;
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
@@ -56,7 +49,8 @@ public class CredentialAuthenticationService {
         this.properties = properties;
         this.clock = clock;
         this.transactions = new TransactionTemplate(transactionManager);
-        this.eventPublisher = eventPublisher;
+        this.refreshTokenRepository = refreshTokenRepository;
+        this.oauthGrants = oauthGrants;
     }
 
     public CredentialAuthenticationResult authenticate(Command command) {
@@ -95,6 +89,7 @@ public class CredentialAuthenticationService {
 
     private CredentialAuthenticationResult authenticateInTransaction(LoginVerification verification) {
         Instant now = clock.instant();
+        if (!verification.passwordMatched()) oauthGrants.lockAccountScope(verification.accountId());
         Account account = accountRepository.findByIdForUpdate(verification.accountId()).orElse(null);
         if (account == null || !account.passwordHash().equals(verification.passwordHash())) return null;
         if (account.status() != AccountStatus.ACTIVE
@@ -106,7 +101,10 @@ public class CredentialAuthenticationService {
                     ? now.plus(properties.loginLock().lockDuration()) : null;
             account.recordFailedLogin(lockedUntil, now);
             accountRepository.save(account);
-            if (lockedUntil != null) eventPublisher.publishEvent(new AccountLocked(account.id(), now));
+            if (lockedUntil != null) {
+                refreshTokenRepository.revokeAllByAccountId(account.id(), now);
+                oauthGrants.revokeAccount(account.id(), now);
+            }
             return null;
         }
 
@@ -149,9 +147,7 @@ public class CredentialAuthenticationService {
     public record Command(String email, String password) {
     }
 
-    public record AccountLocked(long accountId, Instant lockedAt) {
-    }
-
     record LoginVerification(long accountId, String passwordHash, boolean passwordMatched) {
     }
+
 }
