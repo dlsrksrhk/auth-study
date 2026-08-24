@@ -7,6 +7,60 @@ DONE
 BASE는 `0223eea0176f27c1e9cf62d173931d28ef96dc03`입니다. 구현 및 이 보고서의 commit hash는
 상위 agent handoff에 함께 기록합니다.
 
+## Review fix round 1/5 (`561e16c` 이후)
+
+Fresh review의 Critical 1건과 Important 3건을 엄격한 RED → GREEN으로 수정했습니다.
+
+- 모든 refresh 세대가 authorization 단위 PostgreSQL transaction advisory sentinel을 공유합니다. rotation/reuse와
+  account/company/client/consent mutation은 sentinel을 authorization id 정렬 순서로 먼저 획득하고, 그 다음
+  refresh rows → authorization rows 순서로 잠급니다. 따라서 used-root reuse가 기다리는 동안 active successor가
+  회전해 새 successor를 insert하더라도 reuse family revoke가 insert 이후 snapshot에서 실행되어 생존 row가 없습니다.
+- access/refresh token metadata에 effective `authorized_scopes`를 V8에서 영속화했습니다. successor는 현재 refresh
+  scope의 exact subset만 허용하며, `scope` 생략은 authorization-wide scope가 아니라 직전 refresh scope를 계승합니다.
+  UserInfo의 persisted current-state snapshot도 해당 access-token exact scope를 사용합니다.
+- `OAuthConsentService.remove(...)`가 consent 삭제 전에 같은 account+client의 authorization/access/refresh를 동일
+  application transaction에서 폐기합니다. Spring SAS consent service도 이 경로를 사용합니다. 강제 rollback 시
+  consent와 세 종류 grant metadata가 함께 원복됩니다.
+
+### Review RED
+
+Command:
+
+`./gradlew.bat test --tests "*OAuthRefreshAndRevocationIntegrationTest.used_root_reuse*" --tests "*OAuthRefreshAndRevocationIntegrationTest.downscoped*" --tests "*OAuthRefreshAndRevocationIntegrationTest.*consent_removal*" --tests "*OAuthRefreshAndRevocationIntegrationTest.consent_and_grant*" --tests "*OAuthRefreshAndRevocationIntegrationTest.concurrent_account_disable*" --console=plain`
+
+- `BUILD FAILED in 35s`
+- 8 tests, 4 failed: used-root vs active-successor 경합 뒤 successor 1개 생존, 다세대 downscope 생략 시 scope 재확장,
+  application/SAS consent 삭제 뒤 grant가 ACTIVE로 잔존했습니다.
+
+### Review concurrency GREEN
+
+Command:
+
+`./gradlew.bat test --tests "*OAuthRefreshAndRevocationIntegrationTest.concurrent_refresh_reuse*" --tests "*OAuthRefreshAndRevocationIntegrationTest.used_root_reuse*" --tests "*OAuthRefreshAndRevocationIntegrationTest.concurrent_account_disable*" --console=plain`
+
+- `BUILD SUCCESSFUL in 32s`
+- 실제 PostgreSQL에서 동일 root 경쟁, used-root vs active-successor 경쟁, mutation-vs-refresh 경쟁 3건이 모두
+  완료되었고 successor 생존 0건, 교착 0건을 확인했습니다.
+- 첫 GREEN 시 scalar sentinel lookup 전 entity를 materialize해 두 동시 요청이 stale managed entity를 볼 수 있는
+  기존 회귀 테스트 RED(`[200, 200]`)를 발견했습니다. scalar authorization-id lookup으로 persistence context 오염을
+  제거한 뒤 기존 one-winner 계약(`[200, 400]`)까지 다시 GREEN으로 만들었습니다.
+
+### Review 최종 검증
+
+Fresh focused command:
+
+`./gradlew.bat test --rerun-tasks --tests "*OAuthRefreshAndRevocationIntegrationTest" --tests "*CredentialAuthenticationServiceTest" --tests "*AuthenticationServiceTest" --tests "*AccountRevocationIntegrationTest" --tests "*OAuthClientServiceTest" --tests "*OAuthClientPersistenceIntegrationTest" --tests "*OidcUserInfoIntegrationTest" --tests "*AuthorizationCodePkceIntegrationTest" --tests "*SpringOAuth2AuthorizationServiceTest" --tests "*OAuthAuthorizationPersistenceIntegrationTest" --tests "*OAuthRefreshTokenTest" --tests "*ModuleBoundaryTest" --console=plain --no-daemon`
+
+- `BUILD SUCCESSFUL in 1m 42s`
+- JUnit XML: 186 tests, 0 failures, 0 errors, 0 skipped
+
+Fresh full backend command:
+
+`./gradlew.bat test --rerun-tasks --console=plain --no-daemon`
+
+- `BUILD SUCCESSFUL in 4m 30s`
+- JUnit XML: 424 tests, 0 failures, 0 errors, 0 skipped
+
 ## 구현 범위
 
 - project-owned refresh rotation

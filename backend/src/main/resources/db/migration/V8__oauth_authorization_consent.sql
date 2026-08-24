@@ -93,12 +93,14 @@ CREATE TABLE oauth_access_token (
     access_token_hash VARCHAR(64) NOT NULL,
     jti VARCHAR(128) NOT NULL,
     audience VARCHAR(255) NOT NULL,
+    authorized_scopes TEXT NOT NULL,
     issued_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     revoked_at TIMESTAMPTZ,
     CONSTRAINT uk_oauth_access_token_hash UNIQUE (access_token_hash),
     CONSTRAINT uk_oauth_access_token_jti UNIQUE (jti),
     CONSTRAINT ck_oauth_access_token_hash CHECK (access_token_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_oauth_access_token_scopes CHECK (btrim(authorized_scopes) <> ''),
     CONSTRAINT ck_oauth_access_token_time_order CHECK (expires_at > issued_at)
 );
 
@@ -109,6 +111,7 @@ CREATE TABLE oauth_refresh_token (
     authorization_id VARCHAR(128) NOT NULL REFERENCES oauth_authorization (id) ON DELETE CASCADE,
     refresh_token_hash VARCHAR(64) NOT NULL,
     family_id UUID NOT NULL,
+    authorized_scopes TEXT NOT NULL,
     issued_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     used_at TIMESTAMPTZ,
@@ -121,6 +124,7 @@ CREATE TABLE oauth_refresh_token (
         FOREIGN KEY (successor_id, family_id, authorization_id, expires_at)
         REFERENCES oauth_refresh_token (id, family_id, authorization_id, expires_at),
     CONSTRAINT ck_oauth_refresh_token_hash CHECK (refresh_token_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_oauth_refresh_token_scopes CHECK (btrim(authorized_scopes) <> ''),
     CONSTRAINT ck_oauth_refresh_token_time_order CHECK (expires_at > issued_at),
     CONSTRAINT ck_oauth_refresh_token_successor_used CHECK (
         (used_at IS NULL AND successor_id IS NULL)

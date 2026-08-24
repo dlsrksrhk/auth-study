@@ -55,6 +55,8 @@ public class OAuthConsentService {
 
     @Transactional
     public void remove(long accountId, long registeredClientId) {
+        authorizations.revokeByAccountIdAndClientId(
+                accountId, registeredClientId, clock.instant());
         consents.remove(accountId, registeredClientId);
     }
 

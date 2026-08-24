@@ -154,4 +154,5 @@ public interface OAuthAuthorizationRepository {
     void revokeByAccountId(long accountId, Instant revokedAt);
     void revokeByCompanyId(long companyId, Instant revokedAt);
     void revokeByClientId(long registeredClientId, Instant revokedAt);
+    void revokeByAccountIdAndClientId(long accountId, long registeredClientId, Instant revokedAt);
 }

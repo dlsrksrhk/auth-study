@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -47,7 +48,11 @@ import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.oauth.application.OAuthClientCommands.UpdateClient;
 import com.sweet.authstudy.oauth.application.OAuthClientService;
+import com.sweet.authstudy.oauth.application.OAuthConsentService;
+import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -61,11 +66,15 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -89,6 +98,10 @@ class OAuthRefreshAndRevocationIntegrationTest {
     @Autowired private UserService userService;
     @Autowired private CompanyService companyService;
     @Autowired private OAuthClientService oauthClientService;
+    @Autowired private OAuthConsentService oauthConsentService;
+    @Autowired private OAuth2AuthorizationConsentService springConsentService;
+    @Autowired private OAuthAuthorizationRepository oauthAuthorizations;
+    @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private PasswordEncoder passwordEncoder;
     @MockitoSpyBean private SpringOAuth2AuthorizationService springAuthorizationService;
 
@@ -161,6 +174,157 @@ class OAuthRefreshAndRevocationIntegrationTest {
                             """).param("hash", sha256(initial.refreshToken()))
                     .query(Long.class).single()).isEqualTo(2L);
         }
+    }
+
+    @Test
+    void used_root_reuse_serializes_with_active_successor_rotation_and_revokes_every_generation()
+            throws Exception {
+        Fixture fixture = fixture();
+        TokenPair initial = issueTokens(fixture);
+        TokenPair activeSuccessor = refresh(fixture, initial.refreshToken(), 200);
+        CountDownLatch successorValidated = new CountDownLatch(1);
+        CountDownLatch allowSuccessorInsert = new CountDownLatch(1);
+        Instant rotationTime = clock.instant().truncatedTo(ChronoUnit.MICROS);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var activeRotation = executor.submit(() -> oauthAuthorizations.rotateRefreshAtomically(
+                    sha256(activeSuccessor.refreshToken()), rotationTime, locked -> {
+                        successorValidated.countDown();
+                        try {
+                            if (!allowSuccessorInsert.await(10, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException("Timed out waiting to insert the successor.");
+                            }
+                        } catch (InterruptedException exception) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException("Interrupted while waiting to insert the successor.", exception);
+                        }
+                        return java.util.Optional.of(generatedSuccess(locked, rotationTime));
+                    }));
+            assertThat(successorValidated.await(10, TimeUnit.SECONDS)).isTrue();
+            var usedRootReuse = executor.submit(() -> oauthAuthorizations.rotateRefreshAtomically(
+                    sha256(initial.refreshToken()), rotationTime.plusMillis(1), locked -> {
+                        throw new AssertionError("A used root must not enter the generation callback.");
+                    }));
+
+            awaitBlockedRefreshTransaction();
+            allowSuccessorInsert.countDown();
+
+            assertThat(activeRotation.get(20, TimeUnit.SECONDS).status())
+                    .isEqualTo(OAuthAuthorizationRepository.RefreshRotationStatus.ROTATED);
+            assertThat(usedRootReuse.get(20, TimeUnit.SECONDS).status())
+                    .isEqualTo(OAuthAuthorizationRepository.RefreshRotationStatus.REUSED);
+        } finally {
+            allowSuccessorInsert.countDown();
+        }
+
+        assertThat(jdbcClient.sql("""
+                        select count(*) from oauth_refresh_token
+                         where family_id = (
+                               select family_id from oauth_refresh_token where refresh_token_hash = :hash)
+                           and revoked_at is null
+                        """).param("hash", sha256(initial.refreshToken()))
+                .query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("""
+                        select count(*) from oauth_refresh_token
+                         where family_id = (
+                               select family_id from oauth_refresh_token where refresh_token_hash = :hash)
+                        """).param("hash", sha256(initial.refreshToken()))
+                .query(Long.class).single()).isEqualTo(3L);
+    }
+
+    @Test
+    void downscoped_refresh_scope_is_preserved_when_later_rotations_omit_scope() throws Exception {
+        Fixture fixture = fixture();
+        jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:id, 'profile'), (:id, 'email')")
+                .param("id", fixture.internalClientId()).update();
+        TokenPair initial = issueTokens(fixture, Set.of("openid", "profile", "email"));
+
+        TokenPair downscoped = refresh(
+                fixture, initial.refreshToken(), 200, Set.of("openid", "profile"));
+        TokenPair omittedOnce = refresh(fixture, downscoped.refreshToken(), 200);
+        TokenPair narrowedAgain = refresh(
+                fixture, omittedOnce.refreshToken(), 200, Set.of("openid"));
+        TokenPair omittedTwice = refresh(fixture, narrowedAgain.refreshToken(), 200);
+
+        assertThat(downscoped.scopes()).containsExactlyInAnyOrder("openid", "profile");
+        assertThat(omittedOnce.scopes()).containsExactlyInAnyOrder("openid", "profile");
+        assertThat(narrowedAgain.scopes()).containsExactly("openid");
+        assertThat(omittedTwice.scopes()).containsExactly("openid");
+    }
+
+    @Test
+    void application_consent_removal_immediately_revokes_refresh_and_userinfo() throws Exception {
+        Fixture fixture = fixture();
+        TokenPair tokens = issueTokens(fixture);
+        requireConsent(fixture);
+
+        oauthConsentService.remove(fixture.accountId(), fixture.internalClientId());
+
+        assertConsentRemoved(fixture);
+        assertGrantRevoked(tokens.refreshToken());
+        refresh(fixture, tokens.refreshToken(), 400);
+        mockMvc.perform(get("/userinfo").header("Authorization", "Bearer " + tokens.accessToken()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void sas_consent_removal_uses_the_same_immediate_grant_revocation() throws Exception {
+        Fixture fixture = fixture();
+        TokenPair tokens = issueTokens(fixture);
+        requireConsent(fixture);
+        OAuth2AuthorizationConsent consent = OAuth2AuthorizationConsent.withId(
+                        Long.toString(fixture.internalClientId()), Long.toString(fixture.accountId()))
+                .scope("openid").build();
+
+        springConsentService.remove(consent);
+
+        assertConsentRemoved(fixture);
+        assertGrantRevoked(tokens.refreshToken());
+    }
+
+    @Test
+    void consent_and_grant_revocation_roll_back_together() throws Exception {
+        Fixture fixture = fixture();
+        TokenPair tokens = issueTokens(fixture);
+        requireConsent(fixture);
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+
+        assertThatThrownBy(() -> transaction.executeWithoutResult(status -> {
+            oauthConsentService.remove(fixture.accountId(), fixture.internalClientId());
+            throw new IllegalStateException("force rollback");
+        })).isInstanceOf(IllegalStateException.class);
+
+        assertThat(consentCount(fixture)).isEqualTo(1L);
+        assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
+                .param("id", authorizationId(tokens.refreshToken())).query(String.class).single())
+                .isEqualTo("ACTIVE");
+        refresh(fixture, tokens.refreshToken(), 200);
+    }
+
+    @Test
+    void concurrent_account_disable_and_refresh_finish_without_deadlock_and_leave_no_live_grant()
+            throws Exception {
+        Fixture fixture = fixture();
+        TokenPair tokens = issueTokens(fixture);
+        CyclicBarrier start = new CyclicBarrier(2);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var rotation = executor.submit(() -> concurrentRefresh(fixture, tokens.refreshToken(), start));
+            var disable = executor.submit(() -> {
+                start.await(10, TimeUnit.SECONDS);
+                accountService.disableAccount(fixture.accountId());
+                return null;
+            });
+            RefreshResponse response = rotation.get(20, TimeUnit.SECONDS);
+            disable.get(20, TimeUnit.SECONDS);
+            assertThat(response.status()).isIn(200, 400);
+        }
+
+        assertGrantRevoked(tokens.refreshToken());
+        assertThat(jdbcClient.sql("""
+                        select count(*) from oauth_refresh_token
+                         where authorization_id = :authorizationId and revoked_at is null
+                        """).param("authorizationId", authorizationId(tokens.refreshToken()))
+                .query(Long.class).single()).isZero();
     }
 
     @Test
@@ -359,6 +523,10 @@ class OAuthRefreshAndRevocationIntegrationTest {
     }
 
     private TokenPair issueTokens(Fixture fixture) throws Exception {
+        return issueTokens(fixture, Set.of("openid"));
+    }
+
+    private TokenPair issueTokens(Fixture fixture, Set<String> scopes) throws Exception {
         MvcResult discoveryResult = mockMvc.perform(get("/.well-known/openid-configuration"))
                 .andExpect(status().isOk()).andReturn();
         JsonNode discovery = objectMapper.readTree(discoveryResult.getResponse().getContentAsByteArray());
@@ -370,7 +538,7 @@ class OAuthRefreshAndRevocationIntegrationTest {
                         .queryParam("response_type", "code")
                         .queryParam("client_id", fixture.clientId())
                         .queryParam("redirect_uri", CALLBACK.toString())
-                        .queryParam("scope", "openid")
+                        .queryParam("scope", String.join(" ", new java.util.TreeSet<>(scopes)))
                         .queryParam("state", state)
                         .queryParam("nonce", "nonce-" + UUID.randomUUID())
                         .queryParam("code_challenge", challenge(VERIFIER))
@@ -391,21 +559,30 @@ class OAuthRefreshAndRevocationIntegrationTest {
     }
 
     private TokenPair refresh(Fixture fixture, String refreshToken, int expectedStatus) throws Exception {
-        MvcResult result = mockMvc.perform(post("/oauth2/token")
-                        .with(httpBasic(fixture.clientId(), fixture.rawSecret()))
-                        .param("grant_type", "refresh_token")
-                        .param("refresh_token", refreshToken))
+        return refresh(fixture, refreshToken, expectedStatus, null);
+    }
+
+    private TokenPair refresh(Fixture fixture, String refreshToken, int expectedStatus, Set<String> scopes)
+            throws Exception {
+        var request = post("/oauth2/token")
+                .with(httpBasic(fixture.clientId(), fixture.rawSecret()))
+                .param("grant_type", "refresh_token")
+                .param("refresh_token", refreshToken);
+        if (scopes != null) request.param("scope", String.join(" ", new java.util.TreeSet<>(scopes)));
+        MvcResult result = mockMvc.perform(request)
                 .andExpect(status().is(expectedStatus))
                 .andExpect(expectedStatus == 200
                         ? jsonPath("$.refresh_token").isNotEmpty()
                         : jsonPath("$.error").value("invalid_grant"))
                 .andReturn();
-        return expectedStatus == 200 ? tokenPair(result) : new TokenPair(null, null);
+        return expectedStatus == 200 ? tokenPair(result) : new TokenPair(null, null, Set.of());
     }
 
     private TokenPair tokenPair(MvcResult result) throws Exception {
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsByteArray());
-        return new TokenPair(json.path("access_token").asText(), json.path("refresh_token").asText());
+        String scope = json.path("scope").asText();
+        return new TokenPair(json.path("access_token").asText(), json.path("refresh_token").asText(),
+                scope.isBlank() ? Set.of() : Set.of(scope.split(" ")));
     }
 
     private Fixture fixture() {
@@ -466,8 +643,8 @@ class OAuthRefreshAndRevocationIntegrationTest {
                         """).param("clientId", internalClientId).param("redirectUri", CALLBACK.toString()).update();
         jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, 'openid')")
                 .param("clientId", internalClientId).update();
-        return new Fixture(accountId, companyId, userId, "REFRESH_" + suffix.toUpperCase(),
-                clientId, rawSecret, email);
+        return new Fixture(accountId, companyId, userId, internalClientId,
+                "REFRESH_" + suffix.toUpperCase(), clientId, rawSecret, email);
     }
 
     private String query(URI uri, String name) {
@@ -505,6 +682,60 @@ class OAuthRefreshAndRevocationIntegrationTest {
                         """).param("hash", sha256(rawRefreshToken)).query(String.class).single();
     }
 
+    private OAuthAuthorizationRepository.RefreshSuccess<String> generatedSuccess(
+            OAuthAuthorizationRepository.LockedRefreshExchange locked, Instant issuedAt) {
+        String nonce = UUID.randomUUID().toString();
+        OAuthAccessToken access = OAuthAccessToken.issue(
+                locked.authorization().id(), sha256("access-" + nonce), "jti-" + nonce,
+                "auth-study-userinfo", locked.current().authorizedScopes(),
+                issuedAt, issuedAt.plus(Duration.ofMinutes(5)));
+        OAuthRefreshToken successor = OAuthRefreshToken.issue(
+                locked.authorization().id(), sha256("refresh-" + nonce), locked.current().familyId(),
+                locked.current().authorizedScopes(), issuedAt, locked.current().expiresAt());
+        return new OAuthAuthorizationRepository.RefreshSuccess<>(access, successor, "rotated");
+    }
+
+    private void awaitBlockedRefreshTransaction() throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            long blocked = jdbcClient.sql("""
+                            select count(*) from pg_stat_activity
+                             where pid <> pg_backend_pid()
+                               and wait_event_type = 'Lock'
+                               and query ilike '%pg_advisory_xact_lock%'
+                            """).query(Long.class).single();
+            if (blocked > 0) return;
+            Thread.sleep(25);
+        }
+        throw new AssertionError("A refresh transaction did not reach the expected PostgreSQL lock wait.");
+    }
+
+    private void requireConsent(Fixture fixture) {
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        jdbcClient.sql("update oauth_client set trust = 'CONSENT_REQUIRED' where id = :id")
+                .param("id", fixture.internalClientId()).update();
+        long consentId = jdbcClient.sql("""
+                        insert into oauth_consent(principal_account_id, registered_client_id, created_at, updated_at)
+                        values (:accountId, :clientId, :now, :now) returning id
+                        """).param("accountId", fixture.accountId())
+                .param("clientId", fixture.internalClientId()).param("now", Timestamp.from(now))
+                .query(Long.class).single();
+        jdbcClient.sql("insert into oauth_consent_scope(consent_id, scope) values (:id, 'openid')")
+                .param("id", consentId).update();
+    }
+
+    private void assertConsentRemoved(Fixture fixture) {
+        assertThat(consentCount(fixture)).isZero();
+    }
+
+    private long consentCount(Fixture fixture) {
+        return jdbcClient.sql("""
+                        select count(*) from oauth_consent
+                         where principal_account_id = :accountId and registered_client_id = :clientId
+                        """).param("accountId", fixture.accountId())
+                .param("clientId", fixture.internalClientId()).query(Long.class).single();
+    }
+
     private void assertGrantRevoked(String rawRefreshToken) {
         String authorizationId = authorizationId(rawRefreshToken);
         assertThat(jdbcClient.sql("select status from oauth_authorization where id = :id")
@@ -517,9 +748,9 @@ class OAuthRefreshAndRevocationIntegrationTest {
         return new AuthenticatedAccount(999_999L, null, null, Set.of(AccountRole.SYSTEM_ADMIN), false);
     }
 
-    private record Fixture(long accountId, long companyId, long userId, String companyCode,
+    private record Fixture(long accountId, long companyId, long userId, long internalClientId, String companyCode,
             String clientId, String rawSecret, String email) { }
-    private record TokenPair(String accessToken, String refreshToken) { }
+    private record TokenPair(String accessToken, String refreshToken, Set<String> scopes) { }
     private record RefreshResponse(int status, String refreshToken, String error) { }
 
     @TestConfiguration(proxyBeanMethods = false)

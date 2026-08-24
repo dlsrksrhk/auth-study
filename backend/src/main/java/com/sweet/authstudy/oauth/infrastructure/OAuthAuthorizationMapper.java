@@ -158,7 +158,9 @@ public final class OAuthAuthorizationMapper {
                 .id(source.id())
                 .principalName(source.attributes().principalName())
                 .authorizationGrantType(new AuthorizationGrantType(source.authorizationGrantType()))
-                .authorizedScopes(source.authorizedScopes());
+                .authorizedScopes(userInfoLookup && source.accessToken().isPresent()
+                        ? source.accessToken().orElseThrow().authorizedScopes()
+                        : source.authorizedScopes());
 
         OAuth2AuthorizationRequest request = authorizationRequest(source, client);
         builder.attribute(OAuth2AuthorizationRequest.class.getName(), request)
@@ -184,7 +186,7 @@ public final class OAuthAuthorizationMapper {
                     org.springframework.security.oauth2.server.authorization.OAuth2TokenType.ACCESS_TOKEN.getValue());
             OAuth2AccessToken springToken = new OAuth2AccessToken(
                     OAuth2AccessToken.TokenType.BEARER, value, token.issuedAt(), token.expiresAt(),
-                    source.authorizedScopes());
+                    token.authorizedScopes());
             builder.token(springToken, metadata -> {
                 metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME,
                         Map.of("jti", token.jti(), "aud", List.of(token.audience())));
@@ -193,7 +195,8 @@ public final class OAuthAuthorizationMapper {
                 }
             });
         });
-        if (userInfoLookup && source.authorizedScopes().contains("openid")
+        if (userInfoLookup && source.accessToken().map(OAuthAccessToken::authorizedScopes)
+                .orElse(Set.of()).contains("openid")
                 && source.accessToken().isPresent() && source.idTokenEvidence().isPresent()) {
             OAuthSubject currentSubject = subjects.findByAccountId(source.principalAccountId()).orElse(null);
             if (currentSubject != null
@@ -296,7 +299,7 @@ public final class OAuthAuthorizationMapper {
                 ? previous.revokedAt() : null;
         Long id = previous != null && previous.accessTokenHash().equals(hash) ? previous.id() : null;
         return java.util.Optional.of(OAuthAccessToken.restore(
-                id, source.getId(), hash, jti, audience, token.getToken().getIssuedAt(),
+                id, source.getId(), hash, jti, audience, token.getToken().getScopes(), token.getToken().getIssuedAt(),
                 token.getToken().getExpiresAt(), revokedAt));
     }
 
@@ -309,9 +312,11 @@ public final class OAuthAuthorizationMapper {
         String hash = hashOrExisting(token.getToken().getTokenValue(), previous,
                 OAuthRefreshToken::refreshTokenHash);
         boolean same = previous != null && previous.refreshTokenHash().equals(hash);
+        Set<String> effectiveScopes = same
+                ? previous.authorizedScopes() : source.getAuthorizedScopes();
         return java.util.Optional.of(OAuthRefreshToken.restore(
                 same ? previous.id() : null, source.getId(), hash,
-                same ? previous.familyId() : UUID.randomUUID(), token.getToken().getIssuedAt(),
+                same ? previous.familyId() : UUID.randomUUID(), effectiveScopes, token.getToken().getIssuedAt(),
                 token.getToken().getExpiresAt(), same ? previous.usedAt() : null,
                 same ? previous.revokedAt() : null, same ? previous.successorId() : null));
     }

@@ -115,7 +115,7 @@ public class HrOAuthUserInfoClaimSource implements OAuthUserInfoClaimSource {
                 new Authorization(
                         authorization.id(), authorization.registeredClientId(),
                         authorization.principalAccountId(), authorization.companyId(),
-                        authorization.subject().toString(), authorization.authorizedScopes(),
+                        authorization.subject().toString(), accessToken.authorizedScopes(),
                         status(authorization.status()
                                 == com.sweet.authstudy.oauth.domain.OAuthAuthorization.Status.ACTIVE),
                         authorization.expiresAt(), Optional.ofNullable(authorization.revokedAt())),

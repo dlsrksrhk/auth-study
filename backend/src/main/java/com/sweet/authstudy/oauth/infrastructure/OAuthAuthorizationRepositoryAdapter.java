@@ -198,6 +198,13 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
             String refreshTokenHash, Instant exchangedAt,
             Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange) {
         java.util.Objects.requireNonNull(exchange, "exchange");
+        String candidateAuthorizationId = refreshTokens
+                .findAuthorizationIdByRefreshTokenHash(refreshTokenHash).orElse(null);
+        if (candidateAuthorizationId == null) {
+            return new RefreshRotation<>(RefreshRotationStatus.INVALID, Optional.empty());
+        }
+        // Every generation in one grant shares this sentinel. It must precede refresh/auth row locks.
+        authorizations.lockGrantScope(candidateAuthorizationId);
         OAuthRefreshTokenJpaEntity currentEntity = refreshTokens
                 .findByRefreshTokenHashForUpdate(refreshTokenHash).orElse(null);
         if (currentEntity == null) {
@@ -232,7 +239,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 || consents.findForUpdate(
                         authorization.principalAccountId(), authorization.registeredClientId())
                         .map(consent -> consent.toDomain().scopes()
-                                .containsAll(authorization.authorizedScopes()))
+                                .containsAll(current.authorizedScopes()))
                         .orElse(false);
         Optional<RefreshSuccess<T>> generated = exchange.apply(
                 new LockedRefreshExchange(
@@ -263,6 +270,8 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 && authorization.id().equals(successor.authorizationId())
                 && current.familyId().equals(successor.familyId())
                 && current.expiresAt().equals(successor.expiresAt())
+                && current.authorizedScopes().containsAll(successor.authorizedScopes())
+                && successor.authorizedScopes().equals(accessToken.authorizedScopes())
                 && !successor.issuedAt().isBefore(exchangedAt)
                 && successor.issuedAt().isBefore(successor.expiresAt())
                 && accessToken.issuedAt().equals(successor.issuedAt())
@@ -315,9 +324,11 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 && client.scopes().containsAll(authorization.authorizedScopes())
                 && request.requestedScopes().containsAll(authorization.authorizedScopes())
                 && finalization.accessTokenScopes().equals(authorization.authorizedScopes())
+                && finalization.accessToken().authorizedScopes().equals(finalization.accessTokenScopes())
                 && authorization.id().equals(finalization.accessToken().authorizationId())
                 && (finalization.refreshToken() == null
-                    || authorization.id().equals(finalization.refreshToken().authorizationId()));
+                    || authorization.id().equals(finalization.refreshToken().authorizationId())
+                    && finalization.refreshToken().authorizedScopes().equals(finalization.accessTokenScopes()));
     }
 
     private boolean validTokenTime(Instant issuedAt, Instant expiresAt, Duration timeToLive,
@@ -409,28 +420,26 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     @Override
     @Transactional
     public void revokeFamily(UUID familyId, Instant revokedAt) {
+        lockGrantScopes(refreshTokens.findAuthorizationIdsByFamilyId(familyId));
         refreshTokens.revokeFamily(familyId, revokedAt);
     }
 
     @Override
     @Transactional
     public void lockByAccountId(long accountId) {
-        refreshTokens.lockByAccountId(accountId);
-        authorizations.lockByAccountId(accountId);
+        lockGrantScopes(authorizations.findIdsByAccountId(accountId));
     }
 
     @Override
     @Transactional
     public void lockByCompanyId(long companyId) {
-        refreshTokens.lockByCompanyId(companyId);
-        authorizations.lockByCompanyId(companyId);
+        lockGrantScopes(authorizations.findIdsByCompanyId(companyId));
     }
 
     @Override
     @Transactional
     public void lockByClientId(long registeredClientId) {
-        refreshTokens.lockByClientId(registeredClientId);
-        authorizations.lockByClientId(registeredClientId);
+        lockGrantScopes(authorizations.findIdsByClientId(registeredClientId));
     }
 
     @Override
@@ -458,5 +467,24 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
         accessTokens.revokeByClientId(registeredClientId, revokedAt);
         refreshTokens.revokeByClientId(registeredClientId, revokedAt);
         authorizations.revokeByClientId(registeredClientId, "CLIENT_REVOKED", revokedAt);
+    }
+
+    @Override
+    @Transactional
+    public void revokeByAccountIdAndClientId(
+            long accountId, long registeredClientId, Instant revokedAt) {
+        lockGrantScopes(authorizations.findIdsByAccountIdAndClientId(accountId, registeredClientId));
+        accessTokens.revokeByAccountIdAndClientId(accountId, registeredClientId, revokedAt);
+        refreshTokens.revokeByAccountIdAndClientId(accountId, registeredClientId, revokedAt);
+        authorizations.revokeByAccountIdAndClientId(
+                accountId, registeredClientId, "CONSENT_REVOKED", revokedAt);
+    }
+
+    private void lockGrantScopes(java.util.List<String> authorizationIds) {
+        java.util.List<String> ordered = authorizationIds.stream().distinct().sorted().toList();
+        ordered.forEach(authorizations::lockGrantScope);
+        if (ordered.isEmpty()) return;
+        refreshTokens.lockByAuthorizationIds(ordered);
+        authorizations.lockByIds(ordered);
     }
 }

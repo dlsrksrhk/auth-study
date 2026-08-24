@@ -83,12 +83,12 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
             OAuthAuthorizationRepository.LockedRefreshExchange locked,
             Instant exchangedAt) {
         Set<String> scopes = grant.getScopes().isEmpty()
-                ? locked.authorization().authorizedScopes() : Set.copyOf(grant.getScopes());
+                ? locked.current().authorizedScopes() : Set.copyOf(grant.getScopes());
         if (!currentClientMatches(clientPrincipal, registeredClient, locked, exchangedAt)
                 || !locked.principalActive()
                 || !locked.consentActive()
                 || !locked.authorization().activeAt(exchangedAt)
-                || !locked.authorization().authorizedScopes().containsAll(scopes)
+                || !locked.current().authorizedScopes().containsAll(scopes)
                 || !locked.client().scopes().containsAll(scopes)) {
             return Optional.empty();
         }
@@ -135,10 +135,10 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
         }
         OAuthAccessToken persistedAccess = OAuthAccessToken.issue(
                 locked.authorization().id(), OAuthAuthorizationMapper.sha256(accessToken.getTokenValue()),
-                jti, audience, accessToken.getIssuedAt(), accessToken.getExpiresAt());
+                jti, audience, scopes, accessToken.getIssuedAt(), accessToken.getExpiresAt());
         OAuthRefreshToken successor = OAuthRefreshToken.issue(
                 locked.authorization().id(), OAuthAuthorizationMapper.sha256(refreshToken.getTokenValue()),
-                locked.current().familyId(), refreshToken.getIssuedAt(), refreshToken.getExpiresAt());
+                locked.current().familyId(), scopes, refreshToken.getIssuedAt(), refreshToken.getExpiresAt());
         return Optional.of(new OAuthAuthorizationRepository.RefreshSuccess<>(
                 persistedAccess, successor, new GeneratedResponse(accessToken, refreshToken)));
     }

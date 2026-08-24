@@ -3,6 +3,7 @@ package com.sweet.authstudy.oauth.domain;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 public final class OAuthRefreshToken {
@@ -11,6 +12,7 @@ public final class OAuthRefreshToken {
     private final String authorizationId;
     private final String refreshTokenHash;
     private final UUID familyId;
+    private final Set<String> authorizedScopes;
     private final Instant issuedAt;
     private final Instant expiresAt;
     private Instant usedAt;
@@ -18,11 +20,13 @@ public final class OAuthRefreshToken {
     private Long successorId;
 
     private OAuthRefreshToken(Long id, String authorizationId, String refreshTokenHash, UUID familyId,
-            Instant issuedAt, Instant expiresAt, Instant usedAt, Instant revokedAt, Long successorId) {
+            Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt,
+            Instant usedAt, Instant revokedAt, Long successorId) {
         this.id = id;
         this.authorizationId = requireText(authorizationId, "authorizationId");
         this.refreshTokenHash = requireSha256(refreshTokenHash);
         this.familyId = Objects.requireNonNull(familyId, "familyId");
+        this.authorizedScopes = requireScopes(authorizedScopes);
         this.issuedAt = Objects.requireNonNull(issuedAt, "issuedAt");
         this.expiresAt = Objects.requireNonNull(expiresAt, "expiresAt");
         if (!expiresAt.isAfter(issuedAt)) {
@@ -35,15 +39,27 @@ public final class OAuthRefreshToken {
 
     public static OAuthRefreshToken issue(String authorizationId, String refreshTokenHash, UUID familyId,
             Instant issuedAt, Instant expiresAt) {
+        return issue(authorizationId, refreshTokenHash, familyId, Set.of("openid"), issuedAt, expiresAt);
+    }
+
+    public static OAuthRefreshToken issue(String authorizationId, String refreshTokenHash, UUID familyId,
+            Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt) {
         return new OAuthRefreshToken(null, authorizationId, refreshTokenHash, familyId,
-                issuedAt, expiresAt, null, null, null);
+                authorizedScopes, issuedAt, expiresAt, null, null, null);
     }
 
     public static OAuthRefreshToken restore(Long id, String authorizationId, String refreshTokenHash,
             UUID familyId, Instant issuedAt, Instant expiresAt, Instant usedAt, Instant revokedAt,
             Long successorId) {
-        return new OAuthRefreshToken(id, authorizationId, refreshTokenHash, familyId,
+        return restore(id, authorizationId, refreshTokenHash, familyId, Set.of("openid"),
                 issuedAt, expiresAt, usedAt, revokedAt, successorId);
+    }
+
+    public static OAuthRefreshToken restore(Long id, String authorizationId, String refreshTokenHash,
+            UUID familyId, Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt,
+            Instant usedAt, Instant revokedAt, Long successorId) {
+        return new OAuthRefreshToken(id, authorizationId, refreshTokenHash, familyId,
+                authorizedScopes, issuedAt, expiresAt, usedAt, revokedAt, successorId);
     }
 
     public void markUsed(Instant usedAt, OAuthRefreshToken successor) {
@@ -63,6 +79,9 @@ public final class OAuthRefreshToken {
         }
         if (!expiresAt.equals(successor.expiresAt)) {
             throw new IllegalArgumentException("Successor must preserve the refresh family absolute expiry.");
+        }
+        if (!authorizedScopes.containsAll(successor.authorizedScopes)) {
+            throw new IllegalArgumentException("Successor scopes cannot expand the refresh grant.");
         }
         if (id != null && id.equals(successor.id)) {
             throw new IllegalArgumentException("A refresh token cannot succeed itself.");
@@ -100,6 +119,7 @@ public final class OAuthRefreshToken {
     public String authorizationId() { return authorizationId; }
     public String refreshTokenHash() { return refreshTokenHash; }
     public UUID familyId() { return familyId; }
+    public Set<String> authorizedScopes() { return authorizedScopes; }
     public Instant issuedAt() { return issuedAt; }
     public Instant expiresAt() { return expiresAt; }
     public Instant usedAt() { return usedAt; }
@@ -118,5 +138,13 @@ public final class OAuthRefreshToken {
             throw new IllegalArgumentException(name + " must not be blank");
         }
         return value;
+    }
+
+    static Set<String> requireScopes(Set<String> scopes) {
+        Set<String> snapshot = Set.copyOf(Objects.requireNonNull(scopes, "authorizedScopes"));
+        if (snapshot.isEmpty() || snapshot.stream().anyMatch(scope -> scope == null || scope.isBlank())) {
+            throw new IllegalArgumentException("authorizedScopes must contain normalized scopes");
+        }
+        return snapshot;
     }
 }
