@@ -1,0 +1,102 @@
+package com.sweet.authstudy.oauth.infrastructure;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Comparator;
+
+import com.sweet.authstudy.oauth.domain.OAuthClient;
+import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
+import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
+import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
+import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class SpringRegisteredClientRepository implements RegisteredClientRepository {
+
+    private final OAuthClientRepository clients;
+    private final Clock clock;
+
+    public SpringRegisteredClientRepository(OAuthClientRepository clients, Clock clock) {
+        this.clients = clients;
+        this.clock = clock;
+    }
+
+    @Override
+    public void save(RegisteredClient registeredClient) {
+        throw new UnsupportedOperationException(
+                "OAuth clients must be changed through OAuthClientService.");
+    }
+
+    @Override
+    public RegisteredClient findById(String id) {
+        long internalId;
+        try {
+            internalId = Long.parseLong(id);
+        } catch (NumberFormatException | NullPointerException exception) {
+            return null;
+        }
+        return clients.findById(internalId)
+                .filter(this::active)
+                .map(this::toRegisteredClient)
+                .orElse(null);
+    }
+
+    @Override
+    public RegisteredClient findByClientId(String clientId) {
+        if (clientId == null) {
+            return null;
+        }
+        return clients.findByClientId(clientId)
+                .filter(this::active)
+                .map(this::toRegisteredClient)
+                .orElse(null);
+    }
+
+    private boolean active(OAuthClient client) {
+        return client.status() == OAuthClientStatus.ACTIVE;
+    }
+
+    private RegisteredClient toRegisteredClient(OAuthClient client) {
+        RegisteredClient.Builder builder = RegisteredClient.withId(client.id().toString())
+                .clientId(client.clientId())
+                .clientIdIssuedAt(client.createdAt())
+                .clientName(client.displayName())
+                .clientAuthenticationMethod(client.publicClient()
+                        ? ClientAuthenticationMethod.NONE
+                        : ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .clientSettings(ClientSettings.builder()
+                        .requireProofKey(true)
+                        .requireAuthorizationConsent(
+                                client.trust() == OAuthClientTrust.CONSENT_REQUIRED)
+                        .build());
+
+        client.redirectUris().forEach(uri -> builder.redirectUri(uri.toString()));
+        client.postLogoutRedirectUris()
+                .forEach(uri -> builder.postLogoutRedirectUri(uri.toString()));
+        client.scopes().forEach(builder::scope);
+
+        if (!client.publicClient()) {
+            activeSecret(client, clock.instant()).ifPresent(secret -> {
+                builder.clientSecret(secret.secretHash());
+                builder.clientSecretExpiresAt(secret.expiresAt());
+            });
+        }
+        return builder.build();
+    }
+
+    private java.util.Optional<OAuthClientSecret> activeSecret(
+            OAuthClient client, Instant now) {
+        return client.secrets().stream()
+                .filter(secret -> secret.revokedAt() == null)
+                .filter(secret -> secret.expiresAt() == null || secret.expiresAt().isAfter(now))
+                .max(Comparator.comparing(OAuthClientSecret::createdAt));
+    }
+}
