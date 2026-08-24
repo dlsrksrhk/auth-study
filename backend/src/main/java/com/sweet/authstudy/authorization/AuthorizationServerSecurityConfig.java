@@ -13,6 +13,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -27,7 +28,6 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.authentication.ClientSecretAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
-import org.springframework.security.oauth2.server.authorization.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.web.SecurityFilterChain;
@@ -50,17 +50,18 @@ public class AuthorizationServerSecurityConfig {
             java.time.Clock clock,
             ObjectProvider<OAuth2AuthorizationService> authorizationServices,
             ObjectProvider<OAuth2AuthorizationConsentService> consentServices,
-            ObjectProvider<JWKSource<SecurityContext>> jwkSources) throws Exception {
+            ObjectProvider<JWKSource<SecurityContext>> jwkSources,
+            @Qualifier("oauthJwtDecoder") ObjectProvider<JwtDecoder> oauthJwtDecoders) throws Exception {
         JWKSource<SecurityContext> jwkSource = jwkSources.getIfAvailable();
+        JwtDecoder oauthJwtDecoder = oauthJwtDecoders.getIfAvailable();
         OAuth2AuthorizationService authorizationService = authorizationServices.getIfAvailable();
         OAuth2AuthorizationConsentService consentService = consentServices.getIfAvailable();
-        if (jwkSource != null && authorizationService != null && consentService != null) {
+        if (jwkSource != null && oauthJwtDecoder != null
+                && authorizationService != null && consentService != null) {
             OAuth2AuthorizationServerConfigurer authorizationServer =
                     OAuth2AuthorizationServerConfigurer.authorizationServer();
             http.setSharedObject(JwtEncoder.class, new NimbusJwtEncoder(jwkSource));
-            http.setSharedObject(
-                    JwtDecoder.class,
-                    OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource));
+            http.setSharedObject(JwtDecoder.class, oauthJwtDecoder);
             http.with(authorizationServer, server -> server
                     .registeredClientRepository(registeredClients)
                     .authorizationService(authorizationService)
@@ -105,6 +106,11 @@ public class AuthorizationServerSecurityConfig {
     AuthorizationServerSettings authorizationServerSettings(OAuthSecurityProperties properties) {
         return AuthorizationServerSettings.builder()
                 .issuer(properties.issuer().toString())
+                .authorizationEndpoint("/oauth2/authorize")
+                .tokenEndpoint("/oauth2/token")
+                .jwkSetEndpoint("/oauth2/jwks")
+                .oidcUserInfoEndpoint("/userinfo")
+                .oidcLogoutEndpoint("/connect/logout")
                 .build();
     }
 

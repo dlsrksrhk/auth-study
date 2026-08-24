@@ -15,6 +15,9 @@ app:
     session-absolute-timeout: 8h
     session-cookie-name: IDP_AUTH_SESSION
     user-info-audience: auth-study-userinfo
+    # LOCAL-ONLY wrapping material. Never reuse this key outside the learning profile.
+    signing-key-wrapping-key-id: local-dev-oauth-wrap-v1
+    signing-key-wrapping-key-base64: PYFkQN/x1n7sZ8wKp9HXRZRTT8D2ljbxMikQqFAONhg=
   security:
     jwt:
       secret: wX9uFnX9dXni4q5HKQv7oiVQak9aTUGq6xov2mT2Dk8=

@@ -9,6 +9,9 @@ app:
     session-absolute-timeout: 8h
     session-cookie-name: IDP_AUTH_SESSION
     user-info-audience: auth-study-userinfo
+    # Test-only key, intentionally different from the committed local development key.
+    signing-key-wrapping-key-id: local-test-oauth-wrap-v1
+    signing-key-wrapping-key-base64: cnmmvUQ2YI7i4s03NWkvSOT0fmFKLvT2FWQCas9LMr8=
   security:
     jwt:
       secret: wX9uFnX9dXni4q5HKQv7oiVQak9aTUGq6xov2mT2Dk8=

@@ -16,6 +16,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -41,7 +43,8 @@ public class SecurityConfig {
     @Bean
     @Order(2)
     SecurityFilterChain securityFilterChain(HttpSecurity http, JwtAuthenticationConverter converter,
-            SameOriginRequestGuard sameOriginRequestGuard, SecurityProblemWriter problemWriter) throws Exception {
+            SameOriginRequestGuard sameOriginRequestGuard, SecurityProblemWriter problemWriter,
+            @Qualifier("hrJwtDecoder") JwtDecoder hrJwtDecoder) throws Exception {
         return http.securityMatcher("/api/v1/**")
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -57,19 +60,20 @@ public class SecurityConfig {
                 .oauth2ResourceServer(resource -> resource
                         .authenticationEntryPoint((request, response, exception) -> problemWriter.write(
                                 request, response, ErrorCode.UNAUTHENTICATED, "Authentication is required."))
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(converter)))
+                        .jwt(jwt -> jwt.decoder(hrJwtDecoder).jwtAuthenticationConverter(converter)))
                 .addFilterBefore(sameOriginRequestGuard, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(passwordChangeOnlyFilter(problemWriter), BearerTokenAuthenticationFilter.class)
                 .build();
     }
 
     @Bean
-    JwtEncoder jwtEncoder(AppSecurityProperties properties) {
+    JwtEncoder hrJwtEncoder(AppSecurityProperties properties) {
         return new NimbusJwtEncoder(new ImmutableSecret<>(secretKey(properties)));
     }
 
     @Bean
-    JwtDecoder jwtDecoder(AppSecurityProperties properties) {
+    @Primary
+    JwtDecoder hrJwtDecoder(AppSecurityProperties properties) {
         return NimbusJwtDecoder.withSecretKey(secretKey(properties)).macAlgorithm(MacAlgorithm.HS256).build();
     }
 

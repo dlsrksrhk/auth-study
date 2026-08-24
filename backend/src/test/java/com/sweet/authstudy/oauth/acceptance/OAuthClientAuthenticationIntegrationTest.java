@@ -10,20 +10,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.interfaces.RSAPrivateKey;
-import java.security.interfaces.RSAPublicKey;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Optional;
 import java.util.Set;
 
-import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
-import com.nimbusds.jose.jwk.source.JWKSource;
-import com.nimbusds.jose.proc.SecurityContext;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
@@ -169,16 +160,5 @@ class OAuthClientAuthenticationIntegrationTest {
             return new InMemoryOAuth2AuthorizationConsentService();
         }
 
-        @Bean
-        JWKSource<SecurityContext> oauthTestJwkSource() throws Exception {
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            KeyPair pair = generator.generateKeyPair();
-            RSAKey rsaKey = new RSAKey.Builder((RSAPublicKey) pair.getPublic())
-                    .privateKey((RSAPrivateKey) pair.getPrivate())
-                    .keyID("test-oauth-rs256")
-                    .build();
-            return new ImmutableJWKSet<>(new JWKSet(rsaKey));
-        }
     }
 }

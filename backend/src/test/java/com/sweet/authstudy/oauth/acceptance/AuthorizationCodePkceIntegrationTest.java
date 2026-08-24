@@ -14,11 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
-import java.security.interfaces.RSAPrivateKey;
-import java.security.interfaces.RSAPublicKey;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -35,19 +31,12 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
-import com.nimbusds.jose.jwk.source.JWKSource;
-import com.nimbusds.jose.proc.SecurityContext;
 import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
@@ -62,8 +51,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@Import({PostgresContainerConfiguration.class,
-        AuthorizationCodePkceIntegrationTest.ProtocolTestConfiguration.class})
+@Import(PostgresContainerConfiguration.class)
 @ActiveProfiles("test")
 class AuthorizationCodePkceIntegrationTest {
 
@@ -726,18 +714,4 @@ class AuthorizationCodePkceIntegrationTest {
     private record IssuedCode(String code, String authorizationId) { }
     private record ExchangeResult(int status, String error) { }
 
-    @TestConfiguration(proxyBeanMethods = false)
-    static class ProtocolTestConfiguration {
-        @Bean
-        JWKSource<SecurityContext> taskSevenTestJwkSource() throws Exception {
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            KeyPair pair = generator.generateKeyPair();
-            RSAKey rsaKey = new RSAKey.Builder((RSAPublicKey) pair.getPublic())
-                    .privateKey((RSAPrivateKey) pair.getPrivate())
-                    .keyID("task-seven-test-rs256")
-                    .build();
-            return new ImmutableJWKSet<>(new JWKSet(rsaKey));
-        }
-    }
 }

@@ -12,6 +12,7 @@ import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.stereotype.Service;
 
@@ -21,7 +22,8 @@ public class NimbusJwtTokenService implements JwtTokenService {
     private final AppSecurityProperties properties;
     private final Clock clock;
 
-    public NimbusJwtTokenService(JwtEncoder encoder, AppSecurityProperties properties, Clock clock) {
+    public NimbusJwtTokenService(@Qualifier("hrJwtEncoder") JwtEncoder encoder,
+            AppSecurityProperties properties, Clock clock) {
         this.encoder = encoder;
         this.properties = properties;
         this.clock = clock;

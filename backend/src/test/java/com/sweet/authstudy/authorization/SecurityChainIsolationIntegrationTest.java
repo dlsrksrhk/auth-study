@@ -32,8 +32,8 @@ class SecurityChainIsolationIntegrationTest {
     private ApplicationContext applicationContext;
 
     @Test
-    void production_context_has_no_oauth_jwk_source_before_task_eight() {
-        assertThat(applicationContext.getBeanNamesForType(JWKSource.class)).isEmpty();
+    void production_context_has_exactly_one_project_oauth_jwk_source() {
+        assertThat(applicationContext.getBeanNamesForType(JWKSource.class)).hasSize(1);
     }
 
     @Test
@@ -65,6 +65,6 @@ class SecurityChainIsolationIntegrationTest {
         mockMvc.perform(post("/oauth2/token")
                         .with(csrf())
                         .header("Origin", "http://idp.localhost:8080"))
-                .andExpect(status().isNotImplemented());
+                .andExpect(status().isBadRequest());
     }
 }
