@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 
 interface OAuthAuthorizationCodeJpaRepository extends JpaRepository<OAuthAuthorizationCodeJpaEntity, Long> {
     Optional<OAuthAuthorizationCodeJpaEntity> findByAuthorizationId(String authorizationId);
+    Optional<OAuthAuthorizationCodeJpaEntity> findByCodeHash(String codeHash);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select c from OAuthAuthorizationCodeJpaEntity c where c.codeHash = :hash")
     Optional<OAuthAuthorizationCodeJpaEntity> findByCodeHashForUpdate(@Param("hash") String hash);

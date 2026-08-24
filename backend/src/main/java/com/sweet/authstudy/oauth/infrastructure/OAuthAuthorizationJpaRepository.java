@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizationJpaEntity, String> {
+    java.util.Optional<OAuthAuthorizationJpaEntity> findByState(String state);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update OAuthAuthorizationJpaEntity a

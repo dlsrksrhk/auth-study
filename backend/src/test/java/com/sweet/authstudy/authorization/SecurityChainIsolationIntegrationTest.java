@@ -1,13 +1,16 @@
 package com.sweet.authstudy.authorization;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
+import com.nimbusds.jose.jwk.source.JWKSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -24,6 +27,14 @@ class SecurityChainIsolationIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ApplicationContext applicationContext;
+
+    @Test
+    void production_context_has_no_oauth_jwk_source_before_task_eight() {
+        assertThat(applicationContext.getBeanNamesForType(JWKSource.class)).isEmpty();
+    }
 
     @Test
     void idpLoginCreatesOnlyIdpSessionWhileApiRemainsStateless() throws Exception {

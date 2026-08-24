@@ -6,6 +6,8 @@ import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.infrastructure.OAuthClientSecretPasswordEncoder;
+import com.sweet.authstudy.oauth.infrastructure.AtomicAuthorizationCodeClientAuthenticationProvider;
+import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -45,6 +47,7 @@ public class AuthorizationServerSecurityConfig {
             OAuthSecurityProperties properties,
             AuthorizationServerSettings authorizationServerSettings,
             RegisteredClientRepository registeredClients,
+            java.time.Clock clock,
             ObjectProvider<OAuth2AuthorizationService> authorizationServices,
             ObjectProvider<OAuth2AuthorizationConsentService> consentServices,
             ObjectProvider<JWKSource<SecurityContext>> jwkSources) throws Exception {
@@ -64,13 +67,25 @@ public class AuthorizationServerSecurityConfig {
                     .authorizationConsentService(consentService)
                     .authorizationServerSettings(authorizationServerSettings)
                     .oidc(Customizer.withDefaults())
-                    .clientAuthentication(clientAuthentication ->
-                            clientAuthentication.authenticationProviders(providers ->
-                                    providers.stream()
+                    .clientAuthentication(clientAuthentication -> clientAuthentication
+                            .authenticationConverters(converters -> {
+                                if (authorizationService instanceof SpringOAuth2AuthorizationService) {
+                                    converters.add(0,
+                                            new AtomicAuthorizationCodeClientAuthenticationProvider.Converter());
+                                }
+                            })
+                            .authenticationProviders(providers -> {
+                                if (authorizationService instanceof SpringOAuth2AuthorizationService springService) {
+                                    providers.add(0, new AtomicAuthorizationCodeClientAuthenticationProvider(
+                                            registeredClients, springService,
+                                            new OAuthClientSecretPasswordEncoder(), clock));
+                                }
+                                providers.stream()
                                             .filter(ClientSecretAuthenticationProvider.class::isInstance)
                                             .map(ClientSecretAuthenticationProvider.class::cast)
                                             .forEach(provider -> provider.setPasswordEncoder(
-                                                    new OAuthClientSecretPasswordEncoder())))));
+                                                    new OAuthClientSecretPasswordEncoder()));
+                            })));
         }
 
         return http.securityMatcher("/.well-known/**", "/oauth2/**", "/userinfo", "/connect/logout", "/idp/**")

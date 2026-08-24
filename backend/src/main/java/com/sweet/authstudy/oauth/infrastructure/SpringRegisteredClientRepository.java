@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
 
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
@@ -14,6 +15,7 @@ import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
+import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -21,10 +23,13 @@ public class SpringRegisteredClientRepository implements RegisteredClientReposit
 
     private final OAuthClientRepository clients;
     private final Clock clock;
+    private final OAuthSecurityProperties properties;
 
-    public SpringRegisteredClientRepository(OAuthClientRepository clients, Clock clock) {
+    public SpringRegisteredClientRepository(OAuthClientRepository clients, Clock clock,
+            OAuthSecurityProperties properties) {
         this.clients = clients;
         this.clock = clock;
+        this.properties = properties;
     }
 
     @Override
@@ -76,6 +81,11 @@ public class SpringRegisteredClientRepository implements RegisteredClientReposit
                         .requireProofKey(true)
                         .requireAuthorizationConsent(
                                 client.trust() == OAuthClientTrust.CONSENT_REQUIRED)
+                        .build())
+                .tokenSettings(TokenSettings.builder()
+                        .authorizationCodeTimeToLive(properties.authorizationCodeTtl())
+                        .accessTokenTimeToLive(properties.accessTokenTtl())
+                        .refreshTokenTimeToLive(properties.refreshTokenTtl())
                         .build());
 
         client.redirectUris().forEach(uri -> builder.redirectUri(uri.toString()));

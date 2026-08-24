@@ -1,0 +1,346 @@
+package com.sweet.authstudy.oauth.infrastructure;
+
+import java.net.URI;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.Principal;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
+import com.sweet.authstudy.oauth.domain.OAuthClient;
+import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
+import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
+import com.sweet.authstudy.oauth.domain.OAuthSubject;
+import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
+import org.springframework.security.oauth2.core.OAuth2AccessToken;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
+import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
+import org.springframework.stereotype.Component;
+
+/**
+ * Maps Spring Authorization Server protocol objects to the deliberately small persistence model.
+ * Raw token values exist only on the Spring side and are hashed before a domain object is created.
+ */
+@Component
+public final class OAuthAuthorizationMapper {
+
+    private static final String CODE_CHALLENGE = "code_challenge";
+    private static final String CODE_CHALLENGE_METHOD = "code_challenge_method";
+    private static final String NONCE = "nonce";
+
+    private final OAuthClientRepository clients;
+    private final OAuthSubjectRepository subjects;
+    private final OAuthSecurityProperties properties;
+    private final Clock clock;
+
+    public OAuthAuthorizationMapper(OAuthClientRepository clients, OAuthSubjectRepository subjects,
+            OAuthSecurityProperties properties, Clock clock) {
+        this.clients = clients;
+        this.subjects = subjects;
+        this.properties = properties;
+        this.clock = clock;
+    }
+
+    com.sweet.authstudy.oauth.domain.OAuthAuthorization toDomain(
+            OAuth2Authorization source,
+            com.sweet.authstudy.oauth.domain.OAuthAuthorization existing) {
+        Objects.requireNonNull(source, "authorization");
+        long registeredClientId = parseId(source.getRegisteredClientId(), "registered client id");
+        long accountId = parseId(source.getPrincipalName(), "principal account id");
+        OAuthClient client = clients.findById(registeredClientId)
+                .filter(candidate -> candidate.status() == OAuthClientStatus.ACTIVE)
+                .orElseThrow(() -> new IllegalArgumentException("Active OAuth client does not exist."));
+        OAuthSubject subject = subjects.findByAccountId(accountId)
+                .orElseThrow(() -> new IllegalArgumentException("OAuth subject does not exist for principal account id."));
+        org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest request =
+                requiredAuthorizationRequest(source);
+        validateRequest(client, request);
+
+        Instant createdAt = existing == null ? earliestIssuedAt(source) : existing.createdAt();
+        Instant authenticatedAt = existing == null ? createdAt : existing.authenticatedAt();
+        Instant expiresAt = existing == null
+                ? createdAt.plus(properties.refreshTokenTtl())
+                : existing.expiresAt();
+        com.sweet.authstudy.oauth.domain.OAuthAuthorization mapped = existing == null
+                ? com.sweet.authstudy.oauth.domain.OAuthAuthorization.create(
+                        source.getId(),
+                        com.sweet.authstudy.oauth.domain.OAuthAuthorization.Ownership.verified(
+                                client, subject, accountId, client.companyId()),
+                        source.getAuthorizationGrantType().getValue(), source.getAuthorizedScopes(),
+                        new com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes(
+                                source.getPrincipalName(), request.getAuthorizationUri()),
+                        request.getState(), authenticatedAt, createdAt, expiresAt)
+                : com.sweet.authstudy.oauth.domain.OAuthAuthorization.restore(
+                        existing.id(), existing.registeredClientId(), existing.subject(),
+                        existing.principalAccountId(), existing.companyId(),
+                        source.getAuthorizationGrantType().getValue(), source.getAuthorizedScopes(),
+                        new com.sweet.authstudy.oauth.domain.OAuthAuthorization.Attributes(
+                                source.getPrincipalName(), request.getAuthorizationUri()),
+                        request.getState(), existing.authenticatedAt(), existing.status(),
+                        existing.revocationReason(), existing.createdAt(), existing.expiresAt(),
+                        existing.revokedAt(), null, null, null);
+
+        mapAuthorizationCode(source, request, existing).ifPresent(mapped::attachAuthorizationCode);
+        mapAccessToken(source, existing).ifPresent(mapped::attachAccessToken);
+        mapRefreshToken(source, existing).ifPresent(mapped::attachRefreshToken);
+        return mapped;
+    }
+
+    OAuth2Authorization toSpring(com.sweet.authstudy.oauth.domain.OAuthAuthorization source,
+            String lookedUpToken, String lookedUpTokenType) {
+        Objects.requireNonNull(source, "authorization");
+        if (source.status() != com.sweet.authstudy.oauth.domain.OAuthAuthorization.Status.ACTIVE
+                || source.revokedAt() != null) {
+            return null;
+        }
+        OAuthClient client = clients.findById(source.registeredClientId())
+                .filter(candidate -> candidate.status() == OAuthClientStatus.ACTIVE)
+                .orElse(null);
+        if (client == null) return null;
+
+        RegisteredClient registeredClient = registeredClient(client);
+        OAuth2Authorization.Builder builder = OAuth2Authorization.withRegisteredClient(registeredClient)
+                .id(source.id())
+                .principalName(source.attributes().principalName())
+                .authorizationGrantType(new AuthorizationGrantType(source.authorizationGrantType()))
+                .authorizedScopes(source.authorizedScopes());
+
+        OAuth2AuthorizationRequest request = authorizationRequest(source, client);
+        builder.attribute(OAuth2AuthorizationRequest.class.getName(), request)
+                .attribute(Principal.class.getName(), UsernamePasswordAuthenticationToken.authenticated(
+                        source.attributes().principalName(), "N/A", List.of()));
+
+        source.authorizationCode().ifPresent(code -> {
+            String value = tokenValue(code.codeHash(), lookedUpToken, lookedUpTokenType, "code");
+            org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode springCode =
+                    new org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode(
+                            value, code.issuedAt(), code.expiresAt());
+            builder.token(springCode, metadata -> {
+                if (code.usedAt() != null) {
+                    metadata.put(OAuth2Authorization.Token.INVALIDATED_METADATA_NAME, true);
+                }
+            });
+        });
+        source.accessToken().ifPresent(token -> {
+            String value = tokenValue(token.accessTokenHash(), lookedUpToken, lookedUpTokenType,
+                    org.springframework.security.oauth2.server.authorization.OAuth2TokenType.ACCESS_TOKEN.getValue());
+            OAuth2AccessToken springToken = new OAuth2AccessToken(
+                    OAuth2AccessToken.TokenType.BEARER, value, token.issuedAt(), token.expiresAt(),
+                    source.authorizedScopes());
+            builder.token(springToken, metadata -> {
+                metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME,
+                        Map.of("jti", token.jti(), "aud", List.of(token.audience())));
+                if (token.revokedAt() != null) {
+                    metadata.put(OAuth2Authorization.Token.INVALIDATED_METADATA_NAME, true);
+                }
+            });
+        });
+        source.refreshToken().ifPresent(token -> {
+            String value = tokenValue(token.refreshTokenHash(), lookedUpToken, lookedUpTokenType,
+                    org.springframework.security.oauth2.server.authorization.OAuth2TokenType.REFRESH_TOKEN.getValue());
+            OAuth2RefreshToken springToken = new OAuth2RefreshToken(value, token.issuedAt(), token.expiresAt());
+            builder.token(springToken, metadata -> {
+                if (token.usedAt() != null || token.revokedAt() != null) {
+                    metadata.put(OAuth2Authorization.Token.INVALIDATED_METADATA_NAME, true);
+                }
+            });
+        });
+        return builder.build();
+    }
+
+    static long parseId(String value, String label) {
+        try {
+            long parsed = Long.parseLong(value);
+            if (parsed <= 0) throw new NumberFormatException("non-positive");
+            return parsed;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(label + " must be a positive numeric account id.", exception);
+        }
+    }
+
+    static String sha256(String rawValue) {
+        if (rawValue == null || rawValue.isBlank()) {
+            throw new IllegalArgumentException("Token value must not be blank.");
+        }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(rawValue.getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable.", exception);
+        }
+    }
+
+    private java.util.Optional<OAuthAuthorizationCode> mapAuthorizationCode(
+            OAuth2Authorization source,
+            org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest request,
+            com.sweet.authstudy.oauth.domain.OAuthAuthorization existing) {
+        OAuth2Authorization.Token<org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode> token =
+                source.getToken(org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class);
+        if (token == null) return java.util.Optional.empty();
+        String hash = hashOrExisting(token.getToken().getTokenValue(),
+                existing == null ? null : existing.authorizationCode().orElse(null),
+                existingCode -> existingCode.codeHash());
+        OAuthAuthorizationCode previous = existing == null
+                ? null : existing.authorizationCode().orElse(null);
+        Instant expiresAt = token.getToken().getIssuedAt().plus(properties.authorizationCodeTtl());
+        return java.util.Optional.of(OAuthAuthorizationCode.restore(
+                previous != null && previous.codeHash().equals(hash) ? previous.id() : null,
+                source.getId(), hash, URI.create(request.getRedirectUri()),
+                request.getAdditionalParameters().get(CODE_CHALLENGE).toString(),
+                nullableString(request.getAdditionalParameters().get(NONCE)),
+                token.getToken().getIssuedAt(), expiresAt,
+                previous != null && previous.codeHash().equals(hash) ? previous.usedAt() : null));
+    }
+
+    private java.util.Optional<OAuthAccessToken> mapAccessToken(
+            OAuth2Authorization source,
+            com.sweet.authstudy.oauth.domain.OAuthAuthorization existing) {
+        OAuth2Authorization.Token<OAuth2AccessToken> token = source.getAccessToken();
+        if (token == null) return java.util.Optional.empty();
+        OAuthAccessToken previous = existing == null ? null : existing.accessToken().orElse(null);
+        String hash = hashOrExisting(token.getToken().getTokenValue(), previous,
+                OAuthAccessToken::accessTokenHash);
+        Map<String, Object> claims = token.getClaims();
+        String jti = nullableString(claims.get("jti"));
+        if (jti == null) jti = hash.substring(0, 32);
+        String audience = firstAudience(claims.get("aud"));
+        if (audience == null) audience = properties.userInfoAudience();
+        Instant revokedAt = previous != null && previous.accessTokenHash().equals(hash)
+                ? previous.revokedAt() : null;
+        Long id = previous != null && previous.accessTokenHash().equals(hash) ? previous.id() : null;
+        return java.util.Optional.of(OAuthAccessToken.restore(
+                id, source.getId(), hash, jti, audience, token.getToken().getIssuedAt(),
+                token.getToken().getExpiresAt(), revokedAt));
+    }
+
+    private java.util.Optional<OAuthRefreshToken> mapRefreshToken(
+            OAuth2Authorization source,
+            com.sweet.authstudy.oauth.domain.OAuthAuthorization existing) {
+        OAuth2Authorization.Token<OAuth2RefreshToken> token = source.getRefreshToken();
+        if (token == null) return java.util.Optional.empty();
+        OAuthRefreshToken previous = existing == null ? null : existing.refreshToken().orElse(null);
+        String hash = hashOrExisting(token.getToken().getTokenValue(), previous,
+                OAuthRefreshToken::refreshTokenHash);
+        boolean same = previous != null && previous.refreshTokenHash().equals(hash);
+        return java.util.Optional.of(OAuthRefreshToken.restore(
+                same ? previous.id() : null, source.getId(), hash,
+                same ? previous.familyId() : UUID.randomUUID(), token.getToken().getIssuedAt(),
+                token.getToken().getExpiresAt(), same ? previous.usedAt() : null,
+                same ? previous.revokedAt() : null, same ? previous.successorId() : null));
+    }
+
+    private <T> String hashOrExisting(String tokenValue, T existing,
+            java.util.function.Function<T, String> existingHash) {
+        if (existing != null && tokenValue.equals(existingHash.apply(existing))) {
+            return tokenValue;
+        }
+        return sha256(tokenValue);
+    }
+
+    private OAuth2AuthorizationRequest requiredAuthorizationRequest(OAuth2Authorization authorization) {
+        OAuth2AuthorizationRequest request = authorization.getAttribute(
+                OAuth2AuthorizationRequest.class.getName());
+        if (request == null) {
+            throw new IllegalArgumentException("OAuth2AuthorizationRequest attribute is required.");
+        }
+        return request;
+    }
+
+    private void validateRequest(OAuthClient client, OAuth2AuthorizationRequest request) {
+        if (!client.clientId().equals(request.getClientId())) {
+            throw new IllegalArgumentException("Authorization request client does not match.");
+        }
+        if (request.getRedirectUri() == null
+                || client.redirectUris().stream().noneMatch(uri -> uri.toString().equals(request.getRedirectUri()))) {
+            throw new IllegalArgumentException("Authorization request redirect URI must exactly match.");
+        }
+        Object challenge = request.getAdditionalParameters().get(CODE_CHALLENGE);
+        Object method = request.getAdditionalParameters().get(CODE_CHALLENGE_METHOD);
+        if (!(challenge instanceof String value) || !value.matches("[A-Za-z0-9_-]{43}")
+                || !"S256".equals(method)) {
+            throw new IllegalArgumentException("Authorization request must use PKCE S256.");
+        }
+    }
+
+    private OAuth2AuthorizationRequest authorizationRequest(
+            com.sweet.authstudy.oauth.domain.OAuthAuthorization authorization, OAuthClient client) {
+        OAuthAuthorizationCode code = authorization.authorizationCode()
+                .orElseThrow(() -> new IllegalStateException("Authorization code metadata is required."));
+        return OAuth2AuthorizationRequest.authorizationCode()
+                .authorizationUri(authorization.attributes().authorizationRequestUri())
+                .clientId(client.clientId())
+                .redirectUri(code.redirectUri().toString())
+                .scopes(authorization.authorizedScopes())
+                .state(authorization.state())
+                .additionalParameters(parameters -> {
+                    parameters.put(CODE_CHALLENGE, code.codeChallenge());
+                    parameters.put(CODE_CHALLENGE_METHOD, "S256");
+                    if (code.nonce() != null) parameters.put(NONCE, code.nonce());
+                })
+                .build();
+    }
+
+    private RegisteredClient registeredClient(OAuthClient client) {
+        RegisteredClient.Builder builder = RegisteredClient.withId(client.id().toString())
+                .clientId(client.clientId())
+                .clientAuthenticationMethod(client.publicClient()
+                        ? ClientAuthenticationMethod.NONE : ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .clientSettings(ClientSettings.builder().requireProofKey(true).build())
+                .tokenSettings(TokenSettings.builder()
+                        .authorizationCodeTimeToLive(properties.authorizationCodeTtl())
+                        .accessTokenTimeToLive(properties.accessTokenTtl())
+                        .build());
+        client.redirectUris().forEach(uri -> builder.redirectUri(uri.toString()));
+        client.scopes().forEach(builder::scope);
+        return builder.build();
+    }
+
+    private Instant earliestIssuedAt(OAuth2Authorization authorization) {
+        List<Instant> issued = new ArrayList<>();
+        OAuth2Authorization.Token<org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode> code =
+                authorization.getToken(org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class);
+        if (code != null) issued.add(code.getToken().getIssuedAt());
+        if (authorization.getAccessToken() != null) issued.add(authorization.getAccessToken().getToken().getIssuedAt());
+        if (authorization.getRefreshToken() != null) issued.add(authorization.getRefreshToken().getToken().getIssuedAt());
+        return issued.stream().filter(Objects::nonNull).min(Instant::compareTo).orElse(clock.instant());
+    }
+
+    private String firstAudience(Object value) {
+        if (value instanceof String audience && !audience.isBlank()) return audience;
+        if (value instanceof Collection<?> audiences) {
+            return audiences.stream().filter(Objects::nonNull).map(Object::toString)
+                    .filter(audience -> !audience.isBlank()).findFirst().orElse(null);
+        }
+        return null;
+    }
+
+    private String tokenValue(String hash, String lookedUpToken, String lookedUpTokenType,
+            String expectedType) {
+        return expectedType.equals(lookedUpTokenType) && lookedUpToken != null ? lookedUpToken : hash;
+    }
+
+    private String nullableString(Object value) {
+        return value == null ? null : value.toString();
+    }
+}

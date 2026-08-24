@@ -17,6 +17,8 @@ public interface OAuthAuthorizationRepository {
 
     OAuthAuthorization save(OAuthAuthorization authorization);
     Optional<OAuthAuthorization> findById(String id);
+    Optional<OAuthAuthorization> findByState(String state);
+    Optional<OAuthAuthorizationCode> findByCodeHash(String codeHash);
     Optional<OAuthAuthorizationCode> findByCodeHashForUpdate(String codeHash);
     /**
      * Locks and consumes a code in an independent transaction. A confirmed invalid exchange must be
@@ -25,6 +27,7 @@ public interface OAuthAuthorizationRepository {
     <T> Optional<CodeConsumption<T>> consumeCodeAtomically(
             String codeHash, Instant consumedAt, Function<OAuthAuthorizationCode, T> exchange);
     Optional<OAuthAccessToken> findByAccessTokenHash(String accessTokenHash);
+    Optional<OAuthRefreshToken> findByRefreshTokenHash(String refreshTokenHash);
     Optional<OAuthRefreshToken> findRefreshByHashForUpdate(String refreshTokenHash);
     OAuthAuthorizationCode saveAuthorizationCode(OAuthAuthorizationCode code);
     OAuthAccessToken saveAccessToken(OAuthAccessToken token);

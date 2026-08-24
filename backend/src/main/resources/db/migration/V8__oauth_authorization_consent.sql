@@ -75,6 +75,9 @@ CREATE TABLE oauth_authorization_code (
     CONSTRAINT ck_oauth_authorization_code_time_order CHECK (expires_at > issued_at)
 );
 
+CREATE UNIQUE INDEX uk_oauth_authorization_state
+    ON oauth_authorization(state) WHERE state IS NOT NULL;
+
 CREATE TABLE oauth_access_token (
     id BIGSERIAL PRIMARY KEY,
     authorization_id VARCHAR(128) NOT NULL REFERENCES oauth_authorization (id) ON DELETE CASCADE,

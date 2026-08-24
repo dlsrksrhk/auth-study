@@ -56,6 +56,19 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Optional<OAuthAuthorization> findByState(String state) {
+        return authorizations.findByState(state).flatMap(entity -> findById(entity.toDomain(
+                null, null, null).id()));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<OAuthAuthorizationCode> findByCodeHash(String codeHash) {
+        return codes.findByCodeHash(codeHash).map(OAuthAuthorizationCodeJpaEntity::toDomain);
+    }
+
+    @Override
     @Transactional(propagation = Propagation.MANDATORY)
     public Optional<OAuthAuthorizationCode> findByCodeHashForUpdate(String codeHash) {
         return codes.findByCodeHashForUpdate(codeHash).map(OAuthAuthorizationCodeJpaEntity::toDomain);
@@ -82,6 +95,13 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     @Transactional(readOnly = true)
     public Optional<OAuthAccessToken> findByAccessTokenHash(String accessTokenHash) {
         return accessTokens.findByAccessTokenHash(accessTokenHash).map(OAuthAccessTokenJpaEntity::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<OAuthRefreshToken> findByRefreshTokenHash(String refreshTokenHash) {
+        return refreshTokens.findByRefreshTokenHash(refreshTokenHash)
+                .map(OAuthRefreshTokenJpaEntity::toDomain);
     }
 
     @Override

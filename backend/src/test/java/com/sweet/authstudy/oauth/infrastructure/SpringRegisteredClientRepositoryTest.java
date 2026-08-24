@@ -6,12 +6,14 @@ import static org.mockito.Mockito.when;
 
 import java.net.URI;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.Set;
 
 import com.sweet.authstudy.oauth.domain.OAuthClient;
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
@@ -42,7 +44,7 @@ class SpringRegisteredClientRepositoryTest {
     @BeforeEach
     void setUp() {
         repository = new SpringRegisteredClientRepository(
-                clients, Clock.fixed(NOW, ZoneOffset.UTC));
+                clients, Clock.fixed(NOW, ZoneOffset.UTC), properties());
     }
 
     @Test
@@ -64,6 +66,12 @@ class SpringRegisteredClientRepositoryTest {
         assertThat(registered.getScopes()).containsExactlyInAnyOrder("openid", "profile");
         assertThat(registered.getClientSettings().isRequireProofKey()).isTrue();
         assertThat(registered.getClientSettings().isRequireAuthorizationConsent()).isTrue();
+        assertThat(registered.getTokenSettings().getAuthorizationCodeTimeToLive())
+                .isEqualTo(Duration.ofSeconds(60));
+        assertThat(registered.getTokenSettings().getAccessTokenTimeToLive())
+                .isEqualTo(Duration.ofMinutes(5));
+        assertThat(registered.getTokenSettings().getRefreshTokenTimeToLive())
+                .isEqualTo(Duration.ofDays(7));
     }
 
     @Test
@@ -147,5 +155,13 @@ class SpringRegisteredClientRepositoryTest {
                 Set.of(OAuthClientSecret.restore(
                         7L, hash, "cret", NOW.minusSeconds(120), null, null, 0)),
                 NOW.minusSeconds(600), NOW.minusSeconds(120));
+    }
+
+    private OAuthSecurityProperties properties() {
+        return new OAuthSecurityProperties(
+                URI.create("http://idp.localhost:8080"), Duration.ofSeconds(60),
+                Duration.ofMinutes(5), Duration.ofMinutes(5), Duration.ofDays(7),
+                Duration.ofMinutes(30), Duration.ofHours(8), "IDP_AUTH_SESSION",
+                "auth-study-userinfo");
     }
 }
