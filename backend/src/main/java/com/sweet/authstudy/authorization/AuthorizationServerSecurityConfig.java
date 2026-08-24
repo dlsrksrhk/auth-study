@@ -69,8 +69,7 @@ public class AuthorizationServerSecurityConfig {
         private boolean requiresOriginCheck(HttpServletRequest request) {
             if ("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod())
                     || "OPTIONS".equals(request.getMethod())) return false;
-            String path = request.getRequestURI();
-            return path.startsWith("/idp/") || path.equals("/connect/logout");
+            return true;
         }
     }
 }
