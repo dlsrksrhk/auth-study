@@ -17,6 +17,7 @@ import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.infrastructure.OAuthClientSecretPasswordEncoder;
+import com.sweet.authstudy.oauth.infrastructure.OidcUserInfoMapper;
 import com.sweet.authstudy.oauth.infrastructure.AtomicAuthorizationCodeClientAuthenticationProvider;
 import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
 import com.sweet.authstudy.oauth.presentation.IdpLoginController;
@@ -31,11 +32,18 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.server.ServletServerHttpResponse;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.authentication.ClientSecretAuthenticationProvider;
@@ -66,6 +74,7 @@ public class AuthorizationServerSecurityConfig {
             OAuthClientRepository oauthClients,
             IdpSessionStateService sessionStates,
             OAuthConsentService oauthConsents,
+            OidcUserInfoMapper userInfoMapper,
             Clock clock,
             ObjectProvider<OAuth2AuthorizationService> authorizationServices,
             ObjectProvider<OAuth2AuthorizationConsentService> consentServices,
@@ -102,7 +111,9 @@ public class AuthorizationServerSecurityConfig {
                                         return approved == null || !approved.getScopes().containsAll(
                                                 context.getAuthorizationRequest().getScopes());
                                     }))))
-                    .oidc(Customizer.withDefaults())
+                    .oidc(oidc -> oidc.userInfoEndpoint(userInfo -> userInfo
+                            .userInfoMapper(userInfoMapper)
+                            .errorResponseHandler(AuthorizationServerSecurityConfig::writeInvalidToken)))
                     .clientAuthentication(clientAuthentication -> clientAuthentication
                             .authenticationConverters(converters -> {
                                 if (authorizationService instanceof SpringOAuth2AuthorizationService) {
@@ -122,6 +133,9 @@ public class AuthorizationServerSecurityConfig {
                                             .forEach(provider -> provider.setPasswordEncoder(
                                                     new OAuthClientSecretPasswordEncoder()));
                             })));
+            http.oauth2ResourceServer(resourceServer -> resourceServer
+                    .authenticationEntryPoint(AuthorizationServerSecurityConfig::writeInvalidToken)
+                    .jwt(jwt -> jwt.decoder(oauthJwtDecoder)));
         }
 
         IdpBrowserRequestFilter browserRequestFilter = new IdpBrowserRequestFilter(
@@ -142,6 +156,15 @@ public class AuthorizationServerSecurityConfig {
                         .authenticationEntryPoint(new LoginUrlAuthenticationEntryPoint("/idp/login")))
                 .addFilterAfter(browserRequestFilter, SecurityContextHolderFilter.class)
                 .build();
+    }
+
+    private static void writeInvalidToken(HttpServletRequest request, HttpServletResponse response,
+            AuthenticationException exception) throws IOException {
+        OAuth2Error error = new OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN);
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Bearer error=\"invalid_token\"");
+        new OAuth2ErrorHttpMessageConverter().write(
+                error, MediaType.APPLICATION_JSON, new ServletServerHttpResponse(response));
     }
 
     @Bean

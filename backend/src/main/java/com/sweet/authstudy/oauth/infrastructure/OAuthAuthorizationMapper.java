@@ -36,6 +36,7 @@ import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
@@ -178,6 +179,16 @@ public final class OAuthAuthorizationMapper {
                 }
             });
         });
+        if (source.authorizedScopes().contains("openid")) {
+            source.accessToken().ifPresent(token -> builder.token(OidcIdToken
+                    .withTokenValue("userinfo-metadata:" + source.id())
+                    .issuer(properties.issuer().toString())
+                    .subject(source.subject().toString())
+                    .audience(List.of(client.clientId()))
+                    .issuedAt(token.issuedAt())
+                    .expiresAt(token.expiresAt())
+                    .build()));
+        }
         source.refreshToken().ifPresent(token -> {
             String value = tokenValue(token.refreshTokenHash(), lookedUpToken, lookedUpTokenType,
                     org.springframework.security.oauth2.server.authorization.OAuth2TokenType.REFRESH_TOKEN.getValue());
