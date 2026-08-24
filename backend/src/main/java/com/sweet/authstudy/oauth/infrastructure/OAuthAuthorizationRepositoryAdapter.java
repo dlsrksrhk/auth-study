@@ -78,6 +78,17 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     }
 
     @Override
+    @Transactional
+    public Optional<OAuthAuthorization> findByIdForUpdate(String id) {
+        return authorizations.findByIdForUpdate(id).map(entity -> entity.toDomain(
+                codes.findByAuthorizationId(id).map(OAuthAuthorizationCodeJpaEntity::toDomain).orElse(null),
+                accessTokens.findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(id)
+                        .map(OAuthAccessTokenJpaEntity::toDomain).orElse(null),
+                refreshTokens.findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(id)
+                        .map(OAuthRefreshTokenJpaEntity::toDomain).orElse(null)));
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public Optional<OAuthAuthorization> findByServerStateHash(String serverStateHash) {
         return authorizations.findByServerStateHash(serverStateHash).flatMap(entity -> findById(entity.toDomain(
@@ -112,7 +123,8 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 OAuthAuthorization authorization = authorizationEntity.toDomain(code, null, null);
                 OAuthClientJpaEntity clientEntity = clients.findByIdForUpdate(authorization.registeredClientId())
                         .orElseThrow(() -> new IllegalStateException("OAuth client does not exist for authorization."));
-                boolean principalActive = lockAndValidatePrincipal(authorization, clientEntity.toDomain());
+                boolean principalActive = lockAndValidatePrincipal(
+                        authorization, clientEntity.toDomain(), consumedAt);
                 exchangeResult = Optional.ofNullable(exchange.apply(
                         new LockedCodeExchange(code, authorization, clientEntity.toDomain(), principalActive)));
             }
@@ -140,7 +152,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 .findByIdForUpdate(authorization.registeredClientId()).orElse(null);
         if (clientEntity == null) return CodeFinalizationResult.INVALID;
         OAuthClient client = clientEntity.toDomain();
-        boolean principalActive = lockAndValidatePrincipal(authorization, client);
+        boolean principalActive = lockAndValidatePrincipal(authorization, client, finalizedAt);
         OAuthAuthorizationCodeExchangeBinding lockedBinding;
         try {
             lockedBinding = OAuthAuthorizationCodeExchangeBinding.captureLocked(code, authorization, client);
@@ -195,7 +207,8 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                     || authorization.id().equals(finalization.refreshToken().authorizationId()));
     }
 
-    private boolean lockAndValidatePrincipal(OAuthAuthorization authorization, OAuthClient client) {
+    private boolean lockAndValidatePrincipal(
+            OAuthAuthorization authorization, OAuthClient client, Instant checkedAt) {
         Company company = companies.findLockedById(authorization.companyId()).orElse(null);
         Account account = accounts.findByIdForUpdate(authorization.principalAccountId()).orElse(null);
         HrUser user = account == null || account.userId() == null
@@ -205,6 +218,8 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 && user != null
                 && company.status() == CompanyStatus.ACTIVE
                 && account.status() == AccountStatus.ACTIVE
+                && !account.mustChangePassword()
+                && (account.lockedUntil() == null || !account.lockedUntil().isAfter(checkedAt))
                 && user.status() == UserStatus.ACTIVE
                 && java.util.Objects.equals(account.companyId(), authorization.companyId())
                 && java.util.Objects.equals(account.userId(), user.id())

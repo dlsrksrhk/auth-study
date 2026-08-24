@@ -171,7 +171,7 @@ public class IdpLoginController {
         request.changeSessionId();
         Instant now = clock.instant();
         IdpSessionAuthentication refreshed = new IdpSessionAuthentication(
-                idp.accountId(), idp.companyId(), idp.userId(), idp.roles(), idp.sub(), now);
+                idp.accountId(), idp.companyId(), idp.userId(), idp.roles(), idp.sub(), idp.authenticatedAt());
         establishAuthentication(session, refreshed, false, now);
         addSessionCookie(response, properties, session.getId());
         return "redirect:" + consumePendingUri(session);
@@ -282,15 +282,21 @@ public class IdpLoginController {
     public static void addSessionCookie(HttpServletResponse response,
             OAuthSecurityProperties properties, String sessionId) {
         ResponseCookie cookie = ResponseCookie.from(properties.sessionCookieName(), sessionId)
-                .httpOnly(true).secure(false).path("/").sameSite("Lax").build();
+                .httpOnly(true).secure(properties.sessionCookieSecure()).path("/").sameSite("Lax").build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
     }
 
     public static void expireSessionCookie(HttpServletResponse response, OAuthSecurityProperties properties) {
         ResponseCookie cookie = ResponseCookie.from(properties.sessionCookieName(), "")
-                .httpOnly(true).secure(false).path("/").sameSite("Lax")
+                .httpOnly(true).secure(properties.sessionCookieSecure()).path("/").sameSite("Lax")
                 .maxAge(Duration.ZERO).build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+    }
+
+    public static void clearPendingBrowserState(HttpSession session) {
+        if (session == null) return;
+        session.removeAttribute(PENDING_AUTHORIZATION_ATTRIBUTE);
+        session.removeAttribute(LOGIN_FLOW_ATTRIBUTE);
     }
 
     public record PendingAuthorizationRequest(
@@ -307,8 +313,6 @@ public class IdpLoginController {
             if (registeredClientId <= 0) throw new IllegalArgumentException("registeredClientId must be positive.");
             clientId = requireText(clientId, "clientId");
             redirectUri = requireText(redirectUri, "redirectUri");
-            state = requireText(state, "state");
-            nonce = requireText(nonce, "nonce");
             requestedScopes = Set.copyOf(requestedScopes);
             codeChallenge = requireText(codeChallenge, "codeChallenge");
             if (!"S256".equals(codeChallengeMethod)) {

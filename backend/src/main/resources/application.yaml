@@ -12,3 +12,6 @@ server:
     session:
       cookie:
         name: ${app.oauth.session-cookie-name}
+        http-only: true
+        secure: ${app.oauth.session-cookie-secure:true}
+        same-site: lax

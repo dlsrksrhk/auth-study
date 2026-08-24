@@ -8,6 +8,7 @@ app:
     session-idle-timeout: 30m
     session-absolute-timeout: 8h
     session-cookie-name: IDP_AUTH_SESSION
+    session-cookie-secure: false
     user-info-audience: auth-study-userinfo
     # Test-only key, intentionally different from the committed local development key.
     signing-key-wrapping-key-id: local-test-oauth-wrap-v1

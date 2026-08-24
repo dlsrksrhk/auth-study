@@ -8,6 +8,7 @@ public interface OAuthClientRepository {
     OAuthClient save(OAuthClient client);
 
     Optional<OAuthClient> findById(long id);
+    default Optional<OAuthClient> findByIdForUpdate(long id) { return findById(id); }
 
     Optional<OAuthClient> findByClientId(String clientId);
 

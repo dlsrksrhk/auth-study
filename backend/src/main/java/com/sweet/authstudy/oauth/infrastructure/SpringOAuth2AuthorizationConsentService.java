@@ -2,6 +2,7 @@ package com.sweet.authstudy.oauth.infrastructure;
 
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
 import org.springframework.context.annotation.Primary;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.stereotype.Service;
@@ -12,9 +13,17 @@ import org.springframework.util.Assert;
 public final class SpringOAuth2AuthorizationConsentService implements OAuth2AuthorizationConsentService {
 
     private final OAuthConsentService consents;
+    private final OAuthConsentDecisionContext decisions;
 
     public SpringOAuth2AuthorizationConsentService(OAuthConsentService consents) {
+        this(consents, null);
+    }
+
+    @Autowired
+    SpringOAuth2AuthorizationConsentService(OAuthConsentService consents,
+            OAuthConsentDecisionContext decisions) {
         this.consents = consents;
+        this.decisions = decisions;
     }
 
     @Override
@@ -24,7 +33,16 @@ public final class SpringOAuth2AuthorizationConsentService implements OAuth2Auth
                 authorizationConsent.getRegisteredClientId(), "registered client id");
         long accountId = OAuthAuthorizationMapper.parseId(
                 authorizationConsent.getPrincipalName(), "principal account id");
-        consents.approve(accountId, clientId, authorizationConsent.getScopes());
+        OAuthConsentService.ApprovalDecision decision = decisions == null ? null : decisions.validated();
+        if (decision == null) {
+            consents.approve(accountId, clientId, authorizationConsent.getScopes());
+            return;
+        }
+        if (decision.accountId() != accountId || decision.registeredClientId() != clientId
+                || !decision.approvedScopes().equals(authorizationConsent.getScopes())) {
+            throw new IllegalArgumentException("SAS consent does not match the validated decision.");
+        }
+        decisions.stage(decision);
     }
 
     @Override

@@ -47,6 +47,7 @@ public interface OAuthAuthorizationRepository {
 
     OAuthAuthorization save(OAuthAuthorization authorization);
     Optional<OAuthAuthorization> findById(String id);
+    default Optional<OAuthAuthorization> findByIdForUpdate(String id) { return findById(id); }
     Optional<OAuthAuthorization> findByServerStateHash(String serverStateHash);
     Optional<OAuthAuthorizationCode> findByCodeHash(String codeHash);
     Optional<OAuthAuthorizationCode> findByCodeHashForUpdate(String codeHash);

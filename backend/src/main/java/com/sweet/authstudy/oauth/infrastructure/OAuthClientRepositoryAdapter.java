@@ -34,6 +34,11 @@ public class OAuthClientRepositoryAdapter implements OAuthClientRepository {
     }
 
     @Override
+    public Optional<OAuthClient> findByIdForUpdate(long id) {
+        return repository.findByIdForUpdate(id).map(OAuthClientJpaEntity::toDomain);
+    }
+
+    @Override
     public Optional<OAuthClient> findByClientId(String clientId) {
         return repository.findByClientId(clientId).map(OAuthClientJpaEntity::toDomain);
     }

@@ -29,6 +29,7 @@ import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
 import com.sweet.authstudy.oauth.domain.OAuthSubject;
 import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
+import com.sweet.authstudy.oauth.presentation.IdpSessionAuthentication;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
@@ -93,7 +94,9 @@ public final class OAuthAuthorizationMapper {
         String serverStateHash = serverStateHash(source);
 
         Instant createdAt = existing == null ? earliestIssuedAt(source) : existing.createdAt();
-        Instant authenticatedAt = existing == null ? createdAt : existing.authenticatedAt();
+        Instant authenticatedAt = existing == null
+                ? initialAuthenticatedAt(source, accountId, createdAt)
+                : existing.authenticatedAt();
         Instant expiresAt = existing == null
                 ? createdAt.plus(properties.refreshTokenTtl())
                 : existing.expiresAt();
@@ -196,6 +199,17 @@ public final class OAuthAuthorizationMapper {
         } catch (NumberFormatException exception) {
             throw new IllegalArgumentException(label + " must be a positive numeric account id.", exception);
         }
+    }
+
+    private Instant initialAuthenticatedAt(
+            OAuth2Authorization source, long accountId, Instant fallback) {
+        Object principal = source.getAttribute(Principal.class.getName());
+        if (principal instanceof IdpSessionAuthentication idp
+                && idp.accountId() == accountId
+                && idp.getName().equals(source.getPrincipalName())) {
+            return idp.authenticatedAt();
+        }
+        return fallback;
     }
 
     static String sha256(String rawValue) {

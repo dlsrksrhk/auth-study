@@ -1,8 +1,11 @@
 package com.sweet.authstudy.oauth.application;
 
 import java.time.Clock;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -93,6 +96,36 @@ public class OAuthConsentService {
         return new ConsentReview(client.id(), client.clientId(), client.displayName(), all, newlyRequested);
     }
 
+    @Transactional(readOnly = true)
+    public ApprovalDecision validateApproval(String rawServerState, String publicClientId,
+            Set<String> submittedScopes, long accountId, long companyId, long userId, UUID sub) {
+        if (rawServerState == null || rawServerState.isBlank()
+                || publicClientId == null || publicClientId.isBlank()) throw invalidPending();
+        OAuthAuthorization authorization = authorizations.findByServerStateHash(sha256(rawServerState))
+                .filter(candidate -> candidate.activeAt(clock.instant()))
+                .orElseThrow(OAuthConsentService::invalidPending);
+        OAuthClient client = activeClient(authorization.registeredClientId());
+        OAuthAuthorization.AuthorizationRequest request = authorization.attributes().authorizationRequest();
+        Set<String> exactSubmitted = Set.copyOf(submittedScopes);
+        if (authorization.serverStateHash() == null
+                || !authorization.serverStateHash().equals(sha256(rawServerState))
+                || authorization.principalAccountId() != accountId
+                || authorization.companyId() != companyId
+                || !authorization.subject().equals(sub)
+                || !client.clientId().equals(publicClientId)
+                || client.companyId() != companyId
+                || request == null
+                || exactSubmitted.isEmpty()
+                || !request.requestedScopes().equals(exactSubmitted)) {
+            throw invalidPending();
+        }
+        Set<String> approvedSnapshot = consents.findByAccountIdAndRegisteredClientId(accountId, client.id())
+                .map(OAuthConsent::scopes).map(LinkedHashSet::new).orElseGet(LinkedHashSet::new);
+        approvedSnapshot.addAll(exactSubmitted);
+        return new ApprovalDecision(authorization.id(), authorization.serverStateHash(), accountId,
+                companyId, userId, sub, client.id(), publicClientId, exactSubmitted, approvedSnapshot);
+    }
+
     private OAuthClient activeClient(long registeredClientId) {
         return clients.findById(registeredClientId)
                 .filter(client -> client.status() == OAuthClientStatus.ACTIVE)
@@ -129,6 +162,15 @@ public class OAuthConsentService {
         return new IllegalArgumentException("Pending authorization request is invalid.");
     }
 
+    private static String sha256(String value) {
+        try {
+            return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.US_ASCII)));
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable.", exception);
+        }
+    }
+
     public record ScopeView(String scope, String description, boolean newlyRequested) { }
 
     public record ConsentReview(long registeredClientId, String clientId, String clientDisplayName,
@@ -136,6 +178,19 @@ public class OAuthConsentService {
         public ConsentReview {
             requestedScopes = List.copyOf(requestedScopes);
             newlyRequestedScopes = List.copyOf(newlyRequestedScopes);
+        }
+    }
+
+    public record ApprovalDecision(String authorizationId, String serverStateHash,
+            long accountId, long companyId, long userId, UUID sub,
+            long registeredClientId, String clientId, Set<String> requestedScopes,
+            Set<String> approvedScopes) {
+        public ApprovalDecision {
+            requestedScopes = Set.copyOf(requestedScopes);
+            approvedScopes = Set.copyOf(approvedScopes);
+            if (!approvedScopes.containsAll(requestedScopes)) {
+                throw new IllegalArgumentException("Approved scopes must cover the exact request.");
+            }
         }
     }
 }

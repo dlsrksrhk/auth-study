@@ -36,6 +36,19 @@ public class OAuthConsentRepositoryAdapter implements OAuthConsentRepository {
 
     @Override
     @Transactional
+    public Optional<OAuthConsent> findByAccountIdAndRegisteredClientIdForUpdate(
+            long accountId, long registeredClientId) {
+        return repository.findForUpdate(accountId, registeredClientId).map(OAuthConsentJpaEntity::toDomain);
+    }
+
+    @Override
+    @Transactional
+    public void lockDecision(long accountId, long registeredClientId) {
+        repository.lockDecision(accountId, registeredClientId);
+    }
+
+    @Override
+    @Transactional
     public void remove(long accountId, long registeredClientId) {
         repository.deleteByPrincipalAccountIdAndRegisteredClientId(accountId, registeredClientId);
     }

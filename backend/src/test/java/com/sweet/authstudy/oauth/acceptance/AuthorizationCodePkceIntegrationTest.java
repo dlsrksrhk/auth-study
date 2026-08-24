@@ -84,7 +84,8 @@ class AuthorizationCodePkceIntegrationTest {
                 jdbcInstant("select expires_at from oauth_authorization_code where authorization_id = :id", issued.authorizationId())))
                 .isEqualTo(Duration.ofSeconds(60));
 
-        MvcResult tokenResult = mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER))
+        MvcResult tokenResult = mockMvc.perform(tokenRequestWithoutOrigin(
+                        endpoints, fixture, issued.code(), VERIFIER))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.access_token").isNotEmpty())
                 .andExpect(jsonPath("$.token_type").value("Bearer"))
@@ -118,7 +119,8 @@ class AuthorizationCodePkceIntegrationTest {
         Endpoints endpoints = discovery();
         IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
 
-        MvcResult tokenResult = mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER))
+        MvcResult tokenResult = mockMvc.perform(tokenRequestWithoutOrigin(
+                        endpoints, fixture, issued.code(), VERIFIER))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.access_token").isNotEmpty())
                 .andExpect(jsonPath("$.refresh_token").isNotEmpty())
@@ -457,6 +459,37 @@ class AuthorizationCodePkceIntegrationTest {
         assertThat(refreshTokenCount(issued.authorizationId())).isZero();
     }
 
+    @Test
+    void an_account_locked_before_code_consumption_returns_invalid_grant_without_tokens() throws Exception {
+        Fixture fixture = fixture();
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+        jdbcClient.sql("update accounts set locked_until = :until where id = :id")
+                .param("until", Timestamp.from(Instant.now().plusSeconds(900)))
+                .param("id", fixture.accountId()).update();
+
+        mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_grant"));
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+        assertThat(refreshTokenCount(issued.authorizationId())).isZero();
+    }
+
+    @Test
+    void must_change_password_set_before_code_consumption_returns_invalid_grant_without_tokens() throws Exception {
+        Fixture fixture = fixture();
+        Endpoints endpoints = discovery();
+        IssuedCode issued = authorize(endpoints, fixture, VERIFIER, "S256");
+        jdbcClient.sql("update accounts set must_change_password = true where id = :id")
+                .param("id", fixture.accountId()).update();
+
+        mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_grant"));
+        assertThat(accessTokenCount(issued.authorizationId())).isZero();
+        assertThat(refreshTokenCount(issued.authorizationId())).isZero();
+    }
+
     private ExchangeResult exchangeAfterCommittedPostValidationMutation(
             Endpoints endpoints, Fixture fixture, IssuedCode issued, Runnable mutation) throws Exception {
         CountDownLatch finalSaveEntered = new CountDownLatch(1);
@@ -581,6 +614,18 @@ class AuthorizationCodePkceIntegrationTest {
             Endpoints endpoints, Fixture fixture, String code, String verifier) {
         var request = post(endpoints.tokenPath())
                 .header("Origin", ISSUER)
+                .param("grant_type", "authorization_code")
+                .param("code", code)
+                .param("redirect_uri", CALLBACK.toString())
+                .param("code_verifier", verifier);
+        return fixture.rawSecret() == null
+                ? request.param("client_id", fixture.clientId())
+                : request.with(httpBasic(fixture.clientId(), fixture.rawSecret()));
+    }
+
+    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder tokenRequestWithoutOrigin(
+            Endpoints endpoints, Fixture fixture, String code, String verifier) {
+        var request = post(endpoints.tokenPath())
                 .param("grant_type", "authorization_code")
                 .param("code", code)
                 .param("redirect_uri", CALLBACK.toString())

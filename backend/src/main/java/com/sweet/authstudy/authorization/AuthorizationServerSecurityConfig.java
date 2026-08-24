@@ -11,6 +11,8 @@ import java.util.Set;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.application.IdpSessionStateService;
+import com.sweet.authstudy.oauth.application.OAuthConsentService;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
@@ -62,6 +64,8 @@ public class AuthorizationServerSecurityConfig {
             AuthorizationServerSettings authorizationServerSettings,
             RegisteredClientRepository registeredClients,
             OAuthClientRepository oauthClients,
+            IdpSessionStateService sessionStates,
+            OAuthConsentService oauthConsents,
             Clock clock,
             ObjectProvider<OAuth2AuthorizationService> authorizationServices,
             ObjectProvider<OAuth2AuthorizationConsentService> consentServices,
@@ -121,7 +125,7 @@ public class AuthorizationServerSecurityConfig {
         }
 
         IdpBrowserRequestFilter browserRequestFilter = new IdpBrowserRequestFilter(
-                properties, oauthClients, clock);
+                properties, oauthClients, sessionStates, oauthConsents, clock);
         return http.securityMatcher("/.well-known/**", "/oauth2/**", "/userinfo", "/connect/logout", "/idp/**")
                 .csrf(Customizer.withDefaults())
                 .requestCache(cache -> cache.requestCache(new NullRequestCache()))
@@ -167,13 +171,18 @@ public class AuthorizationServerSecurityConfig {
     private static final class IdpBrowserRequestFilter extends OncePerRequestFilter {
         private final OAuthSecurityProperties properties;
         private final OAuthClientRepository clients;
+        private final IdpSessionStateService sessionStates;
+        private final OAuthConsentService consents;
         private final Clock clock;
         private final String issuerOrigin;
 
         private IdpBrowserRequestFilter(OAuthSecurityProperties properties,
-                OAuthClientRepository clients, Clock clock) {
+                OAuthClientRepository clients, IdpSessionStateService sessionStates,
+                OAuthConsentService consents, Clock clock) {
             this.properties = properties;
             this.clients = clients;
+            this.sessionStates = sessionStates;
+            this.consents = consents;
             this.clock = clock;
             this.issuerOrigin = properties.issuer().getScheme() + "://" + properties.issuer().getAuthority();
         }
@@ -190,13 +199,42 @@ public class AuthorizationServerSecurityConfig {
                     && isBrowserSessionRequest(request.getRequestURI())) {
                 if (!sessionIsCurrent(request, response, idpAuthentication)) {
                     authentication = null;
-                } else if (passwordChangeRequired(request)
-                        && !passwordChangeRouteAllowed(request.getRequestURI())) {
-                    if ("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod())) {
-                        response.sendRedirect("/idp/password");
+                } else if (isIdentitySensitiveBrowserRequest(request.getRequestURI())) {
+                    IdpSessionStateService.State state = sessionStates.evaluate(
+                            idpAuthentication.accountId(), idpAuthentication.companyId(),
+                            idpAuthentication.userId(), idpAuthentication.sub());
+                    if (state == IdpSessionStateService.State.INVALID) {
+                        invalidateSession(request, response);
+                        authentication = null;
                     } else {
-                        response.sendError(HttpServletResponse.SC_FORBIDDEN);
+                        request.getSession(false).setAttribute(
+                                IdpLoginController.PASSWORD_CHANGE_REQUIRED_ATTRIBUTE,
+                                state == IdpSessionStateService.State.PASSWORD_CHANGE_REQUIRED);
                     }
+                }
+            }
+
+            if (authentication instanceof IdpSessionAuthentication
+                    && passwordChangeRequired(request)
+                    && !passwordChangeRouteAllowed(request.getRequestURI())) {
+                if ("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod())) {
+                    response.sendRedirect("/idp/password");
+                } else {
+                    response.sendError(HttpServletResponse.SC_FORBIDDEN);
+                }
+                return;
+            }
+
+            if (authentication instanceof IdpSessionAuthentication idp
+                    && isConsentApproval(request)) {
+                try {
+                    Set<String> submittedScopes = submittedScopes(request);
+                    OAuthConsentService.ApprovalDecision decision = consents.validateApproval(
+                            one(request, "state"), one(request, "client_id"), submittedScopes,
+                            idp.accountId(), idp.companyId(), idp.userId(), idp.sub());
+                    request.setAttribute(OAuthConsentService.ApprovalDecision.class.getName(), decision);
+                } catch (RuntimeException exception) {
+                    response.sendError(HttpServletResponse.SC_BAD_REQUEST);
                     return;
                 }
             }
@@ -204,12 +242,15 @@ public class AuthorizationServerSecurityConfig {
             if (isAuthorizationGet(request) && !authenticated(authentication)) {
                 IdpLoginController.PendingAuthorizationRequest pending = capture(request);
                 if (pending == null) {
+                    IdpLoginController.clearPendingBrowserState(request.getSession(false));
                     if (!hasSafeRegisteredRedirect(request)) {
                         response.sendError(HttpServletResponse.SC_BAD_REQUEST);
                         return;
                     }
                 } else {
-                    request.getSession(true).setAttribute(IdpLoginController.PENDING_AUTHORIZATION_ATTRIBUTE, pending);
+                    var session = request.getSession(true);
+                    IdpLoginController.clearPendingBrowserState(session);
+                    session.setAttribute(IdpLoginController.PENDING_AUTHORIZATION_ATTRIBUTE, pending);
                 }
             }
             chain.doFilter(request, response);
@@ -220,9 +261,17 @@ public class AuthorizationServerSecurityConfig {
                     || requestUri.equals("/connect/logout");
         }
 
+        private boolean isIdentitySensitiveBrowserRequest(String requestUri) {
+            return requestUri.equals("/oauth2/authorize") || requestUri.startsWith("/idp/consent");
+        }
+
         private boolean requiresOriginCheck(HttpServletRequest request) {
-            return !"GET".equals(request.getMethod()) && !"HEAD".equals(request.getMethod())
-                    && !"OPTIONS".equals(request.getMethod());
+            if (!"POST".equals(request.getMethod())) return false;
+            return switch (request.getRequestURI()) {
+                case "/idp/login", "/idp/password", "/idp/consent/deny",
+                        "/oauth2/authorize", "/connect/logout" -> true;
+                default -> false;
+            };
         }
 
         private boolean sessionIsCurrent(HttpServletRequest request, HttpServletResponse response,
@@ -234,17 +283,24 @@ public class AuthorizationServerSecurityConfig {
             if (!(lastAccessValue instanceof Instant lastAccess)
                     || !now.isBefore(lastAccess.plus(properties.sessionIdleTimeout()))
                     || !now.isBefore(authentication.authenticatedAt().plus(properties.sessionAbsoluteTimeout()))) {
-                SecurityContextHolder.clearContext();
-                try {
-                    session.invalidate();
-                } catch (IllegalStateException ignored) {
-                    // A concurrent expiry winner already invalidated the same server-side session.
-                }
-                IdpLoginController.expireSessionCookie(response, properties);
+                invalidateSession(request, response);
                 return false;
             }
             session.setAttribute(IdpLoginController.LAST_ACCESS_ATTRIBUTE, now);
             return true;
+        }
+
+        private void invalidateSession(HttpServletRequest request, HttpServletResponse response) {
+            SecurityContextHolder.clearContext();
+            var session = request.getSession(false);
+            if (session != null) {
+                try {
+                    session.invalidate();
+                } catch (IllegalStateException ignored) {
+                    // A concurrent invalidation winner already removed the same server-side session.
+                }
+            }
+            IdpLoginController.expireSessionCookie(response, properties);
         }
 
         private boolean passwordChangeRequired(HttpServletRequest request) {
@@ -262,6 +318,21 @@ public class AuthorizationServerSecurityConfig {
             return "GET".equals(request.getMethod()) && "/oauth2/authorize".equals(request.getRequestURI());
         }
 
+        private boolean isConsentApproval(HttpServletRequest request) {
+            return "POST".equals(request.getMethod())
+                    && "/oauth2/authorize".equals(request.getRequestURI());
+        }
+
+        private Set<String> submittedScopes(HttpServletRequest request) {
+            String[] values = request.getParameterValues("scope");
+            if (values == null || values.length == 0) throw new IllegalArgumentException("scope is required");
+            Set<String> scopes = new LinkedHashSet<>(Arrays.asList(values));
+            if (scopes.size() != values.length || scopes.stream().anyMatch(String::isBlank)) {
+                throw new IllegalArgumentException("scope must be an exact set");
+            }
+            return scopes;
+        }
+
         private boolean authenticated(Authentication authentication) {
             return authentication != null && authentication.isAuthenticated()
                     && !"anonymousUser".equals(authentication.getPrincipal());
@@ -276,8 +347,12 @@ public class AuthorizationServerSecurityConfig {
             String state = one(request, "state");
             String nonce = one(request, "nonce");
             String challenge = one(request, "code_challenge");
-            if (clientId == null || redirectUri == null || scope == null || state == null || nonce == null
+            if (clientId == null || redirectUri == null || scope == null
                     || challenge == null || !challenge.matches("[A-Za-z0-9_-]{43}")) return null;
+            if (request.getParameterValues("state") != null
+                    && request.getParameterValues("state").length != 1) return null;
+            if (request.getParameterValues("nonce") != null
+                    && request.getParameterValues("nonce").length != 1) return null;
             Set<String> requestedScopes = new LinkedHashSet<>(Arrays.asList(scope.trim().split("\\s+")));
             if (requestedScopes.isEmpty() || requestedScopes.stream().anyMatch(String::isBlank)) return null;
             OAuthClient client = clients.findByClientId(clientId)
@@ -291,16 +366,16 @@ public class AuthorizationServerSecurityConfig {
             }
             if (client == null || client.id() == null || !client.allowsRedirect(parsedRedirect)
                     || !client.scopes().containsAll(requestedScopes)) return null;
-            String originalUri = org.springframework.web.util.UriComponentsBuilder.fromPath("/oauth2/authorize")
-                    .queryParam("response_type", "code")
-                    .queryParam("client_id", clientId)
-                    .queryParam("redirect_uri", redirectUri)
-                    .queryParam("scope", String.join(" ", requestedScopes))
-                    .queryParam("state", state)
-                    .queryParam("nonce", nonce)
-                    .queryParam("code_challenge", challenge)
-                    .queryParam("code_challenge_method", "S256")
-                    .build().encode().toUriString();
+            StringBuilder original = new StringBuilder("/oauth2/authorize");
+            appendQuery(original, "response_type", "code");
+            appendQuery(original, "client_id", clientId);
+            appendQuery(original, "redirect_uri", redirectUri);
+            appendQuery(original, "scope", String.join(" ", requestedScopes));
+            if (state != null) appendQuery(original, "state", state);
+            if (nonce != null) appendQuery(original, "nonce", nonce);
+            appendQuery(original, "code_challenge", challenge);
+            appendQuery(original, "code_challenge_method", "S256");
+            String originalUri = original.toString();
             return new IdpLoginController.PendingAuthorizationRequest(
                     client.id(), clientId, redirectUri, state, nonce, requestedScopes,
                     challenge, "S256", originalUri);
@@ -322,6 +397,13 @@ public class AuthorizationServerSecurityConfig {
             } catch (IllegalArgumentException exception) {
                 return false;
             }
+        }
+
+        private void appendQuery(StringBuilder uri, String name, String value) {
+            uri.append(uri.indexOf("?") < 0 ? '?' : '&')
+                    .append(name).append('=')
+                    .append(org.springframework.web.util.UriUtils.encode(
+                            value, java.nio.charset.StandardCharsets.UTF_8));
         }
 
         private boolean singleValue(HttpServletRequest request, String name, String expected) {

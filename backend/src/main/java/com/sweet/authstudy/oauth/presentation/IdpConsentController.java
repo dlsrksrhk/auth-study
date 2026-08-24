@@ -1,6 +1,7 @@
 package com.sweet.authstudy.oauth.presentation;
 
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
+import com.sweet.authstudy.oauth.application.OAuthConsentDecisionService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
@@ -12,7 +13,7 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.web.util.UriUtils;
 
 @Controller
 public class IdpConsentController {
@@ -20,10 +21,13 @@ public class IdpConsentController {
 
     private final OAuth2AuthorizationService authorizations;
     private final OAuthConsentService consents;
+    private final OAuthConsentDecisionService decisionCoordinator;
 
-    public IdpConsentController(OAuth2AuthorizationService authorizations, OAuthConsentService consents) {
+    public IdpConsentController(OAuth2AuthorizationService authorizations, OAuthConsentService consents,
+            OAuthConsentDecisionService decisionCoordinator) {
         this.authorizations = authorizations;
         this.consents = consents;
+        this.decisionCoordinator = decisionCoordinator;
     }
 
     @GetMapping("/idp/consent")
@@ -50,12 +54,20 @@ public class IdpConsentController {
             Model model) {
         PendingView pending = pending(clientId, state, authentication);
         if (pending == null) return stale(response, model);
-        authorizations.remove(pending.authorization());
+        IdpSessionAuthentication idp = (IdpSessionAuthentication) authentication;
+        try {
+            OAuthConsentService.ApprovalDecision decision = consents.validateApproval(
+                    state, clientId, pending.request().getScopes(), idp.accountId(),
+                    idp.companyId(), idp.userId(), idp.sub());
+            decisionCoordinator.deny(decision);
+        } catch (RuntimeException exception) {
+            return stale(response, model);
+        }
         OAuth2AuthorizationRequest request = pending.request();
-        UriComponentsBuilder callback = UriComponentsBuilder.fromUriString(request.getRedirectUri())
-                .queryParam("error", "access_denied");
-        if (request.getState() != null) callback.queryParam("state", request.getState());
-        return "redirect:" + callback.build().encode().toUriString();
+        StringBuilder callback = new StringBuilder(request.getRedirectUri());
+        appendQuery(callback, "error", "access_denied");
+        if (request.getState() != null) appendQuery(callback, "state", request.getState());
+        return "redirect:" + callback;
     }
 
     private PendingView pending(String clientId, String state, Authentication authentication) {
@@ -79,6 +91,12 @@ public class IdpConsentController {
         response.setStatus(HttpServletResponse.SC_CONFLICT);
         model.addAttribute("message", "동의 요청이 만료되었거나 이미 처리되었습니다.");
         return "idp/error";
+    }
+
+    private void appendQuery(StringBuilder uri, String name, String value) {
+        uri.append(uri.indexOf("?") < 0 ? '?' : '&')
+                .append(name).append('=')
+                .append(UriUtils.encode(value, java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private record PendingView(OAuth2Authorization authorization,

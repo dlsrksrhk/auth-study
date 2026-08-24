@@ -1,6 +1,8 @@
 package com.sweet.authstudy.oauth.presentation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -22,9 +24,11 @@ import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -44,6 +48,7 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @SpringBootTest
@@ -63,7 +68,10 @@ class IdpBrowserFlowIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private JdbcClient jdbcClient;
     @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private ObjectMapper objectMapper;
     @Autowired private MutableClock clock;
+    @MockitoSpyBean private com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository
+            authorizationRepository;
 
     @AfterEach
     void resetClock() {
@@ -166,6 +174,7 @@ class IdpBrowserFlowIntegrationTest {
         MvcResult refreshedPasswordPage = mockMvc.perform(get("/idp/password").session(session))
                 .andExpect(status().isOk()).andReturn();
         passwordFlowId = hidden(refreshedPasswordPage.getResponse().getContentAsString(), "flowId");
+        clock.set(BASE_TIME.plus(Duration.ofMinutes(10)));
         MvcResult changed = mockMvc.perform(post("/idp/password").session(session).with(csrf())
                         .header("Origin", ISSUER)
                         .param("flowId", passwordFlowId)
@@ -175,6 +184,8 @@ class IdpBrowserFlowIntegrationTest {
                 .andReturn();
 
         assertThat(session.getId()).isNotEqualTo(sessionBeforeChange);
+        assertThat(((IdpSessionAuthentication) sessionAuthentication(session)).authenticatedAt())
+                .isEqualTo(BASE_TIME);
         URI resumed = URI.create(changed.getResponse().getHeader("Location"));
         assertThat(query(resumed, "state")).isEqualTo(rpState);
         assertThat(jdbcClient.sql("select must_change_password from accounts where id = :id")
@@ -223,6 +234,21 @@ class IdpBrowserFlowIntegrationTest {
     }
 
     @Test
+    void incremental_approval_extends_an_older_scope_not_present_in_the_new_request() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile", "email"));
+        MockHttpSession session = loginFor(fixture);
+        ConsentPage email = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "email"), "email-first", "email-first-nonce");
+        assertCallback(approve(session, fixture, email.serverState(), "openid", "email"), "email-first");
+
+        ConsentPage profile = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile"), "profile-second", "profile-second-nonce");
+        assertCallback(approve(session, fixture, profile.serverState(), "openid", "profile"), "profile-second");
+
+        assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile", "email");
+    }
+
+    @Test
     void consent_required_openid_only_requires_first_consent_and_skips_only_after_real_approval()
             throws Exception {
         Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
@@ -239,6 +265,62 @@ class IdpBrowserFlowIntegrationTest {
         URI callback = URI.create(reused.getResponse().getHeader("Location"));
         assertThat(callback.getHost()).isEqualTo("rp.example");
         assertThat(query(callback, "state")).isEqualTo("openid-reuse");
+    }
+
+    @Test
+    void consent_approval_rejects_a_non_empty_subset_instead_of_changing_the_pending_decision() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        MockHttpSession session = loginFor(fixture);
+        ConsentPage pending = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile"), "subset-state", "subset-nonce");
+
+        mockMvc.perform(post("/oauth2/authorize").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId())
+                        .param("state", pending.serverState())
+                        .param("scope", "openid"))
+                .andExpect(status().isBadRequest());
+
+        assertThat(consentScopes(fixture)).isEmpty();
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id in (select id from oauth_authorization where registered_client_id = :id)")
+                .param("id", fixture.internalClientId()).query(Long.class).single()).isZero();
+    }
+
+    @Test
+    void current_identity_and_client_are_revalidated_after_consent_get_before_code_issue() throws Exception {
+        Fixture locked = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        MockHttpSession lockedSession = loginFor(locked);
+        ConsentPage lockedPending = authorizeAuthenticated(
+                locked, lockedSession, Set.of("openid", "profile"), "lock-at-consent", "lock-at-consent-nonce");
+        String lockedAuthorizationId = pendingAuthorizationId(lockedPending.serverState());
+        jdbcClient.sql("update accounts set locked_until = :until where id = :id")
+                .param("until", Timestamp.from(BASE_TIME.plus(Duration.ofMinutes(10))))
+                .param("id", locked.accountId()).update();
+
+        DecisionResult lockedResult = concurrentApprove(lockedSession, locked,
+                lockedPending.serverState(), new CyclicBarrier(1), "openid", "profile");
+
+        assertThat(lockedResult.issuedCode()).isFalse();
+        assertThat(lockedSession.isInvalid()).isTrue();
+        assertThat(consentScopes(locked)).isEmpty();
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id = :id")
+                .param("id", lockedAuthorizationId).query(Long.class).single()).isZero();
+
+        Fixture disabledClient = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
+        MockHttpSession clientSession = loginFor(disabledClient);
+        ConsentPage clientPending = authorizeAuthenticated(
+                disabledClient, clientSession, Set.of("openid"), "client-at-consent", "client-at-consent-nonce");
+        String clientAuthorizationId = pendingAuthorizationId(clientPending.serverState());
+        jdbcClient.sql("update oauth_client set status = 'DISABLED' where id = :id")
+                .param("id", disabledClient.internalClientId()).update();
+
+        DecisionResult disabledResult = concurrentApprove(clientSession, disabledClient,
+                clientPending.serverState(), new CyclicBarrier(1), "openid");
+
+        assertThat(disabledResult.issuedCode()).isFalse();
+        assertThat(consentScopes(disabledClient)).isEmpty();
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id = :id")
+                .param("id", clientAuthorizationId).query(Long.class).single()).isZero();
     }
 
     @Test
@@ -352,6 +434,86 @@ class IdpBrowserFlowIntegrationTest {
     }
 
     @Test
+    void an_account_locked_after_login_invalidates_the_idp_session_before_authorize() throws Exception {
+        Fixture fixture = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid"));
+        MockHttpSession session = loginFor(fixture);
+        jdbcClient.sql("update accounts set locked_until = :until where id = :id")
+                .param("until", Timestamp.from(BASE_TIME.plus(Duration.ofMinutes(10))))
+                .param("id", fixture.accountId()).update();
+
+        MvcResult result = performAuthorization(
+                fixture, session, Set.of("openid"), "locked-after-login", "locked-nonce")
+                .andExpect(status().is3xxRedirection()).andReturn();
+
+        assertThat(URI.create(result.getResponse().getHeader("Location")).getPath()).isEqualTo("/idp/login");
+        assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
+    void must_change_password_set_after_login_blocks_authorize_with_the_existing_session() throws Exception {
+        Fixture fixture = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid"));
+        MockHttpSession session = loginFor(fixture);
+        jdbcClient.sql("update accounts set must_change_password = true where id = :id")
+                .param("id", fixture.accountId()).update();
+
+        MvcResult result = performAuthorization(
+                fixture, session, Set.of("openid"), "password-after-login", "password-nonce")
+                .andExpect(status().is3xxRedirection()).andReturn();
+
+        assertThat(result.getResponse().getHeader("Location")).isEqualTo("/idp/password");
+        assertThat(session.isInvalid()).isFalse();
+    }
+
+    @Test
+    void inactive_company_or_user_after_login_invalidates_before_authorize() throws Exception {
+        Fixture companyFixture = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid"));
+        MockHttpSession companySession = loginFor(companyFixture);
+        jdbcClient.sql("update companies set status = 'INACTIVE' where id = :id")
+                .param("id", companyFixture.companyId()).update();
+        assertInvalidatedBeforeAuthorize(companyFixture, companySession, "inactive-company");
+
+        Fixture userFixture = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid"));
+        MockHttpSession userSession = loginFor(userFixture);
+        jdbcClient.sql("update users set status = 'RESIGNED' where id = (select user_id from accounts where id = :id)")
+                .param("id", userFixture.accountId()).update();
+        assertInvalidatedBeforeAuthorize(userFixture, userSession, "inactive-user");
+    }
+
+    @Test
+    void id_token_auth_time_is_the_original_idp_credential_time_during_later_sso() throws Exception {
+        Fixture fixture = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid"));
+        MockHttpSession session = loginFor(fixture);
+        for (int minutes : List.of(29, 58, 87, 116)) {
+            clock.set(BASE_TIME.plus(Duration.ofMinutes(minutes)));
+            mockMvc.perform(get("/idp/error").session(session)).andExpect(status().isOk());
+        }
+        clock.set(BASE_TIME.plus(Duration.ofHours(2)));
+
+        MvcResult authorization = performAuthorization(
+                fixture, session, Set.of("openid"), "later-sso", "later-sso-nonce")
+                .andExpect(status().is3xxRedirection()).andReturn();
+        URI callback = URI.create(authorization.getResponse().getHeader("Location"));
+        String code = query(callback, "code");
+        assertThat(code).isNotBlank();
+
+        MvcResult tokenResult = mockMvc.perform(post("/oauth2/token")
+                        .param("grant_type", "authorization_code")
+                        .param("client_id", fixture.clientId())
+                        .param("code", code)
+                        .param("redirect_uri", CALLBACK.toString())
+                        .param("code_verifier", VERIFIER))
+                .andExpect(status().isOk()).andReturn();
+        String idToken = objectMapper.readTree(tokenResult.getResponse().getContentAsByteArray())
+                .path("id_token").asText();
+        String payload = new String(Base64.getUrlDecoder().decode(idToken.split("\\.")[1]),
+                StandardCharsets.UTF_8);
+        assertThat(objectMapper.readTree(payload).path("auth_time").asLong())
+                .isEqualTo(BASE_TIME.getEpochSecond());
+        assertThat(jdbcClient.sql("select authenticated_at from oauth_authorization where id = (select authorization_id from oauth_authorization_code where code_hash = :hash)")
+                .param("hash", sha256(code)).query(Instant.class).single()).isEqualTo(BASE_TIME);
+    }
+
+    @Test
     void the_same_login_form_is_single_use_under_concurrency_and_a_stale_consent_state_cannot_replay()
             throws Exception {
         Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile"));
@@ -384,6 +546,132 @@ class IdpBrowserFlowIntegrationTest {
     }
 
     @Test
+    void concurrent_double_approval_of_one_pending_state_has_exactly_one_code_winner() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        MockHttpSession session = loginFor(fixture);
+        ConsentPage pending = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile"), "double-approve", "double-nonce");
+        String authorizationId = pendingAuthorizationId(pending.serverState());
+        CyclicBarrier barrier = new CyclicBarrier(2);
+
+        List<DecisionResult> results;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var calls = List.of(
+                    executor.submit(() -> concurrentApprove(
+                            session, fixture, pending.serverState(), barrier, "openid", "profile")),
+                    executor.submit(() -> concurrentApprove(
+                            session, fixture, pending.serverState(), barrier, "openid", "profile")));
+            results = calls.stream().map(call -> {
+                try {
+                    return call.get(20, TimeUnit.SECONDS);
+                } catch (Exception exception) {
+                    throw new AssertionError(exception);
+                }
+            }).toList();
+        }
+
+        assertThat(results.stream().filter(DecisionResult::issuedCode).count()).isEqualTo(1L);
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isEqualTo(1L);
+        assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile");
+    }
+
+    @Test
+    void concurrent_approval_and_denial_of_one_pending_state_have_exactly_one_winner() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        MockHttpSession session = loginFor(fixture);
+        ConsentPage pending = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile"), "approve-deny", "approve-deny-nonce");
+        String authorizationId = pendingAuthorizationId(pending.serverState());
+        CyclicBarrier barrier = new CyclicBarrier(2);
+
+        List<DecisionResult> results;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var calls = List.of(
+                    executor.submit(() -> concurrentApprove(
+                            session, fixture, pending.serverState(), barrier, "openid", "profile")),
+                    executor.submit(() -> concurrentDeny(
+                            session, fixture, pending.serverState(), barrier)));
+            results = calls.stream().map(call -> {
+                try {
+                    return call.get(20, TimeUnit.SECONDS);
+                } catch (Exception exception) {
+                    throw new AssertionError(exception);
+                }
+            }).toList();
+        }
+
+        long approvals = results.stream().filter(DecisionResult::issuedCode).count();
+        long denials = results.stream().filter(DecisionResult::deniedAccess).count();
+        assertThat(approvals + denials).as("decision responses %s", results).isEqualTo(1L);
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isEqualTo(approvals);
+        if (approvals == 1) {
+            assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile");
+        } else {
+            assertThat(consentScopes(fixture)).isEmpty();
+        }
+    }
+
+    @Test
+    void a_code_save_failure_rolls_back_the_consent_snapshot_and_leaves_pending_retryable() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        MockHttpSession session = loginFor(fixture);
+        ConsentPage pending = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile"), "rollback-consent", "rollback-nonce");
+        String authorizationId = pendingAuthorizationId(pending.serverState());
+        AtomicBoolean failCodeSave = new AtomicBoolean(true);
+        doAnswer(invocation -> {
+            com.sweet.authstudy.oauth.domain.OAuthAuthorization authorization = invocation.getArgument(0);
+            if (authorization.authorizationCode().isPresent() && failCodeSave.getAndSet(false)) {
+                throw new IllegalStateException("simulated code save failure");
+            }
+            return invocation.callRealMethod();
+        }).when(authorizationRepository).save(any());
+
+        DecisionResult failed = concurrentApprove(
+                session, fixture, pending.serverState(), new CyclicBarrier(1), "openid", "profile");
+
+        assertThat(failed.issuedCode()).isFalse();
+        assertThat(consentScopes(fixture)).isEmpty();
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id = :id")
+                .param("id", authorizationId).query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization where id = :id and server_state_hash = :hash")
+                .param("id", authorizationId).param("hash", sha256(pending.serverState()))
+                .query(Long.class).single()).isEqualTo(1L);
+    }
+
+    @Test
+    void concurrent_incremental_approvals_do_not_lose_scope_updates() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile", "email"));
+        MockHttpSession session = loginFor(fixture);
+        ConsentPage profile = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile"), "profile-decision", "profile-nonce");
+        ConsentPage email = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "email"), "email-decision", "email-nonce");
+        CyclicBarrier barrier = new CyclicBarrier(2);
+
+        List<DecisionResult> results;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var calls = List.of(
+                    executor.submit(() -> concurrentApprove(
+                            session, fixture, profile.serverState(), barrier, "openid", "profile")),
+                    executor.submit(() -> concurrentApprove(
+                            session, fixture, email.serverState(), barrier, "openid", "email")));
+            results = calls.stream().map(call -> {
+                try {
+                    return call.get(20, TimeUnit.SECONDS);
+                } catch (Exception exception) {
+                    throw new AssertionError(exception);
+                }
+            }).toList();
+        }
+
+        assertThat(results).allMatch(DecisionResult::issuedCode);
+        assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile", "email");
+    }
+
+    @Test
     void pre_login_session_preserves_only_the_authorization_allowlist_and_never_raw_secrets() throws Exception {
         Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
         MockHttpSession session = new MockHttpSession();
@@ -404,6 +692,131 @@ class IdpBrowserFlowIntegrationTest {
 
         assertThat(sessionValues(session)).doesNotContain(
                 VERIFIER, "raw-access-token", "raw-client-secret", "code_verifier", "access_token", "client_secret");
+    }
+
+    @Test
+    void oauth_request_without_state_or_openid_nonce_is_safely_resumed_after_login() throws Exception {
+        Fixture fixture = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid", "profile"));
+        MockHttpSession session = new MockHttpSession();
+
+        MvcResult begin = mockMvc.perform(get("/oauth2/authorize").session(session)
+                        .queryParam("response_type", "code")
+                        .queryParam("client_id", fixture.clientId())
+                        .queryParam("redirect_uri", CALLBACK.toString())
+                        .queryParam("scope", "profile")
+                        .queryParam("code_challenge", challenge(VERIFIER))
+                        .queryParam("code_challenge_method", "S256"))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        assertThat(URI.create(begin.getResponse().getHeader("Location")).getPath()).isEqualTo("/idp/login");
+
+        LoginPage page = loginPage(session);
+        MvcResult login = postLogin(session, page.flowId(), fixture.email(), PASSWORD)
+                .andExpect(status().is3xxRedirection()).andReturn();
+        URI resumed = URI.create(login.getResponse().getHeader("Location"));
+        assertThat(query(resumed, "state")).isNull();
+        assertThat(query(resumed, "nonce")).isNull();
+        assertThat(query(resumed, "scope")).isEqualTo("profile");
+
+        MvcResult callback = mockMvc.perform(get(resumed).session(session))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        URI location = URI.create(callback.getResponse().getHeader("Location"));
+        assertThat(location.getHost()).isEqualTo("rp.example");
+        assertThat(query(location, "state")).isNull();
+        assertThat(query(location, "code")).isNotBlank();
+    }
+
+    @Test
+    void malformed_registered_request_clears_an_older_pending_request_and_login_form() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
+        MockHttpSession session = new MockHttpSession();
+        beginAuthorization(fixture, session, Set.of("openid"), "older-state", "older-nonce");
+        String olderFlow = loginPage(session).flowId();
+
+        MvcResult malformed = mockMvc.perform(get("/oauth2/authorize").session(session)
+                        .queryParam("response_type", "code")
+                        .queryParam("client_id", fixture.clientId())
+                        .queryParam("redirect_uri", CALLBACK.toString())
+                        .queryParam("scope", "openid")
+                        .queryParam("state", "malformed-state")
+                        .queryParam("nonce", "malformed-nonce"))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        assertThat(query(URI.create(malformed.getResponse().getHeader("Location")), "error"))
+                .isEqualTo("invalid_request");
+
+        postLogin(session, olderFlow, fixture.email(), PASSWORD)
+                .andExpect(status().isConflict());
+        assertThat(session.getAttribute(IdpLoginController.PENDING_AUTHORIZATION_ATTRIBUTE)).isNull();
+    }
+
+    @Test
+    void opaque_state_nonce_and_encoded_registered_redirect_round_trip_exactly_once_on_resume() throws Exception {
+        Fixture fixture = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid"));
+        URI encodedRedirect = URI.create(
+                "https://rp.example/cb%2Fsegment?existing=a%2Bb&literal=%252F");
+        registerRedirect(fixture, encodedRedirect);
+        String opaqueState = "state+%2F& value";
+        String opaqueNonce = "nonce+%2F& value";
+        MockHttpSession session = new MockHttpSession();
+
+        mockMvc.perform(get("/oauth2/authorize").session(session)
+                        .queryParam("response_type", "code")
+                        .queryParam("client_id", fixture.clientId())
+                        .queryParam("redirect_uri", encodedRedirect.toString())
+                        .queryParam("scope", "openid")
+                        .queryParam("state", opaqueState)
+                        .queryParam("nonce", opaqueNonce)
+                        .queryParam("code_challenge", challenge(VERIFIER))
+                        .queryParam("code_challenge_method", "S256"))
+                .andExpect(status().is3xxRedirection());
+
+        LoginPage page = loginPage(session);
+        MvcResult login = postLogin(session, page.flowId(), fixture.email(), PASSWORD)
+                .andExpect(status().is3xxRedirection()).andReturn();
+        URI resumed = URI.create(login.getResponse().getHeader("Location"));
+        assertThat(query(resumed, "state")).isEqualTo(opaqueState);
+        assertThat(query(resumed, "nonce")).isEqualTo(opaqueNonce);
+        assertThat(query(resumed, "redirect_uri")).isEqualTo(encodedRedirect.toString());
+        assertThat(resumed.getRawQuery()).contains("state=state%2B%252F%26%20value");
+
+        MvcResult callbackResult = mockMvc.perform(get(resumed).session(session))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        URI callback = URI.create(callbackResult.getResponse().getHeader("Location"));
+        assertThat(callback.toString()).startsWith(encodedRedirect.toString() + "&");
+        assertThat(query(callback, "state")).isEqualTo(opaqueState);
+    }
+
+    @Test
+    void access_denied_preserves_encoded_registered_redirect_and_opaque_state_exactly_once() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
+        URI encodedRedirect = URI.create(
+                "https://rp.example/deny%2Fcallback?existing=a%2Bb&literal=%252F");
+        registerRedirect(fixture, encodedRedirect);
+        String opaqueState = "deny+%2F& value";
+        MockHttpSession session = new MockHttpSession();
+
+        mockMvc.perform(get("/oauth2/authorize").session(session)
+                        .queryParam("response_type", "code")
+                        .queryParam("client_id", fixture.clientId())
+                        .queryParam("redirect_uri", encodedRedirect.toString())
+                        .queryParam("scope", "openid")
+                        .queryParam("state", opaqueState)
+                        .queryParam("nonce", "deny-nonce")
+                        .queryParam("code_challenge", challenge(VERIFIER))
+                        .queryParam("code_challenge_method", "S256"))
+                .andExpect(status().is3xxRedirection());
+        LoginPage page = loginPage(session);
+        MvcResult login = postLogin(session, page.flowId(), fixture.email(), PASSWORD)
+                .andExpect(status().is3xxRedirection()).andReturn();
+        ConsentPage consent = followToConsent(session, login.getResponse().getHeader("Location"));
+
+        MvcResult denied = mockMvc.perform(post("/idp/consent/deny").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId())
+                        .param("state", consent.serverState()))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        URI callback = URI.create(denied.getResponse().getHeader("Location"));
+        assertThat(callback.toString()).startsWith(encodedRedirect.toString() + "&error=access_denied");
+        assertThat(query(callback, "state")).isEqualTo(opaqueState);
     }
 
     @Test
@@ -448,6 +861,36 @@ class IdpBrowserFlowIntegrationTest {
             session.setAttribute("TEST_LAST_LOGIN_REDIRECT", result.getResponse().getHeader("Location"));
         }
         return result.getResponse().getStatus();
+    }
+
+    private DecisionResult concurrentApprove(MockHttpSession session, Fixture fixture,
+            String state, CyclicBarrier barrier, String... scopes) throws Exception {
+        barrier.await(10, TimeUnit.SECONDS);
+        MvcResult result = mockMvc.perform(post("/oauth2/authorize").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId()).param("state", state)
+                        .param("scope", scopes)).andReturn();
+        String location = result.getResponse().getHeader("Location");
+        return new DecisionResult(result.getResponse().getStatus(), location);
+    }
+
+    private DecisionResult concurrentDeny(MockHttpSession session, Fixture fixture,
+            String state, CyclicBarrier barrier) throws Exception {
+        barrier.await(10, TimeUnit.SECONDS);
+        MvcResult result = mockMvc.perform(post("/idp/consent/deny").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId()).param("state", state)).andReturn();
+        return new DecisionResult(result.getResponse().getStatus(),
+                result.getResponse().getHeader("Location"));
+    }
+
+    private void assertInvalidatedBeforeAuthorize(Fixture fixture, MockHttpSession session, String state)
+            throws Exception {
+        MvcResult result = performAuthorization(
+                fixture, session, Set.of("openid"), state, state + "-nonce")
+                .andExpect(status().is3xxRedirection()).andReturn();
+        assertThat(URI.create(result.getResponse().getHeader("Location")).getPath()).isEqualTo("/idp/login");
+        assertThat(session.isInvalid()).isTrue();
     }
 
     private MockHttpSession loginFor(Fixture fixture) throws Exception {
@@ -574,6 +1017,19 @@ class IdpBrowserFlowIntegrationTest {
                 .param("clientId", fixture.internalClientId()).query(String.class).list();
     }
 
+    private String pendingAuthorizationId(String rawState) {
+        return jdbcClient.sql("select id from oauth_authorization where server_state_hash = :hash")
+                .param("hash", sha256(rawState)).query(String.class).single();
+    }
+
+    private void registerRedirect(Fixture fixture, URI redirect) {
+        jdbcClient.sql("""
+                        insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
+                        values (:clientId, :redirectUri, 'AUTHORIZATION')
+                        """).param("clientId", fixture.internalClientId())
+                .param("redirectUri", redirect.toString()).update();
+    }
+
     private String pendingAuthorizationUri(Fixture fixture, Set<String> scopes, String state, String nonce) {
         return UriComponentsBuilder.fromPath("/oauth2/authorize")
                 .queryParam("response_type", "code")
@@ -649,8 +1105,17 @@ class IdpBrowserFlowIntegrationTest {
     }
 
     private String query(URI uri, String name) {
-        String value = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst(name);
-        return value == null ? null : java.net.URLDecoder.decode(value, StandardCharsets.UTF_8);
+        if (uri.getRawQuery() == null) return null;
+        for (String pair : uri.getRawQuery().split("&")) {
+            int separator = pair.indexOf('=');
+            String rawName = separator < 0 ? pair : pair.substring(0, separator);
+            if (org.springframework.web.util.UriUtils.decode(rawName, StandardCharsets.UTF_8)
+                    .equals(name)) {
+                String rawValue = separator < 0 ? "" : pair.substring(separator + 1);
+                return org.springframework.web.util.UriUtils.decode(rawValue, StandardCharsets.UTF_8);
+            }
+        }
+        return null;
     }
 
     private static String challenge(String verifier) {
@@ -675,6 +1140,30 @@ class IdpBrowserFlowIntegrationTest {
             String clientId, String clientDisplayName, String email) { }
     private record LoginPage(String flowId, String html) { }
     private record ConsentPage(String serverState, String html) { }
+    private record DecisionResult(int status, String location) {
+        boolean issuedCode() {
+            return status == 302 && location != null && queryValue(location, "code") != null;
+        }
+
+        boolean deniedAccess() {
+            return status == 302 && location != null
+                    && "access_denied".equals(queryValue(location, "error"));
+        }
+
+        private static String queryValue(String location, String name) {
+            URI uri = URI.create(location);
+            if (uri.getRawQuery() == null) return null;
+            for (String pair : uri.getRawQuery().split("&")) {
+                int separator = pair.indexOf('=');
+                String key = separator < 0 ? pair : pair.substring(0, separator);
+                if (org.springframework.web.util.UriUtils.decode(key, StandardCharsets.UTF_8).equals(name)) {
+                    return separator < 0 ? "" : org.springframework.web.util.UriUtils.decode(
+                            pair.substring(separator + 1), StandardCharsets.UTF_8);
+                }
+            }
+            return null;
+        }
+    }
 
     @TestConfiguration(proxyBeanMethods = false)
     static class MutableClockConfiguration {

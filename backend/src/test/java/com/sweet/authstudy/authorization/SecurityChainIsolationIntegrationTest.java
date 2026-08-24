@@ -56,15 +56,13 @@ class SecurityChainIsolationIntegrationTest {
     }
 
     @Test
-    void oauth2UnsafeRequestsRequireIssuerOrigin() throws Exception {
-        mockMvc.perform(post("/oauth2/token")
+    void browser_authorization_post_requires_issuer_origin_but_token_post_does_not() throws Exception {
+        mockMvc.perform(post("/oauth2/authorize")
                         .with(csrf())
                         .header("Origin", "https://untrusted.example"))
                 .andExpect(status().isForbidden());
 
-        mockMvc.perform(post("/oauth2/token")
-                        .with(csrf())
-                        .header("Origin", "http://idp.localhost:8080"))
+        mockMvc.perform(post("/oauth2/token"))
                 .andExpect(status().isBadRequest());
     }
 }
