@@ -38,10 +38,7 @@ public final class SpringOAuth2AuthorizationConsentService implements OAuth2Auth
             consents.approve(accountId, clientId, authorizationConsent.getScopes());
             return;
         }
-        if (decision.accountId() != accountId || decision.registeredClientId() != clientId
-                || !decision.approvedScopes().equals(authorizationConsent.getScopes())) {
-            throw new IllegalArgumentException("SAS consent does not match the validated decision.");
-        }
+        consents.validateSasApproval(decision, accountId, clientId, authorizationConsent.getScopes());
         decisions.stage(decision);
     }
 

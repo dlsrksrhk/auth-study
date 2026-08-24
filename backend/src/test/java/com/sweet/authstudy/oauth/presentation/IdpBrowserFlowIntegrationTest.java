@@ -21,6 +21,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -72,6 +73,7 @@ class IdpBrowserFlowIntegrationTest {
     @Autowired private MutableClock clock;
     @MockitoSpyBean private com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository
             authorizationRepository;
+    @MockitoSpyBean private com.sweet.authstudy.oauth.application.OAuthConsentService consentService;
 
     @AfterEach
     void resetClock() {
@@ -669,6 +671,73 @@ class IdpBrowserFlowIntegrationTest {
 
         assertThat(results).allMatch(DecisionResult::issuedCode);
         assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile", "email");
+    }
+
+    @Test
+    void a_stale_review_snapshot_does_not_reject_or_lose_a_concurrent_incremental_approval()
+            throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of(
+                "openid", "profile", "email", "hr.company", "hr.roles"));
+        MockHttpSession session = loginFor(fixture);
+        ConsentPage baseline = authorizeAuthenticated(
+                fixture, session, Set.of("openid"), "baseline", "baseline-nonce");
+        assertCallback(approve(session, fixture, baseline.serverState(), "openid"), "baseline");
+
+        ConsentPage slowProfile = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile"), "slow-profile", "slow-profile-nonce");
+        ConsentPage fastEmail = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "email"), "fast-email", "fast-email-nonce");
+        String slowAuthorizationId = pendingAuthorizationId(slowProfile.serverState());
+        String fastAuthorizationId = pendingAuthorizationId(fastEmail.serverState());
+        CountDownLatch slowReviewCaptured = new CountDownLatch(1);
+        CountDownLatch releaseSlowReview = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            Object decision = invocation.callRealMethod();
+            if (slowProfile.serverState().equals(invocation.getArgument(0))) {
+                slowReviewCaptured.countDown();
+                if (!releaseSlowReview.await(10, TimeUnit.SECONDS)) {
+                    throw new AssertionError("slow consent review was not released");
+                }
+            }
+            return decision;
+        }).when(consentService).validateApproval(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anySet(), org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.any(UUID.class));
+
+        DecisionResult slowResult;
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var slowCall = executor.submit(() -> concurrentApprove(
+                    session, fixture, slowProfile.serverState(), new CyclicBarrier(1), "openid", "profile"));
+            assertThat(slowReviewCaptured.await(10, TimeUnit.SECONDS)).isTrue();
+            assertCallback(approve(session, fixture, fastEmail.serverState(), "openid", "email"), "fast-email");
+            releaseSlowReview.countDown();
+            slowResult = slowCall.get(20, TimeUnit.SECONDS);
+        } finally {
+            releaseSlowReview.countDown();
+        }
+
+        assertThat(slowResult.issuedCode()).isTrue();
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id = :id")
+                .param("id", slowAuthorizationId).query(Long.class).single()).isEqualTo(1L);
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id = :id")
+                .param("id", fastAuthorizationId).query(Long.class).single()).isEqualTo(1L);
+        assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile", "email")
+                .doesNotContain("hr.roles");
+
+        ConsentPage spoof = authorizeAuthenticated(fixture, session, Set.of("openid", "hr.company"),
+                "spoof-extra", "spoof-extra-nonce");
+        String spoofAuthorizationId = pendingAuthorizationId(spoof.serverState());
+        mockMvc.perform(post("/oauth2/authorize").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId()).param("state", spoof.serverState())
+                        .param("scope", "openid", "hr.company", "hr.roles"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id = :id")
+                .param("id", spoofAuthorizationId).query(Long.class).single()).isZero();
+        assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile", "email")
+                .doesNotContain("hr.company", "hr.roles");
     }
 
     @Test

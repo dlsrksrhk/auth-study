@@ -43,7 +43,9 @@ BASE는 `2fbd91ce83c7dad490c720149e9500d1a26e56dd`입니다. 구현 및 이 보�
     다음에만 정확한 pending authorize URI로 복귀합니다.
 - project consent
   - application `OAuthConsentService`가 `OAuthConsentRepository`를 투영해 active client, account/company/sub,
-    pending authorization id와 exact requested/approved scope binding을 검증하고 승인 snapshot을 저장합니다.
+    pending authorization id와 exact requested scope decision binding을 검증합니다. SAS가 뒤늦게 전달하는 cumulative
+    snapshot은 동일 account/client, exact requested scope 포함, 현재 client 등록 scope allowlist만 검증하며 저장할
+    authoritative snapshot으로 취급하지 않습니다.
   - SAS consent adapter의 find/remove와 일반 save는 application service를 사용하고, browser approval save는
     검증된 decision을 request scope에 stage해 authorization code final save와 같은 transaction으로 넘깁니다.
     원문 server state는 새 저장소에 복제하지 않고 Task 7의 hashed pending lookup을 그대로 사용합니다.
@@ -138,19 +140,47 @@ Result:
 8. cookie secure configuration test는 accessor/constructor 부재로 compile RED였습니다. safe default true,
    dev/test false와 container/manual cookie 설정을 같은 property로 묶어 GREEN으로 만들었습니다.
 
+### Review fix round 2/5 RED → GREEN
+
+1. 실제 PostgreSQL/filter flow에서 느린 `profile` 승인 decision을 review 직후, SAS consent save 직전에 latch로
+   정지하고 별도의 `email` 증분 승인을 먼저 commit한 뒤 재개하는 test를 작성했습니다. 기존 adapter는 느린
+   요청이 review 때 본 `openid profile` snapshot과 SAS가 다시 읽은 `openid profile email` cumulative snapshot을
+   exact 비교해 `SAS consent does not match the validated decision`으로 실패했습니다.
+2. request-local decision에서 stale cumulative union을 제거하고 pending authorization/requested scopes/account/
+   client/state만 exact binding으로 유지했습니다. SAS adapter는 cumulative snapshot이 exact requested scopes를
+   포함하고 모든 scope가 현재 client에 등록되었는지만 검사합니다. 최종 coordinator가 lock한 현재 consent에
+   decision의 exact requested scopes만 merge해 consent와 code를 같은 transaction에서 저장합니다.
+3. 수정 뒤 interleaving의 두 요청이 모두 callback code를 발급하고 두 code row가 존재하며 최종 consent가
+   `openid profile email`의 정확한 합집합임을 확인했습니다. 같은 flow에서 attacker가 요청 밖의 등록 scope
+   `hr.roles`를 POST하면 400, code 0, 기존 consent 불변이며, 기존 partial-scope/spoof 검증도 함께 GREEN입니다.
+
+RED command:
+
+`./gradlew.bat test --tests "*IdpBrowserFlowIntegrationTest.a_stale_review_snapshot_does_not_reject_or_lose_a_concurrent_incremental_approval" --console=plain`
+
+- 기존 exact cumulative 비교에서 `IllegalArgumentException: SAS consent does not match the validated decision.`으로
+  실패했습니다.
+
+GREEN command:
+
+`./gradlew.bat test --tests "*IdpBrowserFlowIntegrationTest.a_stale_review_snapshot_does_not_reject_or_lose_a_concurrent_incremental_approval" --tests "*IdpBrowserFlowIntegrationTest.consent_approval_rejects_a_non_empty_subset*" --console=plain`
+
+- `BUILD SUCCESSFUL in 31s`
+- 2 tests, 0 failures
+
 ## GREEN / 검증 증거
 
 Browser flow:
 
 `./gradlew.bat test --rerun-tasks --tests "*IdpBrowserFlowIntegrationTest" --tests "*OAuthSecurityPropertiesTest" --tests "*ModuleBoundaryTest" --console=plain`
 
-- `BUILD SUCCESSFUL in 55s`
-- 30 tests, 0 failures
+- `BUILD SUCCESSFUL in 57s`
+- 31 tests, 0 failures
 - real authorize→login→password(optional)→consent→callback, session rotation/cookie/minimal principal,
   consent reuse/incremental/deny/openid-only/trusted skip, tenant mismatch generic denial, CSRF/Origin,
   idle/absolute inclusive expiry, concurrent login single-use, stale consent replay, unsafe redirect와 pending
   replacement, optional state/nonce, exact encoding, current-state mutation, original auth_time, exact scope binding,
-  double-approve/approve-deny/code rollback/no-lost-update concurrency를 포함합니다.
+  double-approve/approve-deny/code rollback/no-lost-update 및 stale-review interleaving concurrency를 포함합니다.
 
 Task 1/2/6/7/8 focused regression:
 
@@ -163,8 +193,8 @@ Fresh full backend:
 
 `./gradlew.bat test --rerun-tasks --console=plain`
 
-- `BUILD SUCCESSFUL in 3m 37s`
-- JUnit XML: 339 tests, 0 failures, 0 errors, 0 skipped
+- `BUILD SUCCESSFUL in 3m 41s`
+- JUnit XML: 340 tests, 0 failures, 0 errors, 0 skipped
 
 Static verification:
 
@@ -193,6 +223,10 @@ Static verification:
 - consent 결정은 controller synchronization이 아니라 실제 repository transaction에서 직렬화됩니다. pending
   authorization과 client/current identity를 lock한 뒤 consent pair advisory lock/row lock을 잡아 같은 state의
   approve/deny/replay 중 하나만 이기며 scope와 code를 atomic하게 저장합니다.
+- request-local consent decision은 pending의 exact requested scope에 묶이고 SAS cumulative scope는 registered
+  allowlist 검증에만 사용합니다. 따라서 review 이후 다른 증분 승인이 commit되어도 정상 요청을 거절하거나
+  scope를 잃지 않으며, coordinator는 SAS snapshot의 추가 scope가 아니라 lock한 current consent와 exact
+  requested decision만 합칩니다.
 - ID token `auth_time`은 최초 credential instant를 보존한 domain authorization에서 나옵니다. password change와
   장시간 SSO가 authorization/code 발급 시각으로 이 값을 덮어쓰지 않는 test가 이를 고정합니다.
 

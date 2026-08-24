@@ -5,7 +5,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -119,11 +118,23 @@ public class OAuthConsentService {
                 || !request.requestedScopes().equals(exactSubmitted)) {
             throw invalidPending();
         }
-        Set<String> approvedSnapshot = consents.findByAccountIdAndRegisteredClientId(accountId, client.id())
-                .map(OAuthConsent::scopes).map(LinkedHashSet::new).orElseGet(LinkedHashSet::new);
-        approvedSnapshot.addAll(exactSubmitted);
         return new ApprovalDecision(authorization.id(), authorization.serverStateHash(), accountId,
-                companyId, userId, sub, client.id(), publicClientId, exactSubmitted, approvedSnapshot);
+                companyId, userId, sub, client.id(), publicClientId, exactSubmitted);
+    }
+
+    @Transactional(readOnly = true)
+    public void validateSasApproval(ApprovalDecision decision, long accountId,
+            long registeredClientId, Set<String> cumulativeScopes) {
+        Set<String> snapshot = Set.copyOf(cumulativeScopes);
+        OAuthClient client = activeClient(registeredClientId);
+        if (decision.accountId() != accountId
+                || decision.registeredClientId() != registeredClientId
+                || decision.companyId() != client.companyId()
+                || !decision.clientId().equals(client.clientId())
+                || !snapshot.containsAll(decision.requestedScopes())
+                || !client.scopes().containsAll(snapshot)) {
+            throw invalidPending();
+        }
     }
 
     private OAuthClient activeClient(long registeredClientId) {
@@ -183,14 +194,9 @@ public class OAuthConsentService {
 
     public record ApprovalDecision(String authorizationId, String serverStateHash,
             long accountId, long companyId, long userId, UUID sub,
-            long registeredClientId, String clientId, Set<String> requestedScopes,
-            Set<String> approvedScopes) {
+            long registeredClientId, String clientId, Set<String> requestedScopes) {
         public ApprovalDecision {
             requestedScopes = Set.copyOf(requestedScopes);
-            approvedScopes = Set.copyOf(approvedScopes);
-            if (!approvedScopes.containsAll(requestedScopes)) {
-                throw new IllegalArgumentException("Approved scopes must cover the exact request.");
-            }
         }
     }
 }

@@ -128,7 +128,7 @@ public class OAuthConsentDecisionCoordinator implements OAuthConsentDecisionServ
         OAuthAuthorization.AuthorizationRequest request = pending.attributes().authorizationRequest();
         if (!client.clientId().equals(decision.clientId())
                 || client.companyId() != decision.companyId()
-                || !client.scopes().containsAll(decision.approvedScopes())
+                || !client.scopes().containsAll(decision.requestedScopes())
                 || client.redirectUris().stream().noneMatch(
                         redirect -> redirect.toString().equals(request.redirectUri()))) {
             throw invalidDecision();
