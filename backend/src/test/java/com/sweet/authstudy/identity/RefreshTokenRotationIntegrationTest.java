@@ -10,6 +10,7 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.identity.application.AuthenticationService;
@@ -122,6 +123,29 @@ class RefreshTokenRotationIntegrationTest {
     }
 
     @Test
+    void login_racing_a_new_lock_does_not_leave_its_refresh_token_alive() throws Exception {
+        LoginResult existing = loginActiveSystemAccount();
+        Account account = accountRepository.findById(subjectId(existing)).orElseThrow();
+
+        installDelayedRefreshInsert(10);
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var successfulLogin = executor.submit(() -> authenticationService.login(new LoginCommand(
+                    account.loginEmail(), "SystemPassword1234!", "127.0.0.1")));
+            awaitDelayedRefreshInsert();
+            jdbc.update("update accounts set failed_login_attempts = 4, locked_until = null where id = ?", account.id());
+
+            assertThatThrownBy(() -> authenticationService.login(new LoginCommand(
+                    account.loginEmail(), "wrong", "127.0.0.1"))).isInstanceOf(ApiException.class);
+            LoginResult raced = successfulLogin.get(20, TimeUnit.SECONDS);
+
+            assertThatThrownBy(() -> authenticationService.refresh(raced.refreshToken()))
+                    .isInstanceOf(ApiException.class);
+        } finally {
+            removeDelayedRefreshInsert();
+        }
+    }
+
+    @Test
     void password_change_racing_rotation_leaves_no_successor_alive() throws Exception {
         LoginResult login = loginActiveSystemAccount();
         Account account = accountRepository.findById(subjectId(login)).orElseThrow();
@@ -172,8 +196,12 @@ class RefreshTokenRotationIntegrationTest {
     }
 
     private void installDelayedRefreshInsert() {
+        installDelayedRefreshInsert(2);
+    }
+
+    private void installDelayedRefreshInsert(int seconds) {
         jdbc.execute("CREATE OR REPLACE FUNCTION task5_delay_refresh_insert() RETURNS trigger "
-                + "LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$");
+                + "LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(" + seconds + "); RETURN NEW; END $$");
         jdbc.execute("CREATE TRIGGER task5_delay_refresh_insert_trigger BEFORE INSERT ON refresh_tokens "
                 + "FOR EACH ROW EXECUTE FUNCTION task5_delay_refresh_insert()");
     }

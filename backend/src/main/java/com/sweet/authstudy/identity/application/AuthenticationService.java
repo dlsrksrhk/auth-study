@@ -68,15 +68,26 @@ public class AuthenticationService {
     }
 
     public LoginResult login(LoginCommand command) {
-        CredentialAuthenticationResult credential = credentialAuthenticationService.authenticate(
-                new CredentialAuthenticationService.Command(
-                        command == null ? null : command.email(), command == null ? null : command.password()));
-        Instant now = clock.instant();
-        AuthenticatedAccount principal = principal(credential);
-        AuthTokens access = jwtTokenService.issue(principal, credential.mustChangePassword());
-        String rawRefresh = credential.mustChangePassword() ? null
-                : issueRefresh(credential.accountId(), UUID.randomUUID(), now);
-        return new LoginResult(access, credential.mustChangePassword(), rawRefresh);
+        CredentialAuthenticationService.Command credentialCommand = new CredentialAuthenticationService.Command(
+                command == null ? null : command.email(), command == null ? null : command.password());
+        CredentialAuthenticationService.LoginVerification verification = credentialAuthenticationService
+                .verify(credentialCommand);
+        LoginResult result = transactions.execute(status -> {
+            try {
+                CredentialAuthenticationResult credential = credentialAuthenticationService.authenticate(verification);
+                Instant now = clock.instant();
+                AuthenticatedAccount principal = principal(credential);
+                AuthTokens access = jwtTokenService.issue(principal, credential.mustChangePassword());
+                String rawRefresh = credential.mustChangePassword() ? null
+                        : issueRefresh(credential.accountId(), UUID.randomUUID(), now);
+                return new LoginResult(access, credential.mustChangePassword(), rawRefresh);
+            } catch (ApiException exception) {
+                if (exception.errorCode() == ErrorCode.UNAUTHENTICATED) return null;
+                throw exception;
+            }
+        });
+        if (result == null) throw unauthenticated();
+        return result;
     }
 
     public RefreshResult refresh(String rawToken) {

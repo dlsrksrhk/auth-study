@@ -60,9 +60,18 @@ public class CredentialAuthenticationService {
     }
 
     public CredentialAuthenticationResult authenticate(Command command) {
+        LoginVerification verification = verify(command);
+        return authenticate(verification);
+    }
+
+    LoginVerification verify(Command command) {
         if (command == null || command.email() == null || command.password() == null) throw unauthenticated();
         LoginVerification verification = verifyPasswordOutsideWriteLock(command);
         if (verification == null) throw unauthenticated();
+        return verification;
+    }
+
+    CredentialAuthenticationResult authenticate(LoginVerification verification) {
         CredentialAuthenticationResult result = transactions.execute(
                 status -> authenticateInTransaction(verification));
         if (result == null) throw unauthenticated();
@@ -143,6 +152,6 @@ public class CredentialAuthenticationService {
     public record AccountLocked(long accountId, Instant lockedAt) {
     }
 
-    private record LoginVerification(long accountId, String passwordHash, boolean passwordMatched) {
+    record LoginVerification(long accountId, String passwordHash, boolean passwordMatched) {
     }
 }

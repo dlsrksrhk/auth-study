@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -44,11 +47,13 @@ class CredentialAuthenticationServiceTest {
     private static final long USER_ID = 303L;
     private static final String EMAIL = "admin@acme.local";
     private static final String PASSWORD = "Valid1234!";
+    private static final String DUMMY_PASSWORD_HASH =
+            "$2a$12$Fw8G.hdiMekZD1U1oRYN4uD2RtUQY4mSCkZIxgn1Kp7R3Ki/6IiS2";
 
     private final AccountRepository accountRepository = mock(AccountRepository.class);
     private final CompanyRepository companyRepository = mock(CompanyRepository.class);
     private final UserRepository userRepository = mock(UserRepository.class);
-    private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder(4);
+    private final PasswordEncoder passwordEncoder = spy(new BCryptPasswordEncoder(4));
     private CredentialAuthenticationService service;
 
     @BeforeEach
@@ -109,6 +114,50 @@ class CredentialAuthenticationServiceTest {
 
         assertUnauthenticated(() -> service.authenticate(
                 new CredentialAuthenticationService.Command(EMAIL, "incorrect")));
+
+        verify(passwordEncoder).matches("incorrect", DUMMY_PASSWORD_HASH);
+    }
+
+    @Test
+    void locks_on_the_fifth_failed_attempt_for_exactly_the_configured_duration_and_publishes_it() {
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        service = new CredentialAuthenticationService(accountRepository, companyRepository, userRepository,
+                passwordEncoder, properties(), Clock.fixed(NOW, ZoneOffset.UTC), new NoOpTransactionManager(), events);
+        Account account = companyAccount(false, UserStatus.ACTIVE);
+        when(accountRepository.findSystemLoginSnapshot(EMAIL)).thenReturn(Optional.empty());
+        when(companyRepository.findByEmailDomain("acme.local")).thenReturn(Optional.of(activeCompany()));
+        when(accountRepository.findCompanyLoginSnapshot(COMPANY_ID, EMAIL))
+                .thenReturn(Optional.of(snapshot(account)));
+        when(accountRepository.findByIdForUpdate(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        when(accountRepository.save(any(Account.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        for (int attempt = 0; attempt < 5; attempt++) {
+            assertUnauthenticated(() -> service.authenticate(
+                    new CredentialAuthenticationService.Command(EMAIL, "incorrect")));
+        }
+
+        assertThat(account.failedLoginAttempts()).isEqualTo(5);
+        assertThat(account.lockedUntil()).isEqualTo(NOW.plus(java.time.Duration.ofMinutes(15)));
+        verify(events).publishEvent(new CredentialAuthenticationService.AccountLocked(ACCOUNT_ID, NOW));
+    }
+
+    @Test
+    void discards_a_password_match_when_the_locked_row_has_a_new_password_hash() {
+        Account snapshotAccount = companyAccount(false, UserStatus.ACTIVE);
+        Account changedAccount = Account.restore(ACCOUNT_ID, COMPANY_ID, USER_ID, EMAIL,
+                passwordEncoder.encode("Replacement1234!"), AccountStatus.ACTIVE, false, 0, null,
+                java.util.Set.of(AccountRole.USER, AccountRole.COMPANY_ADMIN), 0, NOW, NOW);
+        when(accountRepository.findSystemLoginSnapshot(EMAIL)).thenReturn(Optional.empty());
+        when(companyRepository.findByEmailDomain("acme.local")).thenReturn(Optional.of(activeCompany()));
+        when(accountRepository.findCompanyLoginSnapshot(COMPANY_ID, EMAIL))
+                .thenReturn(Optional.of(snapshot(snapshotAccount)));
+        when(accountRepository.findByIdForUpdate(ACCOUNT_ID)).thenReturn(Optional.of(changedAccount));
+
+        assertUnauthenticated(() -> service.authenticate(
+                new CredentialAuthenticationService.Command(EMAIL, PASSWORD)));
+
+        org.mockito.Mockito.verifyNoInteractions(userRepository);
+        verify(accountRepository, never()).save(any(Account.class));
     }
 
     @Test
