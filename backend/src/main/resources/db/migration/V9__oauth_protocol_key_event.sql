@@ -39,7 +39,9 @@ CREATE TABLE oauth_protocol_event (
     CONSTRAINT ck_oauth_protocol_event_correlation CHECK (btrim(correlation_id) <> ''),
     CONSTRAINT ck_oauth_protocol_event_type CHECK (btrim(event_type) <> ''),
     CONSTRAINT ck_oauth_protocol_event_outcome CHECK (outcome IN ('SUCCESS', 'FAILURE', 'DENIED')),
-    CONSTRAINT ck_oauth_protocol_event_metadata_object CHECK (jsonb_typeof(metadata) = 'object')
+    CONSTRAINT ck_oauth_protocol_event_metadata_object CHECK (
+        metadata IS NULL OR jsonb_typeof(metadata) = 'object'
+    )
 );
 
 CREATE INDEX ix_oauth_protocol_event_occurred_at ON oauth_protocol_event (occurred_at DESC);
@@ -48,4 +50,5 @@ CREATE INDEX ix_oauth_protocol_event_client ON oauth_protocol_event (client_id, 
 CREATE INDEX ix_oauth_protocol_event_subject ON oauth_protocol_event (subject, occurred_at DESC);
 CREATE INDEX ix_oauth_protocol_event_account ON oauth_protocol_event (account_id, occurred_at DESC);
 CREATE INDEX ix_oauth_protocol_event_company ON oauth_protocol_event (company_id, occurred_at DESC);
+CREATE INDEX ix_oauth_protocol_event_authorization ON oauth_protocol_event (authorization_id, occurred_at DESC);
 CREATE INDEX ix_oauth_protocol_event_type_outcome ON oauth_protocol_event (event_type, outcome, occurred_at DESC);

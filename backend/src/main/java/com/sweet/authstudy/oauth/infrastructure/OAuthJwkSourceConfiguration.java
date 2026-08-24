@@ -6,8 +6,10 @@ import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -17,7 +19,9 @@ import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.KeyUse;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.JWSVerificationKeySelector;
 import com.nimbusds.jose.proc.SecurityContext;
+import com.nimbusds.jwt.proc.DefaultJWTProcessor;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
 import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
@@ -31,9 +35,9 @@ import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
-import org.springframework.security.oauth2.server.authorization.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(prefix = "app.oauth", name = {
@@ -48,13 +52,29 @@ public class OAuthJwkSourceConfiguration {
     }
 
     @Bean
+    OAuthSigningKeySnapshotSource oauthSigningKeySnapshotSource(OAuthSigningKeyRepository repository,
+            OAuthPrivateKeyCipher cipher) {
+        return new OAuthSigningKeySnapshotSource(repository, cipher);
+    }
+
+    @Bean("oauthJwtEncoder")
+    JwtEncoder oauthJwtEncoder(OAuthSigningKeySnapshotSource signingKeys) {
+        return new OAuthSigningJwtEncoder(signingKeys);
+    }
+
+    @Bean
     JWKSource<SecurityContext> oauthJwkSource(OAuthSigningKeyRepository repository,
             OAuthPrivateKeyCipher cipher, OAuthSecurityProperties properties, Clock clock) {
         repository.bootstrapIfAbsent(() -> generate(cipher, clock.instant()));
+        return publicJwkSource(repository, clock, properties.verificationKeyRetention());
+    }
+
+    static JWKSource<SecurityContext> publicJwkSource(OAuthSigningKeyRepository repository,
+            Clock clock, Duration verificationRetention) {
         return (selector, context) -> {
-            Instant cutoff = clock.instant().minus(properties.verificationKeyRetention());
+            Instant cutoff = clock.instant().minus(verificationRetention);
             List<JWK> available = new ArrayList<>();
-            repository.findActive().ifPresent(key -> available.add(privateJwk(key, cipher)));
+            available.add(publicJwk(repository.requireActive()));
             repository.findVerificationOnlyRetiredAfter(cutoff).stream()
                     .map(OAuthJwkSourceConfiguration::publicJwk)
                     .forEach(available::add);
@@ -66,8 +86,9 @@ public class OAuthJwkSourceConfiguration {
     @ConditionalOnMissingBean(name = "oauthJwtDecoder")
     JwtDecoder oauthJwtDecoder(JWKSource<SecurityContext> jwkSource,
             OAuthSecurityProperties properties) {
-        NimbusJwtDecoder decoder = (NimbusJwtDecoder)
-                OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource);
+        DefaultJWTProcessor<SecurityContext> processor = new DefaultJWTProcessor<>();
+        processor.setJWSKeySelector(new JWSVerificationKeySelector<>(JWSAlgorithm.RS256, jwkSource));
+        NimbusJwtDecoder decoder = new NimbusJwtDecoder(processor);
         var issuer = JwtValidators.createDefaultWithIssuer(properties.issuer().toString());
         org.springframework.security.oauth2.core.OAuth2TokenValidator<Jwt> algorithm = jwt ->
                 "RS256".equals(jwt.getHeaders().get("alg"))
@@ -92,33 +113,19 @@ public class OAuthJwkSourceConfiguration {
                     .keyID(kid)
                     .build();
             String publicJwk = privateJwk.toPublicJWK().toJSONString();
-            byte[] encrypted = cipher.encrypt(kid, OAuthSigningKey.RS256, publicJwk,
-                    privateJwk.toJSONString().getBytes(StandardCharsets.UTF_8));
-            return OAuthSigningKey.active(kid, publicJwk, encrypted, activatedAt);
+            byte[] plaintext = privateJwk.toJSONString().getBytes(StandardCharsets.UTF_8);
+            try {
+                byte[] encrypted = cipher.encrypt(kid, OAuthSigningKey.RS256, publicJwk, plaintext);
+                return OAuthSigningKey.active(kid, publicJwk, encrypted, activatedAt);
+            } finally {
+                Arrays.fill(plaintext, (byte) 0);
+            }
         } catch (Exception exception) {
             throw new IllegalStateException("OAuth signing key generation failed.", exception);
         }
     }
 
-    private static RSAKey privateJwk(OAuthSigningKey key, OAuthPrivateKeyCipher cipher) {
-        try {
-            byte[] decrypted = cipher.decrypt(key.kid(), key.algorithm(), key.publicJwk(),
-                    key.encryptedPrivateMaterial());
-            RSAKey privateJwk = RSAKey.parse(new String(decrypted, StandardCharsets.UTF_8));
-            RSAKey publicJwk = publicJwk(key);
-            if (!privateJwk.isPrivate()
-                    || !JWSAlgorithm.RS256.equals(privateJwk.getAlgorithm())
-                    || !key.kid().equals(privateJwk.getKeyID())
-                    || !privateJwk.toPublicJWK().equals(publicJwk)) {
-                throw new IllegalStateException("OAuth signing key material could not be decrypted.");
-            }
-            return privateJwk;
-        } catch (java.text.ParseException exception) {
-            throw new IllegalStateException("OAuth signing key material could not be decrypted.");
-        }
-    }
-
-    private static RSAKey publicJwk(OAuthSigningKey key) {
+    static RSAKey publicJwk(OAuthSigningKey key) {
         try {
             RSAKey publicJwk = RSAKey.parse(key.publicJwk());
             if (publicJwk.isPrivate()

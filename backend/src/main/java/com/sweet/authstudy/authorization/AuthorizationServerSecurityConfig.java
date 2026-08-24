@@ -23,7 +23,6 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
-import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.authentication.ClientSecretAuthenticationProvider;
@@ -51,16 +50,18 @@ public class AuthorizationServerSecurityConfig {
             ObjectProvider<OAuth2AuthorizationService> authorizationServices,
             ObjectProvider<OAuth2AuthorizationConsentService> consentServices,
             ObjectProvider<JWKSource<SecurityContext>> jwkSources,
+            @Qualifier("oauthJwtEncoder") ObjectProvider<JwtEncoder> oauthJwtEncoders,
             @Qualifier("oauthJwtDecoder") ObjectProvider<JwtDecoder> oauthJwtDecoders) throws Exception {
         JWKSource<SecurityContext> jwkSource = jwkSources.getIfAvailable();
+        JwtEncoder oauthJwtEncoder = oauthJwtEncoders.getIfAvailable();
         JwtDecoder oauthJwtDecoder = oauthJwtDecoders.getIfAvailable();
         OAuth2AuthorizationService authorizationService = authorizationServices.getIfAvailable();
         OAuth2AuthorizationConsentService consentService = consentServices.getIfAvailable();
-        if (jwkSource != null && oauthJwtDecoder != null
+        if (jwkSource != null && oauthJwtEncoder != null && oauthJwtDecoder != null
                 && authorizationService != null && consentService != null) {
             OAuth2AuthorizationServerConfigurer authorizationServer =
                     OAuth2AuthorizationServerConfigurer.authorizationServer();
-            http.setSharedObject(JwtEncoder.class, new NimbusJwtEncoder(jwkSource));
+            http.setSharedObject(JwtEncoder.class, oauthJwtEncoder);
             http.setSharedObject(JwtDecoder.class, oauthJwtDecoder);
             http.with(authorizationServer, server -> server
                     .registeredClientRepository(registeredClients)

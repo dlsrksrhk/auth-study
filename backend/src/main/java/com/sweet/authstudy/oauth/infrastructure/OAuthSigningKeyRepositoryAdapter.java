@@ -2,13 +2,11 @@ package com.sweet.authstudy.oauth.infrastructure;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.Supplier;
 
 import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
 import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.LockModeType;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,8 +23,8 @@ public class OAuthSigningKeyRepositoryAdapter implements OAuthSigningKeyReposito
 
     @Override
     @Transactional(readOnly = true)
-    public Optional<OAuthSigningKey> findActive() {
-        return active(false).map(OAuthSigningKeyJpaEntity::toDomain);
+    public OAuthSigningKey requireActive() {
+        return requireExactlyOneActive().toDomain();
     }
 
     @Override
@@ -44,35 +42,18 @@ public class OAuthSigningKeyRepositoryAdapter implements OAuthSigningKeyReposito
 
     @Override
     @Transactional
-    public OAuthSigningKey save(OAuthSigningKey key) {
-        if (key.id() == null) {
-            OAuthSigningKeyJpaEntity entity = OAuthSigningKeyJpaEntity.from(key);
-            entityManager.persist(entity);
-            entityManager.flush();
-            return entity.toDomain();
-        }
-        OAuthSigningKeyJpaEntity entity = entityManager.find(
-                OAuthSigningKeyJpaEntity.class, key.id(), LockModeType.PESSIMISTIC_WRITE);
-        if (entity == null) throw new IllegalStateException("OAuth signing key does not exist.");
-        entity.updateLifecycle(key);
-        entityManager.flush();
-        return entity.toDomain();
-    }
-
-    @Override
-    @Transactional
     public OAuthSigningKey bootstrapIfAbsent(Supplier<OAuthSigningKey> candidate) {
         lockKeyRing();
-        return active(true).map(OAuthSigningKeyJpaEntity::toDomain)
-                .orElseGet(() -> persistNewActive(candidate.get()));
+        List<OAuthSigningKeyJpaEntity> active = activeKeys();
+        if (active.size() > 1) throw invalidActiveRing();
+        return active.isEmpty() ? persistNewActive(candidate.get()) : active.getFirst().toDomain();
     }
 
     @Override
     @Transactional
     public OAuthSigningKey rotate(Supplier<OAuthSigningKey> candidate, Instant retiredAt) {
         lockKeyRing();
-        OAuthSigningKeyJpaEntity current = active(true)
-                .orElseThrow(() -> new IllegalStateException("An active OAuth signing key is required for rotation."));
+        OAuthSigningKeyJpaEntity current = requireExactlyOneActive();
         current.updateLifecycle(current.toDomain().retire(retiredAt));
         entityManager.flush();
         return persistNewActive(candidate.get());
@@ -88,14 +69,22 @@ public class OAuthSigningKeyRepositoryAdapter implements OAuthSigningKeyReposito
         return entity.toDomain();
     }
 
-    private Optional<OAuthSigningKeyJpaEntity> active(boolean lock) {
-        var query = entityManager.createQuery("""
+    private OAuthSigningKeyJpaEntity requireExactlyOneActive() {
+        List<OAuthSigningKeyJpaEntity> active = activeKeys();
+        if (active.size() != 1) throw invalidActiveRing();
+        return active.getFirst();
+    }
+
+    private List<OAuthSigningKeyJpaEntity> activeKeys() {
+        return entityManager.createQuery("""
                 select key from OAuthSigningKeyJpaEntity key where key.status = :status
                 """, OAuthSigningKeyJpaEntity.class)
                 .setParameter("status", OAuthSigningKey.Status.ACTIVE)
-                .setMaxResults(1);
-        if (lock) query.setLockMode(LockModeType.PESSIMISTIC_WRITE);
-        return query.getResultStream().findFirst();
+                .getResultList();
+    }
+
+    private IllegalStateException invalidActiveRing() {
+        return new IllegalStateException("Exactly one active OAuth signing key is required.");
     }
 
     private void lockKeyRing() {

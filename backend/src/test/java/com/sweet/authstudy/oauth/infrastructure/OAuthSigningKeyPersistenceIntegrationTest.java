@@ -14,8 +14,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.jwk.JWKMatcher;
@@ -62,7 +64,8 @@ class OAuthSigningKeyPersistenceIntegrationTest {
 
         List<String> eventColumns = columns("oauth_protocol_event");
         assertThat(eventColumns).contains("occurred_at", "correlation_id", "event_type", "outcome",
-                "client_id", "subject", "account_id", "company_id", "error_code", "metadata");
+                "client_id", "subject", "account_id", "company_id", "authorization_id",
+                "error_code", "metadata");
         assertThat(eventColumns).noneMatch(name -> name.matches(
                 ".*(secret|password|code_value|token_value|private_key|verifier|cookie|request_body).*"));
 
@@ -74,13 +77,20 @@ class OAuthSigningKeyPersistenceIntegrationTest {
         assertThat(eventIndexes).anyMatch(name -> name.contains("occurred"))
                 .anyMatch(name -> name.contains("correlation"))
                 .anyMatch(name -> name.contains("client"))
-                .anyMatch(name -> name.contains("subject"));
+                .anyMatch(name -> name.contains("subject"))
+                .anyMatch(name -> name.contains("authorization"));
+
+        assertThatThrownBy(() -> jdbcClient.sql("""
+                insert into oauth_protocol_event(occurred_at, correlation_id, event_type, outcome, metadata)
+                values (:now, 'correlation', 'TOKEN_ISSUED', 'SUCCESS', 'null'::jsonb)
+                """).param("now", Timestamp.from(Instant.now())).update())
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
     @Order(2)
     void bootstrap_persists_only_encrypted_private_jwk_and_public_jwks_material() throws Exception {
-        OAuthSigningKey active = keys.findActive().orElseThrow();
+        OAuthSigningKey active = keys.requireActive();
         byte[] stored = jdbcClient.sql("""
                 select encrypted_private_material from oauth_signing_key where kid = :kid
                 """).param("kid", active.kid()).query(byte[].class).single();
@@ -112,7 +122,7 @@ class OAuthSigningKeyPersistenceIntegrationTest {
     @Test
     @Order(3)
     void database_rejects_a_second_active_key() {
-        OAuthSigningKey active = keys.findActive().orElseThrow();
+        OAuthSigningKey active = keys.requireActive();
         assertThatThrownBy(() -> jdbcClient.sql("""
                 insert into oauth_signing_key(
                     kid, algorithm, encrypted_private_material, public_jwk, status, activated_at)
@@ -151,7 +161,7 @@ class OAuthSigningKeyPersistenceIntegrationTest {
     @Test
     @Order(5)
     void rotation_keeps_recent_public_verification_key_and_excludes_expired_one() throws Exception {
-        OAuthSigningKey previous = keys.findActive().orElseThrow();
+        OAuthSigningKey previous = keys.requireActive();
         Instant rotationTime = Instant.now();
         OAuthSigningKey active = keys.rotate(() -> generatedKey("rotated-" + UUID.randomUUID()), rotationTime);
 
@@ -159,8 +169,7 @@ class OAuthSigningKeyPersistenceIntegrationTest {
                 new JWKSelector(new JWKMatcher.Builder().build()), null);
         assertThat(afterRotation).extracting(com.nimbusds.jose.jwk.JWK::getKeyID)
                 .contains(previous.kid(), active.kid());
-        assertThat(afterRotation.stream().filter(key -> key.getKeyID().equals(active.kid())).findFirst().orElseThrow()
-                .isPrivate()).isTrue();
+        assertThat(afterRotation).allMatch(key -> !key.isPrivate());
         assertThat(afterRotation.stream().filter(key -> key.getKeyID().equals(previous.kid())).findFirst().orElseThrow()
                 .isPrivate()).isFalse();
         assertThat(activeCount()).isEqualTo(1L);
@@ -176,6 +185,88 @@ class OAuthSigningKeyPersistenceIntegrationTest {
                 new JWKSelector(new JWKMatcher.Builder().build()), null);
         assertThat(afterExpiry).extracting(com.nimbusds.jose.jwk.JWK::getKeyID)
                 .contains(active.kid()).doesNotContain(previous.kid());
+    }
+
+    @Test
+    @Order(6)
+    void bootstrap_and_rotation_are_serialized_and_leave_exactly_one_active_key() throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger candidates = new AtomicInteger();
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var bootstrap = executor.submit(() -> {
+                start.await();
+                return keys.bootstrapIfAbsent(() -> {
+                    candidates.incrementAndGet();
+                    return generatedKey("unexpected-bootstrap");
+                });
+            });
+            var rotation = executor.submit(() -> {
+                start.await();
+                return keys.rotate(() -> generatedKey("bootstrap-race-" + UUID.randomUUID()), Instant.now());
+            });
+            start.countDown();
+
+            assertThat(bootstrap.get(30, TimeUnit.SECONDS)).isNotNull();
+            OAuthSigningKey rotated = rotation.get(30, TimeUnit.SECONDS);
+            assertThat(keys.requireActive().kid()).isEqualTo(rotated.kid());
+            assertThat(activeCount()).isEqualTo(1L);
+            assertThat(candidates).hasValue(0);
+        }
+    }
+
+    @Test
+    @Order(7)
+    void require_active_fails_closed_when_the_ring_has_no_active_key() {
+        jdbcClient.sql("delete from oauth_signing_key").update();
+        try {
+            assertThatThrownBy(keys::requireActive)
+                    .hasMessageContaining("Exactly one active OAuth signing key is required.");
+        } finally {
+            keys.bootstrapIfAbsent(() -> generatedKey("restored-" + UUID.randomUUID()));
+        }
+    }
+
+    @Test
+    @Order(8)
+    void failed_rotation_rolls_back_retirement_and_preserves_the_active_key() {
+        OAuthSigningKey before = keys.requireActive();
+
+        assertThatThrownBy(() -> keys.rotate(() -> {
+            throw new IllegalStateException("candidate generation failed");
+        }, Instant.now()))
+                .hasMessage("candidate generation failed");
+
+        assertThat(keys.requireActive().kid()).isEqualTo(before.kid());
+        assertThat(activeCount()).isEqualTo(1L);
+    }
+
+    @Test
+    @Order(9)
+    void require_active_detects_a_corrupt_ring_instead_of_selecting_an_arbitrary_key() {
+        OAuthSigningKey active = keys.requireActive();
+        String corruptKid = "corrupt-second-active-" + UUID.randomUUID();
+        jdbcClient.sql("drop index uk_oauth_signing_key_single_active").update();
+        try {
+            jdbcClient.sql("""
+                    insert into oauth_signing_key(
+                        kid, algorithm, encrypted_private_material, public_jwk, status, activated_at)
+                    values (:kid, 'RS256', :encrypted, :publicJwk, 'ACTIVE', :activatedAt)
+                    """).param("kid", corruptKid)
+                    .param("encrypted", active.encryptedPrivateMaterial())
+                    .param("publicJwk", active.publicJwk())
+                    .param("activatedAt", Timestamp.from(Instant.now())).update();
+
+            assertThatThrownBy(keys::requireActive)
+                    .hasMessageContaining("Exactly one active OAuth signing key is required.");
+        } finally {
+            jdbcClient.sql("delete from oauth_signing_key where kid = :kid")
+                    .param("kid", corruptKid).update();
+            jdbcClient.sql("""
+                    create unique index uk_oauth_signing_key_single_active
+                    on oauth_signing_key ((status)) where status = 'ACTIVE'
+                    """).update();
+        }
+        assertThat(keys.requireActive().kid()).isEqualTo(active.kid());
     }
 
     private List<String> columns(String table) {

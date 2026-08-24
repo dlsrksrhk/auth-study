@@ -38,9 +38,13 @@ class OAuthPrivateKeyCipherTest {
     @Test
     void tampering_and_wrong_key_fail_with_the_same_generic_error() {
         OAuthPrivateKeyCipher cipher = new OAuthPrivateKeyCipher(KEY_ID, KEY);
-        byte[] envelope = cipher.encrypt("signing-1", "RS256", PUBLIC_JWK,
+        byte[] validEnvelope = cipher.encrypt("signing-1", "RS256", PUBLIC_JWK,
                 "private".getBytes(StandardCharsets.UTF_8));
-        envelope[envelope.length - 1] ^= 1;
+        String[] parts = new String(validEnvelope, StandardCharsets.US_ASCII).split("\\.");
+        byte[] ciphertext = Base64.getUrlDecoder().decode(parts[3]);
+        ciphertext[0] ^= 1;
+        parts[3] = Base64.getUrlEncoder().withoutPadding().encodeToString(ciphertext);
+        byte[] envelope = String.join(".", parts).getBytes(StandardCharsets.US_ASCII);
 
         assertThatThrownBy(() -> cipher.decrypt("signing-1", "RS256", PUBLIC_JWK, envelope))
                 .isInstanceOf(IllegalStateException.class)

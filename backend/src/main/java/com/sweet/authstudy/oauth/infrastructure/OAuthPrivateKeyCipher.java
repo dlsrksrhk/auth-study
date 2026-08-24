@@ -54,7 +54,7 @@ public final class OAuthPrivateKeyCipher {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, wrappingKey, new GCMParameterSpec(TAG_BITS, nonce));
             cipher.updateAAD(aad(kid, algorithm, publicJwk));
-            byte[] ciphertext = cipher.doFinal(Arrays.copyOf(privateJwk, privateJwk.length));
+            byte[] ciphertext = cipher.doFinal(privateJwk);
             Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding();
             String envelope = VERSION + "." + encoder.encodeToString(
                     wrappingKeyId.getBytes(StandardCharsets.UTF_8)) + "."

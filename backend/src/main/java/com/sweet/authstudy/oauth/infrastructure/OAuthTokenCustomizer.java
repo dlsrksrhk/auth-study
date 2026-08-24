@@ -11,8 +11,6 @@ import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.application.OAuthSubjectService;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
-import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
 import org.springframework.security.oauth2.core.oidc.endpoint.OidcParameterNames;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
@@ -24,15 +22,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class OAuthTokenCustomizer implements OAuth2TokenCustomizer<JwtEncodingContext> {
 
-    private final OAuthSigningKeyRepository signingKeys;
     private final OAuthAuthorizationRepository authorizations;
     private final OAuthSubjectService subjects;
     private final OAuthSecurityProperties properties;
 
-    public OAuthTokenCustomizer(OAuthSigningKeyRepository signingKeys,
-            OAuthAuthorizationRepository authorizations, OAuthSubjectService subjects,
+    public OAuthTokenCustomizer(OAuthAuthorizationRepository authorizations, OAuthSubjectService subjects,
             OAuthSecurityProperties properties) {
-        this.signingKeys = signingKeys;
         this.authorizations = authorizations;
         this.subjects = subjects;
         this.properties = properties;
@@ -40,12 +35,7 @@ public class OAuthTokenCustomizer implements OAuth2TokenCustomizer<JwtEncodingCo
 
     @Override
     public void customize(JwtEncodingContext context) {
-        OAuthSigningKey active = signingKeys.findActive().orElse(null);
-        if (active == null) {
-            return;
-        }
         context.getJwsHeader().algorithm(SignatureAlgorithm.RS256);
-        context.getJwsHeader().keyId(active.kid());
 
         if (OidcParameterNames.ID_TOKEN.equals(context.getTokenType().getValue())) {
             customizeIdToken(context);

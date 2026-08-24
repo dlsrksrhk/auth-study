@@ -2,6 +2,8 @@ package com.sweet.authstudy.oauth.acceptance;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -22,18 +24,18 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
-import com.nimbusds.jose.jwk.JWKMatcher;
-import com.nimbusds.jose.jwk.JWKSelector;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.KeyUse;
 import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.jwk.source.JWKSource;
-import com.nimbusds.jose.proc.SecurityContext;
 import com.nimbusds.jose.crypto.RSASSASigner;
 import com.nimbusds.jose.crypto.RSASSAVerifier;
 import com.nimbusds.jwt.JWTClaimsSet;
@@ -50,11 +52,19 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @SpringBootTest
@@ -71,14 +81,14 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcClient jdbcClient;
-    @Autowired private OAuthSigningKeyRepository signingKeys;
+    @MockitoSpyBean private OAuthSigningKeyRepository signingKeys;
     @Autowired private OAuthPrivateKeyCipher cipher;
-    @Autowired private JWKSource<SecurityContext> jwkSource;
     @Autowired @Qualifier("oauthJwtDecoder") private JwtDecoder jwtDecoder;
+    @Autowired @Qualifier("oauthJwtEncoder") private JwtEncoder jwtEncoder;
 
     @Test
     void discovery_jwks_and_real_code_exchange_publish_the_rs256_allowlist_contract() throws Exception {
-        OAuthSigningKey oldActive = signingKeys.findActive().orElseThrow();
+        OAuthSigningKey oldActive = signingKeys.requireActive();
         OAuthSigningKey active = signingKeys.rotate(
                 () -> generatedKey("contract-" + UUID.randomUUID()), Instant.now());
 
@@ -97,9 +107,8 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
         SignedJWT idToken = SignedJWT.parse(response.path("id_token").asText());
         SignedJWT accessToken = SignedJWT.parse(response.path("access_token").asText());
 
-        RSAKey publishedActive = jwks.getKeyByKeyId(active.kid()).toRSAKey();
-        assertThat(idToken.verify(new RSASSAVerifier(publishedActive))).isTrue();
-        assertThat(accessToken.verify(new RSASSAVerifier(publishedActive))).isTrue();
+        assertPublishedAndDecodable(idToken, jwks);
+        assertPublishedAndDecodable(accessToken, jwks);
         assertHeader(idToken, active.kid());
         assertHeader(accessToken, active.kid());
 
@@ -143,6 +152,84 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
 
         assertThat(jwtDecoder.decode(accessToken.serialize()).getSubject()).isEqualTo(expectedSubject);
         assertDecoderRejectsWrongIssuerAndAlgorithm(accessToken, active.kid());
+
+        Fixture confidential = fixture("confidential-secret-" + UUID.randomUUID());
+        String confidentialNonce = "nonce-" + UUID.randomUUID();
+        JsonNode confidentialResponse = exchange(discovery.tokenPath(), confidential,
+                authorize(discovery.authorizationPath(), confidential, confidentialNonce));
+        SignedJWT confidentialIdToken = SignedJWT.parse(confidentialResponse.path("id_token").asText());
+        assertPublishedAndDecodable(confidentialIdToken, JWKSet.parse(getJson(discovery.jwksPath()).toString()));
+        assertIdTokenContract(confidentialIdToken, confidential, confidentialNonce);
+    }
+
+    @Test
+    void request_without_openid_returns_no_id_token() throws Exception {
+        Discovery discovery = discovery();
+        Fixture fixture = fixture();
+        String code = authorize(discovery.authorizationPath(), fixture, null, "profile hr.roles");
+
+        JsonNode response = exchange(discovery.tokenPath(), fixture, code, false);
+
+        assertThat(response.has("id_token")).isFalse();
+        assertThat(response.path("access_token").asText()).isNotBlank();
+        assertPublishedAndDecodable(SignedJWT.parse(response.path("access_token").asText()),
+                JWKSet.parse(getJson(discovery.jwksPath()).toString()));
+    }
+
+    @Test
+    void issuance_linearizes_on_one_signing_snapshot_while_rotation_runs() throws Exception {
+        Discovery discovery = discovery();
+        Fixture fixture = fixture();
+        String code = authorize(discovery.authorizationPath(), fixture, "race-nonce");
+        OAuthSigningKey before = signingKeys.requireActive();
+        CountDownLatch activeRead = new CountDownLatch(1);
+        CountDownLatch rotationFinished = new CountDownLatch(1);
+        AtomicBoolean interceptFirstSigningRead = new AtomicBoolean(true);
+        doAnswer(invocation -> {
+            OAuthSigningKey snapshot = (OAuthSigningKey) invocation.callRealMethod();
+            if (interceptFirstSigningRead.compareAndSet(true, false)) {
+                activeRead.countDown();
+                if (!rotationFinished.await(30, TimeUnit.SECONDS)) {
+                    throw new AssertionError("rotation did not finish");
+                }
+            }
+            return snapshot;
+        }).when(signingKeys).requireActive();
+
+        JsonNode response;
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var issued = executor.submit(() -> exchange(discovery.tokenPath(), fixture, code));
+            assertThat(activeRead.await(30, TimeUnit.SECONDS)).isTrue();
+            signingKeys.rotate(() -> generatedKey("issue-race-" + UUID.randomUUID()), Instant.now());
+            rotationFinished.countDown();
+            response = issued.get(30, TimeUnit.SECONDS);
+        } finally {
+            rotationFinished.countDown();
+            doCallRealMethod().when(signingKeys).requireActive();
+        }
+
+        JWKSet afterRotation = JWKSet.parse(getJson(discovery.jwksPath()).toString());
+        List<SignedJWT> issuedTokens = List.of(
+                SignedJWT.parse(response.path("access_token").asText()),
+                SignedJWT.parse(response.path("id_token").asText()));
+        assertThat(issuedTokens).anyMatch(token -> before.kid().equals(token.getHeader().getKeyID()));
+        for (SignedJWT issuedToken : issuedTokens) {
+            assertPublishedAndDecodable(issuedToken, afterRotation);
+        }
+    }
+
+    @Test
+    void token_exchange_fails_closed_when_the_active_key_is_missing() throws Exception {
+        Discovery discovery = discovery();
+        Fixture fixture = fixture();
+        String code = authorize(discovery.authorizationPath(), fixture, "missing-key-nonce");
+        jdbcClient.sql("delete from oauth_signing_key").update();
+        try {
+            assertThatThrownBy(() -> exchange(discovery.tokenPath(), fixture, code))
+                    .hasRootCauseMessage("Exactly one active OAuth signing key is required.");
+        } finally {
+            signingKeys.bootstrapIfAbsent(() -> generatedKey("restored-http-" + UUID.randomUUID()));
+        }
     }
 
     private Discovery discovery() throws Exception {
@@ -164,18 +251,23 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
     }
 
     private String authorize(String authorizationPath, Fixture fixture, String nonce) throws Exception {
+        return authorize(authorizationPath, fixture, nonce, "openid profile hr.roles");
+    }
+
+    private String authorize(String authorizationPath, Fixture fixture, String nonce, String scopes) throws Exception {
         String state = "state-" + UUID.randomUUID();
-        MvcResult result = mockMvc.perform(get(authorizationPath)
+        MockHttpServletRequestBuilder request = get(authorizationPath)
                         .session(new MockHttpSession())
                         .with(user(Long.toString(fixture.accountId())))
                         .queryParam("response_type", "code")
                         .queryParam("client_id", fixture.clientId())
                         .queryParam("redirect_uri", CALLBACK.toString())
-                        .queryParam("scope", "openid profile hr.roles")
+                        .queryParam("scope", scopes)
                         .queryParam("state", state)
-                        .queryParam("nonce", nonce)
                         .queryParam("code_challenge", challenge(VERIFIER))
-                        .queryParam("code_challenge_method", "S256"))
+                        .queryParam("code_challenge_method", "S256");
+        if (nonce != null) request.queryParam("nonce", nonce);
+        MvcResult result = mockMvc.perform(request)
                 .andExpect(status().is3xxRedirection())
                 .andReturn();
         URI location = URI.create(result.getResponse().getHeader("Location"));
@@ -184,17 +276,26 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
     }
 
     private JsonNode exchange(String tokenPath, Fixture fixture, String code) throws Exception {
-        MvcResult result = mockMvc.perform(post(tokenPath)
+        return exchange(tokenPath, fixture, code, true);
+    }
+
+    private JsonNode exchange(String tokenPath, Fixture fixture, String code, boolean expectIdToken) throws Exception {
+        MockHttpServletRequestBuilder request = post(tokenPath)
                         .header("Origin", ISSUER)
                         .param("grant_type", "authorization_code")
-                        .param("client_id", fixture.clientId())
                         .param("code", code)
                         .param("redirect_uri", CALLBACK.toString())
-                        .param("code_verifier", VERIFIER))
+                        .param("code_verifier", VERIFIER);
+        if (fixture.rawSecret() == null) {
+            request.param("client_id", fixture.clientId());
+        } else {
+            request.header("Authorization", basic(fixture.clientId(), fixture.rawSecret()));
+        }
+        MvcResult result = mockMvc.perform(request)
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode response = objectMapper.readTree(result.getResponse().getContentAsByteArray());
-        assertThat(response.path("id_token").asText()).isNotBlank();
+        if (expectIdToken) assertThat(response.path("id_token").asText()).isNotBlank();
         assertThat(response.path("access_token").asText()).isNotBlank();
         return response;
     }
@@ -204,35 +305,58 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
         assertThat(jwt.getHeader().getKeyID()).isEqualTo(kid);
     }
 
+    private void assertPublishedAndDecodable(SignedJWT token, JWKSet jwks) throws Exception {
+        RSAKey published = jwks.getKeyByKeyId(token.getHeader().getKeyID()).toRSAKey();
+        assertThat(published.isPrivate()).isFalse();
+        assertThat(token.verify(new RSASSAVerifier(published))).isTrue();
+        assertThat(jwtDecoder.decode(token.serialize()).getHeaders().get("kid"))
+                .isEqualTo(token.getHeader().getKeyID());
+    }
+
+    private void assertIdTokenContract(SignedJWT idToken, Fixture fixture, String nonce) throws Exception {
+        JWTClaimsSet claims = idToken.getJWTClaimsSet();
+        String expectedSubject = jdbcClient.sql("select subject::text from oauth_subject where account_id = :id")
+                .param("id", fixture.accountId()).query(String.class).single();
+        assertThat(claims.getClaims().keySet()).containsExactlyInAnyOrder(
+                "iss", "sub", "aud", "exp", "iat", "auth_time", "nonce");
+        assertThat(claims.getIssuer()).isEqualTo(ISSUER);
+        assertThat(claims.getSubject()).isEqualTo(expectedSubject)
+                .isNotEqualTo(Long.toString(fixture.accountId()));
+        assertThat(claims.getAudience()).containsExactly(fixture.clientId());
+        assertThat(claims.getStringClaim("nonce")).isEqualTo(nonce);
+        assertThat(Duration.between(claims.getIssueTime().toInstant(), claims.getExpirationTime().toInstant()))
+                .isEqualTo(Duration.ofMinutes(5));
+    }
+
     private void assertDecoderRejectsWrongIssuerAndAlgorithm(SignedJWT original, String activeKid)
             throws Exception {
-        RSAKey activePrivate = jwkSource.get(
-                        new JWKSelector(new JWKMatcher.Builder().keyID(activeKid).build()), null)
-                .stream().map(key -> {
-                    try {
-                        return key.toRSAKey();
-                    } catch (Exception exception) {
-                        throw new IllegalStateException(exception);
-                    }
-                }).filter(RSAKey::isPrivate).findFirst().orElseThrow();
-
-        JWTClaimsSet wrongIssuerClaims = new JWTClaimsSet.Builder(original.getJWTClaimsSet())
+        JWTClaimsSet originalClaims = original.getJWTClaimsSet();
+        JwtClaimsSet wrongIssuerClaims = JwtClaimsSet.builder()
                 .issuer("http://attacker.invalid")
+                .subject(originalClaims.getSubject())
+                .audience(originalClaims.getAudience())
+                .issuedAt(originalClaims.getIssueTime().toInstant())
+                .expiresAt(originalClaims.getExpirationTime().toInstant())
+                .id(UUID.randomUUID().toString())
                 .build();
-        SignedJWT wrongIssuer = new SignedJWT(
-                new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(activeKid).build(), wrongIssuerClaims);
-        wrongIssuer.sign(new RSASSASigner(activePrivate));
-        assertThatThrownBy(() -> jwtDecoder.decode(wrongIssuer.serialize()))
+        String wrongIssuer = jwtEncoder.encode(JwtEncoderParameters.from(
+                JwsHeader.with(SignatureAlgorithm.RS256).build(), wrongIssuerClaims)).getTokenValue();
+        assertThatThrownBy(() -> jwtDecoder.decode(wrongIssuer))
                 .isInstanceOf(JwtException.class);
 
+        RSAKey unrelatedPrivate = privateJwk(activeKid);
         SignedJWT wrongAlgorithm = new SignedJWT(
                 new JWSHeader.Builder(JWSAlgorithm.RS512).keyID(activeKid).build(), original.getJWTClaimsSet());
-        wrongAlgorithm.sign(new RSASSASigner(activePrivate));
+        wrongAlgorithm.sign(new RSASSASigner(unrelatedPrivate));
         assertThatThrownBy(() -> jwtDecoder.decode(wrongAlgorithm.serialize()))
                 .isInstanceOf(JwtException.class);
     }
 
     private Fixture fixture() {
+        return fixture(null);
+    }
+
+    private Fixture fixture(String rawSecret) {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         String code = "OIDC_" + suffix.toUpperCase();
         Instant now = Instant.now();
@@ -270,9 +394,19 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
                 insert into oauth_client(company_id, client_id, display_name, status, trust,
                                          public_client, created_at, updated_at)
                 values (:companyId, :clientId, 'OIDC RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
-                        true, :now, :now) returning id
+                        :publicClient, :now, :now) returning id
                 """).param("companyId", companyId).param("clientId", clientId)
+                .param("publicClient", rawSecret == null)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
+        if (rawSecret != null) {
+            jdbcClient.sql("""
+                    insert into oauth_client_secret(client_id, secret_hash, secret_hint, created_at, version)
+                    values (:clientId, :hash, :hint, :now, 0)
+                    """).param("clientId", internalClientId)
+                    .param("hash", new BCryptPasswordEncoder().encode(rawSecret))
+                    .param("hint", rawSecret.substring(rawSecret.length() - 4))
+                    .param("now", Timestamp.from(now)).update();
+        }
         jdbcClient.sql("""
                 insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
                 values (:clientId, :redirectUri, 'AUTHORIZATION')
@@ -281,7 +415,7 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
             jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, :scope)")
                     .param("clientId", internalClientId).param("scope", scope).update();
         }
-        return new Fixture(accountId, clientId);
+        return new Fixture(accountId, clientId, rawSecret);
     }
 
     private OAuthSigningKey generatedKey(String kid) {
@@ -305,6 +439,23 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
         }
     }
 
+    private RSAKey privateJwk(String kid) throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair pair = generator.generateKeyPair();
+        return new RSAKey.Builder((RSAPublicKey) pair.getPublic())
+                .privateKey((RSAPrivateKey) pair.getPrivate())
+                .algorithm(JWSAlgorithm.RS512)
+                .keyUse(KeyUse.SIGNATURE)
+                .keyID(kid)
+                .build();
+    }
+
+    private static String basic(String clientId, String secret) {
+        return "Basic " + Base64.getEncoder().encodeToString(
+                (clientId + ":" + secret).getBytes(StandardCharsets.UTF_8));
+    }
+
     private static List<String> toStrings(JsonNode array) {
         return java.util.stream.StreamSupport.stream(array.spliterator(), false)
                 .map(JsonNode::asText).toList();
@@ -321,5 +472,5 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
     }
 
     private record Discovery(String authorizationPath, String tokenPath, String jwksPath) { }
-    private record Fixture(long accountId, String clientId) { }
+    private record Fixture(long accountId, String clientId, String rawSecret) { }
 }
