@@ -1,0 +1,145 @@
+package com.sweet.authstudy.oauth.domain;
+
+import java.time.Instant;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+
+public final class OAuthAuthorization {
+
+    public enum Status { ACTIVE, REVOKED }
+
+    public record Attributes(String principalName, String authorizationRequestUri) {
+        public Attributes {
+            principalName = OAuthRefreshToken.requireText(principalName, "principalName");
+            authorizationRequestUri = OAuthRefreshToken.requireText(
+                    authorizationRequestUri, "authorizationRequestUri");
+        }
+    }
+
+    private final String id;
+    private final long registeredClientId;
+    private final UUID subject;
+    private final long principalAccountId;
+    private final long companyId;
+    private final String authorizationGrantType;
+    private final Set<String> authorizedScopes;
+    private final Attributes attributes;
+    private final String state;
+    private final Instant authenticatedAt;
+    private Status status;
+    private String revocationReason;
+    private final Instant createdAt;
+    private final Instant expiresAt;
+    private Instant revokedAt;
+    private OAuthAuthorizationCode authorizationCode;
+    private OAuthAccessToken accessToken;
+    private OAuthRefreshToken refreshToken;
+
+    private OAuthAuthorization(String id, long registeredClientId, UUID subject, long principalAccountId,
+            long companyId, String authorizationGrantType, Set<String> authorizedScopes,
+            Attributes attributes, String state, Instant authenticatedAt, Status status,
+            String revocationReason, Instant createdAt, Instant expiresAt, Instant revokedAt,
+            OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
+            OAuthRefreshToken refreshToken) {
+        this.id = OAuthRefreshToken.requireText(id, "id");
+        this.registeredClientId = registeredClientId;
+        this.subject = Objects.requireNonNull(subject, "subject");
+        this.principalAccountId = principalAccountId;
+        this.companyId = companyId;
+        this.authorizationGrantType = OAuthRefreshToken.requireText(
+                authorizationGrantType, "authorizationGrantType");
+        this.authorizedScopes = Set.copyOf(OAuthConsent.normalizeScopes(authorizedScopes));
+        this.attributes = Objects.requireNonNull(attributes, "attributes");
+        this.state = state;
+        this.authenticatedAt = Objects.requireNonNull(authenticatedAt, "authenticatedAt");
+        this.status = Objects.requireNonNull(status, "status");
+        this.revocationReason = revocationReason;
+        this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
+        this.expiresAt = Objects.requireNonNull(expiresAt, "expiresAt");
+        if (!expiresAt.isAfter(createdAt)) {
+            throw new IllegalArgumentException("expiresAt must be after createdAt");
+        }
+        this.revokedAt = revokedAt;
+        this.authorizationCode = authorizationCode;
+        this.accessToken = accessToken;
+        this.refreshToken = refreshToken;
+    }
+
+    public static OAuthAuthorization create(String id, long registeredClientId, UUID subject,
+            long principalAccountId, long companyId, String authorizationGrantType,
+            Set<String> authorizedScopes, Attributes attributes, String state, Instant authenticatedAt,
+            Instant createdAt, Instant expiresAt) {
+        return new OAuthAuthorization(id, registeredClientId, subject, principalAccountId, companyId,
+                authorizationGrantType, authorizedScopes, attributes, state, authenticatedAt,
+                Status.ACTIVE, null, createdAt, expiresAt, null, null, null, null);
+    }
+
+    public static OAuthAuthorization restore(String id, long registeredClientId, UUID subject,
+            long principalAccountId, long companyId, String authorizationGrantType,
+            Set<String> authorizedScopes, Attributes attributes, String state, Instant authenticatedAt,
+            Status status, String revocationReason, Instant createdAt, Instant expiresAt,
+            Instant revokedAt, OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
+            OAuthRefreshToken refreshToken) {
+        return new OAuthAuthorization(id, registeredClientId, subject, principalAccountId, companyId,
+                authorizationGrantType, authorizedScopes, attributes, state, authenticatedAt, status,
+                revocationReason, createdAt, expiresAt, revokedAt,
+                authorizationCode, accessToken, refreshToken);
+    }
+
+    public void attachAuthorizationCode(OAuthAuthorizationCode code) {
+        requireSameAuthorization(code.authorizationId());
+        authorizationCode = code;
+    }
+
+    public void attachAccessToken(OAuthAccessToken token) {
+        requireSameAuthorization(token.authorizationId());
+        accessToken = token;
+    }
+
+    public void attachRefreshToken(OAuthRefreshToken token) {
+        requireSameAuthorization(token.authorizationId());
+        refreshToken = token;
+    }
+
+    public void revoke(String reason, Instant now) {
+        OAuthRefreshToken.requireText(reason, "reason");
+        Objects.requireNonNull(now, "now");
+        if (revokedAt == null) {
+            status = Status.REVOKED;
+            revocationReason = reason;
+            revokedAt = now;
+            if (accessToken != null) accessToken.revoke(now);
+            if (refreshToken != null) refreshToken.revoke(now);
+        }
+    }
+
+    public boolean expiredAt(Instant now) { return !expiresAt.isAfter(Objects.requireNonNull(now)); }
+    public boolean activeAt(Instant now) { return status == Status.ACTIVE && revokedAt == null && !expiredAt(now); }
+
+    private void requireSameAuthorization(String authorizationId) {
+        if (!id.equals(authorizationId)) {
+            throw new IllegalArgumentException("Token metadata belongs to another authorization.");
+        }
+    }
+
+    public String id() { return id; }
+    public long registeredClientId() { return registeredClientId; }
+    public UUID subject() { return subject; }
+    public long principalAccountId() { return principalAccountId; }
+    public long companyId() { return companyId; }
+    public String authorizationGrantType() { return authorizationGrantType; }
+    public Set<String> authorizedScopes() { return authorizedScopes; }
+    public Attributes attributes() { return attributes; }
+    public String state() { return state; }
+    public Instant authenticatedAt() { return authenticatedAt; }
+    public Status status() { return status; }
+    public String revocationReason() { return revocationReason; }
+    public Instant createdAt() { return createdAt; }
+    public Instant expiresAt() { return expiresAt; }
+    public Instant revokedAt() { return revokedAt; }
+    public Optional<OAuthAuthorizationCode> authorizationCode() { return Optional.ofNullable(authorizationCode); }
+    public Optional<OAuthAccessToken> accessToken() { return Optional.ofNullable(accessToken); }
+    public Optional<OAuthRefreshToken> refreshToken() { return Optional.ofNullable(refreshToken); }
+}
