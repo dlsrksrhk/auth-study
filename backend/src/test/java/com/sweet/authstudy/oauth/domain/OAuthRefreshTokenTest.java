@@ -80,6 +80,20 @@ class OAuthRefreshTokenTest {
                 .hasMessageContaining("family");
     }
 
+    @Test
+    void a_successor_cannot_extend_the_family_absolute_expiry() {
+        OAuthRefreshToken current = OAuthRefreshToken.restore(
+                1L, "authorization-1", hash('a'), FAMILY_ID, ISSUED_AT, EXPIRES_AT,
+                null, null, null);
+        OAuthRefreshToken extended = OAuthRefreshToken.restore(
+                2L, "authorization-1", hash('b'), FAMILY_ID, ISSUED_AT.plusSeconds(60),
+                EXPIRES_AT.plusSeconds(60), null, null, null);
+
+        assertThatThrownBy(() -> current.markUsed(ISSUED_AT.plusSeconds(60), extended))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("absolute expiry");
+    }
+
     private static String hash(char value) {
         return String.valueOf(value).repeat(64);
     }

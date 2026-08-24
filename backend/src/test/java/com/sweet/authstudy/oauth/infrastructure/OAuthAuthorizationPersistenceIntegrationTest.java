@@ -20,9 +20,13 @@ import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
+import com.sweet.authstudy.oauth.domain.OAuthClient;
+import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
 import com.sweet.authstudy.oauth.domain.OAuthConsent;
 import com.sweet.authstudy.oauth.domain.OAuthConsentRepository;
 import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
+import com.sweet.authstudy.oauth.domain.OAuthSubject;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -233,6 +237,86 @@ class OAuthAuthorizationPersistenceIntegrationTest {
     }
 
     @Test
+    void atomic_code_consumption_allows_only_one_of_two_real_postgresql_transactions_to_exchange() {
+        Fixture fixture = insertFixture("CODE_RACE");
+        OAuthAuthorization authorization = authorization(fixture, "authorization-code-race");
+        authorization.attachAuthorizationCode(OAuthAuthorizationCode.issue(
+                authorization.id(), hash('5'), URI.create("https://rp.example/callback"),
+                "D".repeat(43), null, AUTHENTICATED_AT, CODE_EXPIRES_AT));
+        authorizationRepository.save(authorization);
+        CyclicBarrier start = new CyclicBarrier(2);
+        AtomicInteger exchanges = new AtomicInteger();
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var submissions = List.of(
+                    executor.submit(() -> consumeCodeAfterBarrier(start, exchanges)),
+                    executor.submit(() -> consumeCodeAfterBarrier(start, exchanges)));
+            List<OAuthAuthorizationCode.Consumption> outcomes = submissions.stream().map(future -> {
+                try {
+                    return future.get(20, TimeUnit.SECONDS).consumption();
+                } catch (Exception exception) {
+                    throw new AssertionError(exception);
+                }
+            }).toList();
+
+            assertThat(outcomes).containsExactlyInAnyOrder(
+                    OAuthAuthorizationCode.Consumption.CONSUMED,
+                    OAuthAuthorizationCode.Consumption.ALREADY_USED);
+            assertThat(exchanges).hasValue(1);
+        }
+    }
+
+    @Test
+    void confirmed_invalid_code_exchange_is_committed_and_cannot_be_replayed() {
+        Fixture fixture = insertFixture("CODE_INVALID");
+        OAuthAuthorization authorization = authorization(fixture, "authorization-code-invalid");
+        authorization.attachAuthorizationCode(OAuthAuthorizationCode.issue(
+                authorization.id(), hash('6'), URI.create("https://rp.example/callback"),
+                "E".repeat(43), null, AUTHENTICATED_AT, CODE_EXPIRES_AT));
+        authorizationRepository.save(authorization);
+
+        OAuthAuthorizationRepository.CodeConsumption<String> invalid = authorizationRepository
+                .consumeCodeAtomically(hash('6'), AUTHENTICATED_AT.plusSeconds(1),
+                        code -> "INVALID_REDIRECT_URI")
+                .orElseThrow();
+        OAuthAuthorizationRepository.CodeConsumption<String> replay = authorizationRepository
+                .<String>consumeCodeAtomically(hash('6'), AUTHENTICATED_AT.plusSeconds(2),
+                        code -> {
+                            throw new AssertionError("Replay must not invoke exchange validation.");
+                        })
+                .orElseThrow();
+
+        assertThat(invalid.consumption()).isEqualTo(OAuthAuthorizationCode.Consumption.CONSUMED);
+        assertThat(invalid.exchangeResult()).contains("INVALID_REDIRECT_URI");
+        assertThat(replay.consumption()).isEqualTo(OAuthAuthorizationCode.Consumption.ALREADY_USED);
+        assertThat(replay.exchangeResult()).isEmpty();
+    }
+
+    @Test
+    void caller_rollback_cannot_restore_a_code_after_confirmed_invalid_exchange() {
+        Fixture fixture = insertFixture("CODE_OUTER_ROLLBACK");
+        OAuthAuthorization authorization = authorization(fixture, "authorization-code-outer-rollback");
+        authorization.attachAuthorizationCode(OAuthAuthorizationCode.issue(
+                authorization.id(), hash('7'), URI.create("https://rp.example/callback"),
+                "F".repeat(43), null, AUTHENTICATED_AT, CODE_EXPIRES_AT));
+        authorizationRepository.save(authorization);
+        TransactionTemplate callerTransaction = new TransactionTemplate(transactionManager);
+
+        callerTransaction.executeWithoutResult(status -> {
+            authorizationRepository.consumeCodeAtomically(
+                    hash('7'), AUTHENTICATED_AT.plusSeconds(1), code -> "INVALID_PKCE")
+                    .orElseThrow();
+            status.setRollbackOnly();
+        });
+        OAuthAuthorizationRepository.CodeConsumption<String> replay = authorizationRepository
+                .consumeCodeAtomically(hash('7'), AUTHENTICATED_AT.plusSeconds(2), code -> "MUST_NOT_RUN")
+                .orElseThrow();
+
+        assertThat(replay.consumption()).isEqualTo(OAuthAuthorizationCode.Consumption.ALREADY_USED);
+        assertThat(replay.exchangeResult()).isEmpty();
+    }
+
+    @Test
     void two_real_postgresql_transactions_create_one_successor_then_revoke_the_whole_family_on_reuse()
             throws Exception {
         Fixture fixture = insertFixture("REFRESH_RACE");
@@ -289,6 +373,27 @@ class OAuthAuthorizationPersistenceIntegrationTest {
     }
 
     @Test
+    void database_rejects_a_successor_that_extends_the_family_absolute_expiry() {
+        Fixture fixture = insertFixture("REFRESH_EXPIRY_CONSTRAINT");
+        OAuthAuthorization authorization = authorization(fixture, "authorization-expiry-constraint");
+        authorization.attachRefreshToken(OAuthRefreshToken.issue(
+                authorization.id(), hash('3'), FAMILY_ID, AUTHENTICATED_AT, REFRESH_EXPIRES_AT));
+        authorizationRepository.save(authorization);
+        OAuthRefreshToken extended = authorizationRepository.saveRefreshToken(OAuthRefreshToken.issue(
+                authorization.id(), hash('4'), FAMILY_ID, AUTHENTICATED_AT.plusSeconds(1),
+                REFRESH_EXPIRES_AT.plusSeconds(1)));
+
+        assertThatThrownBy(() -> jdbcClient.sql("""
+                        update oauth_refresh_token set successor_id = :successorId, used_at = :usedAt
+                        where refresh_token_hash = :currentHash
+                        """)
+                .param("successorId", extended.id())
+                .param("usedAt", Timestamp.from(AUTHENTICATED_AT.plusSeconds(1)))
+                .param("currentHash", hash('3'))
+                .update()).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
     void account_and_client_revocation_are_idempotent_and_revoke_authorization_access_and_refresh_rows() {
         Fixture fixture = insertFixture("REVOKE");
         OAuthAuthorization authorization = authorization(fixture, "authorization-revoke");
@@ -313,6 +418,71 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 .param("id", authorization.id()).query(Instant.class).single()).isEqualTo(first);
     }
 
+    @Test
+    void latest_access_token_breaks_equal_issued_at_ties_by_descending_id() {
+        Fixture fixture = insertFixture("ACCESS_ORDER");
+        OAuthAuthorization authorization = authorization(fixture, "authorization-access-order");
+        authorizationRepository.save(authorization);
+        authorizationRepository.saveAccessToken(OAuthAccessToken.issue(
+                authorization.id(), hash('a'), "jti-order-first", "auth-study-userinfo",
+                AUTHENTICATED_AT, TOKEN_EXPIRES_AT));
+        OAuthAccessToken second = authorizationRepository.saveAccessToken(OAuthAccessToken.issue(
+                authorization.id(), hash('b'), "jti-order-second", "auth-study-userinfo",
+                AUTHENTICATED_AT, TOKEN_EXPIRES_AT));
+
+        OAuthAuthorization reloaded = authorizationRepository.findById(authorization.id()).orElseThrow();
+
+        assertThat(reloaded.accessToken()).get().extracting(OAuthAccessToken::id).isEqualTo(second.id());
+    }
+
+    @Test
+    void latest_refresh_token_breaks_equal_issued_at_ties_by_descending_id() {
+        Fixture fixture = insertFixture("REFRESH_ORDER");
+        OAuthAuthorization authorization = authorization(fixture, "authorization-refresh-order");
+        authorizationRepository.save(authorization);
+        authorizationRepository.saveRefreshToken(OAuthRefreshToken.issue(
+                authorization.id(), hash('c'), FAMILY_ID, AUTHENTICATED_AT, REFRESH_EXPIRES_AT));
+        OAuthRefreshToken second = authorizationRepository.saveRefreshToken(OAuthRefreshToken.issue(
+                authorization.id(), hash('d'), FAMILY_ID, AUTHENTICATED_AT, REFRESH_EXPIRES_AT));
+
+        OAuthAuthorization reloaded = authorizationRepository.findById(authorization.id()).orElseThrow();
+
+        assertThat(reloaded.refreshToken()).get().extracting(OAuthRefreshToken::id).isEqualTo(second.id());
+    }
+
+    @Test
+    void database_rejects_an_authorization_subject_owned_by_another_account() {
+        Fixture subjectOwner = insertFixture("SUBJECT_OWNER");
+        Fixture authorizationOwner = insertFixture("AUTHORIZATION_OWNER");
+
+        assertThatThrownBy(() -> insertAuthorizationRow(
+                "authorization-subject-mismatch", authorizationOwner.clientId(), subjectOwner.subject(),
+                authorizationOwner.accountId(), authorizationOwner.companyId()))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void database_rejects_an_authorization_client_owned_by_another_company() {
+        Fixture clientOwner = insertFixture("CLIENT_OWNER");
+        Fixture authorizationOwner = insertFixture("CLIENT_AUTHORIZATION_OWNER");
+
+        assertThatThrownBy(() -> insertAuthorizationRow(
+                "authorization-client-mismatch", clientOwner.clientId(), authorizationOwner.subject(),
+                authorizationOwner.accountId(), authorizationOwner.companyId()))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void database_rejects_an_authorization_account_owned_by_another_company() {
+        Fixture accountOwner = insertFixture("ACCOUNT_OWNER");
+        Fixture authorizationCompany = insertFixture("ACCOUNT_AUTHORIZATION_COMPANY");
+
+        assertThatThrownBy(() -> insertAuthorizationRow(
+                "authorization-account-mismatch", authorizationCompany.clientId(), accountOwner.subject(),
+                accountOwner.accountId(), authorizationCompany.companyId()))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
     private RefreshOutcome rotateOrDetectReuse(CyclicBarrier start, AtomicInteger successorSequence,
             UUID expectedFamilyId) throws Exception {
         start.await(10, TimeUnit.SECONDS);
@@ -334,13 +504,56 @@ class OAuthAuthorizationPersistenceIntegrationTest {
         });
     }
 
+    private OAuthAuthorizationRepository.CodeConsumption<String> consumeCodeAfterBarrier(
+            CyclicBarrier start, AtomicInteger exchanges) throws Exception {
+        start.await(10, TimeUnit.SECONDS);
+        return authorizationRepository.consumeCodeAtomically(
+                hash('5'), AUTHENTICATED_AT.plusSeconds(1), code -> {
+                    exchanges.incrementAndGet();
+                    return "EXCHANGED";
+                }).orElseThrow();
+    }
+
     private OAuthAuthorization authorization(Fixture fixture, String id) {
+        OAuthClient client = OAuthClient.restore(
+                fixture.clientId(), fixture.companyId(), "client-" + fixture.clientId(), "Client",
+                OAuthClientStatus.ACTIVE, OAuthClientTrust.CONSENT_REQUIRED, true, 0,
+                Set.of(URI.create("https://rp.example/callback")), Set.of(), Set.of("openid"),
+                Set.of(), CREATED_AT, CREATED_AT);
+        OAuthSubject subject = OAuthSubject.restore(
+                fixture.accountId(), fixture.accountId(), fixture.subject(), CREATED_AT);
         return OAuthAuthorization.create(
-                id, fixture.clientId(), fixture.subject(), fixture.accountId(), fixture.companyId(),
+                id, OAuthAuthorization.Ownership.verified(
+                        client, subject, fixture.accountId(), fixture.companyId()),
                 "authorization_code", Set.of("openid", "profile"),
                 new OAuthAuthorization.Attributes(
                         "principal@example.com", "https://idp.localhost:8080/oauth2/authorize"),
                 "opaque-state", AUTHENTICATED_AT, CREATED_AT, REFRESH_EXPIRES_AT);
+    }
+
+    private int insertAuthorizationRow(String id, long clientId, UUID subject, long accountId, long companyId) {
+        return jdbcClient.sql("""
+                        insert into oauth_authorization(
+                            id, registered_client_id, subject, principal_account_id, company_id,
+                            authorization_grant_type, authorized_scopes, attributes, state,
+                            authenticated_at, status, created_at, expires_at)
+                        values (:id, :clientId, :subject, :accountId, :companyId,
+                                'authorization_code', 'openid', cast(:attributes as jsonb), 'state',
+                                :authenticatedAt, 'ACTIVE', :createdAt, :expiresAt)
+                        """)
+                .param("id", id)
+                .param("clientId", clientId)
+                .param("subject", subject)
+                .param("accountId", accountId)
+                .param("companyId", companyId)
+                .param("attributes", """
+                        {"principalName":"principal@example.com",
+                         "authorizationRequestUri":"https://idp.localhost:8080/oauth2/authorize"}
+                        """)
+                .param("authenticatedAt", Timestamp.from(AUTHENTICATED_AT))
+                .param("createdAt", Timestamp.from(CREATED_AT))
+                .param("expiresAt", Timestamp.from(REFRESH_EXPIRES_AT))
+                .update();
     }
 
     private Fixture insertFixture(String prefix) {

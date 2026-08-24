@@ -3,6 +3,7 @@ package com.sweet.authstudy.oauth.infrastructure;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
@@ -10,6 +11,7 @@ import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
@@ -47,15 +49,33 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     public Optional<OAuthAuthorization> findById(String id) {
         return authorizations.findById(id).map(entity -> entity.toDomain(
                 codes.findByAuthorizationId(id).map(OAuthAuthorizationCodeJpaEntity::toDomain).orElse(null),
-                accessTokens.findFirstByAuthorizationIdOrderByIssuedAtDesc(id)
+                accessTokens.findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(id)
                         .map(OAuthAccessTokenJpaEntity::toDomain).orElse(null),
-                refreshTokens.findFirstByAuthorizationIdOrderByIssuedAtDesc(id)
+                refreshTokens.findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(id)
                         .map(OAuthRefreshTokenJpaEntity::toDomain).orElse(null)));
     }
 
     @Override
+    @Transactional(propagation = Propagation.MANDATORY)
     public Optional<OAuthAuthorizationCode> findByCodeHashForUpdate(String codeHash) {
         return codes.findByCodeHashForUpdate(codeHash).map(OAuthAuthorizationCodeJpaEntity::toDomain);
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public <T> Optional<CodeConsumption<T>> consumeCodeAtomically(
+            String codeHash, Instant consumedAt, Function<OAuthAuthorizationCode, T> exchange) {
+        java.util.Objects.requireNonNull(exchange, "exchange");
+        return codes.findByCodeHashForUpdate(codeHash).map(entity -> {
+            OAuthAuthorizationCode code = entity.toDomain();
+            OAuthAuthorizationCode.Consumption consumption = code.consume(consumedAt);
+            Optional<T> exchangeResult = consumption == OAuthAuthorizationCode.Consumption.CONSUMED
+                    ? Optional.ofNullable(exchange.apply(code))
+                    : Optional.empty();
+            entity.updateFrom(code);
+            codes.saveAndFlush(entity);
+            return new CodeConsumption<>(consumption, exchangeResult);
+        });
     }
 
     @Override

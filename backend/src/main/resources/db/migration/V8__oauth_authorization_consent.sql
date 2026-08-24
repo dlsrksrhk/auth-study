@@ -14,12 +14,19 @@ CREATE TABLE oauth_consent_scope (
     CONSTRAINT ck_oauth_consent_scope_normalized CHECK (scope = btrim(scope) AND scope <> '')
 );
 
+ALTER TABLE oauth_subject
+    ADD CONSTRAINT uk_oauth_subject_subject_account UNIQUE (subject, account_id);
+ALTER TABLE oauth_client
+    ADD CONSTRAINT uk_oauth_client_id_company UNIQUE (id, company_id);
+ALTER TABLE accounts
+    ADD CONSTRAINT uk_accounts_id_company UNIQUE (id, company_id);
+
 CREATE TABLE oauth_authorization (
     id VARCHAR(128) PRIMARY KEY,
-    registered_client_id BIGINT NOT NULL REFERENCES oauth_client (id),
-    subject UUID NOT NULL REFERENCES oauth_subject (subject),
-    principal_account_id BIGINT NOT NULL REFERENCES accounts (id),
-    company_id BIGINT NOT NULL REFERENCES companies (id),
+    registered_client_id BIGINT NOT NULL,
+    subject UUID NOT NULL,
+    principal_account_id BIGINT NOT NULL,
+    company_id BIGINT NOT NULL,
     authorization_grant_type VARCHAR(100) NOT NULL,
     authorized_scopes TEXT NOT NULL,
     attributes JSONB NOT NULL,
@@ -30,6 +37,15 @@ CREATE TABLE oauth_authorization (
     created_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     revoked_at TIMESTAMPTZ,
+    CONSTRAINT fk_oauth_authorization_subject_account
+        FOREIGN KEY (subject, principal_account_id)
+        REFERENCES oauth_subject (subject, account_id),
+    CONSTRAINT fk_oauth_authorization_client_company
+        FOREIGN KEY (registered_client_id, company_id)
+        REFERENCES oauth_client (id, company_id),
+    CONSTRAINT fk_oauth_authorization_account_company
+        FOREIGN KEY (principal_account_id, company_id)
+        REFERENCES accounts (id, company_id),
     CONSTRAINT ck_oauth_authorization_id_not_blank CHECK (btrim(id) <> ''),
     CONSTRAINT ck_oauth_authorization_grant_not_blank CHECK (btrim(authorization_grant_type) <> ''),
     CONSTRAINT ck_oauth_authorization_status CHECK (status IN ('ACTIVE', 'REVOKED')),
@@ -87,11 +103,11 @@ CREATE TABLE oauth_refresh_token (
     revoked_at TIMESTAMPTZ,
     successor_id BIGINT UNIQUE,
     CONSTRAINT uk_oauth_refresh_token_hash UNIQUE (refresh_token_hash),
-    CONSTRAINT uk_oauth_refresh_token_identity_family
-        UNIQUE (id, family_id, authorization_id),
-    CONSTRAINT fk_oauth_refresh_token_successor_family
-        FOREIGN KEY (successor_id, family_id, authorization_id)
-        REFERENCES oauth_refresh_token (id, family_id, authorization_id),
+    CONSTRAINT uk_oauth_refresh_token_identity_family_expiry
+        UNIQUE (id, family_id, authorization_id, expires_at),
+    CONSTRAINT fk_oauth_refresh_token_successor_family_expiry
+        FOREIGN KEY (successor_id, family_id, authorization_id, expires_at)
+        REFERENCES oauth_refresh_token (id, family_id, authorization_id, expires_at),
     CONSTRAINT ck_oauth_refresh_token_hash CHECK (refresh_token_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT ck_oauth_refresh_token_time_order CHECK (expires_at > issued_at),
     CONSTRAINT ck_oauth_refresh_token_successor_used CHECK (

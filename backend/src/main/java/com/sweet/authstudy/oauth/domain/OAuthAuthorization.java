@@ -18,6 +18,41 @@ public final class OAuthAuthorization {
         }
     }
 
+    public static final class Ownership {
+        private final long registeredClientId;
+        private final UUID subject;
+        private final long principalAccountId;
+        private final long companyId;
+
+        private Ownership(long registeredClientId, UUID subject, long principalAccountId, long companyId) {
+            this.registeredClientId = registeredClientId;
+            this.subject = subject;
+            this.principalAccountId = principalAccountId;
+            this.companyId = companyId;
+        }
+
+        public static Ownership verified(OAuthClient client, OAuthSubject subject,
+                long principalAccountId, long accountCompanyId) {
+            Objects.requireNonNull(client, "client");
+            Objects.requireNonNull(subject, "subject");
+            if (client.id() == null || subject.id() == null) {
+                throw new IllegalArgumentException("Authorization ownership requires persisted client and subject.");
+            }
+            if (subject.accountId() != principalAccountId) {
+                throw new IllegalArgumentException("OAuth subject must belong to the principal account.");
+            }
+            if (client.companyId() != accountCompanyId) {
+                throw new IllegalArgumentException("OAuth client must belong to the principal account company.");
+            }
+            return new Ownership(client.id(), subject.subject(), principalAccountId, accountCompanyId);
+        }
+
+        public long registeredClientId() { return registeredClientId; }
+        public UUID subject() { return subject; }
+        public long principalAccountId() { return principalAccountId; }
+        public long companyId() { return companyId; }
+    }
+
     private final String id;
     private final long registeredClientId;
     private final UUID subject;
@@ -67,11 +102,12 @@ public final class OAuthAuthorization {
         this.refreshToken = refreshToken;
     }
 
-    public static OAuthAuthorization create(String id, long registeredClientId, UUID subject,
-            long principalAccountId, long companyId, String authorizationGrantType,
+    public static OAuthAuthorization create(String id, Ownership ownership, String authorizationGrantType,
             Set<String> authorizedScopes, Attributes attributes, String state, Instant authenticatedAt,
             Instant createdAt, Instant expiresAt) {
-        return new OAuthAuthorization(id, registeredClientId, subject, principalAccountId, companyId,
+        Objects.requireNonNull(ownership, "ownership");
+        return new OAuthAuthorization(id, ownership.registeredClientId(), ownership.subject(),
+                ownership.principalAccountId(), ownership.companyId(),
                 authorizationGrantType, authorizedScopes, attributes, state, authenticatedAt,
                 Status.ACTIVE, null, createdAt, expiresAt, null, null, null, null);
     }

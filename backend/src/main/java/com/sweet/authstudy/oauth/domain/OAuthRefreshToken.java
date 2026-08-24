@@ -61,6 +61,9 @@ public final class OAuthRefreshToken {
         if (!authorizationId.equals(successor.authorizationId)) {
             throw new IllegalArgumentException("Successor must belong to the same authorization.");
         }
+        if (!expiresAt.equals(successor.expiresAt)) {
+            throw new IllegalArgumentException("Successor must preserve the refresh family absolute expiry.");
+        }
         if (id != null && id.equals(successor.id)) {
             throw new IllegalArgumentException("A refresh token cannot succeed itself.");
         }

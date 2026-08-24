@@ -10,7 +10,7 @@ import org.springframework.data.repository.query.Param;
 
 interface OAuthAccessTokenJpaRepository extends JpaRepository<OAuthAccessTokenJpaEntity, Long> {
     Optional<OAuthAccessTokenJpaEntity> findByAccessTokenHash(String accessTokenHash);
-    Optional<OAuthAccessTokenJpaEntity> findFirstByAuthorizationIdOrderByIssuedAtDesc(String authorizationId);
+    Optional<OAuthAccessTokenJpaEntity> findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(String authorizationId);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """

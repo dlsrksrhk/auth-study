@@ -12,7 +12,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 interface OAuthRefreshTokenJpaRepository extends JpaRepository<OAuthRefreshTokenJpaEntity, Long> {
-    Optional<OAuthRefreshTokenJpaEntity> findFirstByAuthorizationIdOrderByIssuedAtDesc(String authorizationId);
+    Optional<OAuthRefreshTokenJpaEntity> findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(String authorizationId);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from OAuthRefreshTokenJpaEntity t where t.refreshTokenHash = :hash")
     Optional<OAuthRefreshTokenJpaEntity> findByRefreshTokenHashForUpdate(@Param("hash") String hash);
