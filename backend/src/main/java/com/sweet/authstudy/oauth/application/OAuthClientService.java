@@ -60,7 +60,7 @@ public class OAuthClientService {
             throw validation("OAuth client details are required.");
         }
         Company company = requireActiveCompany(actor, command.companyCode());
-        OAuthClientTrust trust = requireTrust(actor, command.trust());
+        OAuthClientTrust trust = requireCreateTrust(actor, command.trust());
         Instant now = clock.instant();
         String clientId = generateUniqueClientId();
         String rawSecret = command.publicClient() ? null : secretGenerator.generateClientSecret();
@@ -92,7 +92,7 @@ public class OAuthClientService {
             throw new ApiException(
                     ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "OAuth client version does not match.");
         }
-        OAuthClientTrust trust = requireTrust(actor, command.trust());
+        OAuthClientTrust trust = requireUpdateTrust(actor, client.trust(), command.trust());
         OAuthClientStatus status = requireStatus(command.status());
         try {
             client.update(
@@ -171,15 +171,30 @@ public class OAuthClientService {
         return new ClientContext(client, company);
     }
 
-    private OAuthClientTrust requireTrust(
+    private OAuthClientTrust requireCreateTrust(
             AuthenticatedAccount actor, OAuthClientTrust trust) {
-        if (trust == null) {
-            throw validation("OAuth client trust is required.");
-        }
-        if (trust == OAuthClientTrust.TRUSTED_FIRST_PARTY
+        OAuthClientTrust requested = requireTrust(trust);
+        if (requested == OAuthClientTrust.TRUSTED_FIRST_PARTY
                 && !actor.roles().contains(AccountRole.SYSTEM_ADMIN)) {
             throw new ApiException(
                     ErrorCode.FORBIDDEN, "Only a system administrator may create a trusted client.");
+        }
+        return requested;
+    }
+
+    private OAuthClientTrust requireUpdateTrust(
+            AuthenticatedAccount actor, OAuthClientTrust existing, OAuthClientTrust requested) {
+        OAuthClientTrust required = requireTrust(requested);
+        if (existing != required && !actor.roles().contains(AccountRole.SYSTEM_ADMIN)) {
+            throw new ApiException(
+                    ErrorCode.FORBIDDEN, "Only a system administrator may change client trust.");
+        }
+        return required;
+    }
+
+    private OAuthClientTrust requireTrust(OAuthClientTrust trust) {
+        if (trust == null) {
+            throw validation("OAuth client trust is required.");
         }
         return trust;
     }

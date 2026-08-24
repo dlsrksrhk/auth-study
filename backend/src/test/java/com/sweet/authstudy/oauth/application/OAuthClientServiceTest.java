@@ -220,6 +220,42 @@ class OAuthClientServiceTest {
     }
 
     @Test
+    void company_admin_cannot_demote_an_existing_trusted_client() {
+        generator.clientIds.add("trusted-demotion-client");
+        OAuthClientView created = service.create(systemAdmin(),
+                createCommand("ACME", true, OAuthClientTrust.TRUSTED_FIRST_PARTY)).client();
+        UpdateClient demotion = new UpdateClient(
+                "Demoted", Set.of(CALLBACK), Set.of(LOGOUT), Set.of("openid"),
+                OAuthClientTrust.CONSENT_REQUIRED, OAuthClientStatus.ACTIVE, created.version());
+
+        assertError(ErrorCode.FORBIDDEN,
+                () -> service.update(companyAdmin(41L), "trusted-demotion-client", demotion));
+
+        OAuthClient stored = clients.findByClientId("trusted-demotion-client").orElseThrow();
+        assertThat(stored.trust()).isEqualTo(OAuthClientTrust.TRUSTED_FIRST_PARTY);
+        assertThat(stored.displayName()).isEqualTo("Payroll RP");
+    }
+
+    @Test
+    void company_admin_can_edit_non_trust_fields_while_preserving_existing_trusted_status() {
+        generator.clientIds.add("trusted-edit-client");
+        OAuthClientView created = service.create(systemAdmin(),
+                createCommand("ACME", true, OAuthClientTrust.TRUSTED_FIRST_PARTY)).client();
+        UpdateClient preservingTrust = new UpdateClient(
+                "Updated without trust transition", Set.of(URI.create("https://new.example/callback")),
+                Set.of(LOGOUT), Set.of("openid", "email"), OAuthClientTrust.TRUSTED_FIRST_PARTY,
+                OAuthClientStatus.ACTIVE, created.version());
+
+        OAuthClientView updated = service.update(
+                companyAdmin(41L), "trusted-edit-client", preservingTrust);
+
+        assertThat(updated.trust()).isEqualTo(OAuthClientTrust.TRUSTED_FIRST_PARTY);
+        assertThat(updated.displayName()).isEqualTo("Updated without trust transition");
+        assertThat(clients.findByClientId("trusted-edit-client").orElseThrow().redirectUris())
+                .containsExactly(URI.create("https://new.example/callback"));
+    }
+
+    @Test
     void stale_update_version_is_rejected() {
         generator.clientIds.add("versioned-client");
         service.create(systemAdmin(), createCommand("ACME", true, OAuthClientTrust.CONSENT_REQUIRED));
