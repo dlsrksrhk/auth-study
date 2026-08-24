@@ -1,0 +1,716 @@
+package com.sweet.authstudy.oauth.presentation;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.Base64;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+
+import com.sweet.authstudy.support.PostgresContainerConfiguration;
+import jakarta.servlet.http.HttpSession;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.web.util.UriComponentsBuilder;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@Import({PostgresContainerConfiguration.class, IdpBrowserFlowIntegrationTest.MutableClockConfiguration.class})
+@ActiveProfiles("test")
+class IdpBrowserFlowIntegrationTest {
+
+    private static final String ISSUER = "http://idp.localhost:8080";
+    private static final URI CALLBACK = URI.create("https://rp.example/callback?source=idp");
+    private static final String PASSWORD = "BrowserLogin1234!";
+    private static final String CHANGED_PASSWORD = "BrowserChanged1234!";
+    private static final String VERIFIER =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+    private static final Instant BASE_TIME = Instant.parse("2026-08-24T00:00:00Z");
+
+    @Autowired private MockMvc mockMvc;
+    @Autowired private JdbcClient jdbcClient;
+    @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private MutableClock clock;
+
+    @AfterEach
+    void resetClock() {
+        clock.set(BASE_TIME);
+    }
+
+    @Test
+    void real_authorize_login_consent_callback_preserves_request_and_uses_minimal_idp_session() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of(
+                "openid", "profile", "email", "hr.company", "hr.organization", "hr.roles"));
+        MockHttpSession session = new MockHttpSession();
+        String rpState = "rp-state-" + UUID.randomUUID();
+        String nonce = "nonce-" + UUID.randomUUID();
+
+        String loginLocation = beginAuthorization(
+                fixture, session, Set.of("openid", "profile", "email"), rpState, nonce);
+        assertThat(URI.create(loginLocation).getPath()).isEqualTo("/idp/login");
+
+        LoginPage loginPage = loginPage(session);
+        String oldSessionId = session.getId();
+        MvcResult loggedIn = postLogin(session, loginPage.flowId(), fixture.email(), PASSWORD)
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+
+        assertThat(session.getId()).isNotEqualTo(oldSessionId);
+        assertCookieIsLocalDevelopmentSession(loggedIn);
+        URI resumed = URI.create(loggedIn.getResponse().getHeader("Location"));
+        assertThat(resumed.getPath()).isEqualTo("/oauth2/authorize");
+        assertThat(query(resumed, "client_id")).isEqualTo(fixture.clientId());
+        assertThat(query(resumed, "redirect_uri")).isEqualTo(CALLBACK.toString());
+        assertThat(query(resumed, "state")).isEqualTo(rpState);
+        assertThat(query(resumed, "nonce")).isEqualTo(nonce);
+        assertThat(query(resumed, "code_challenge")).isEqualTo(challenge(VERIFIER));
+        assertThat(query(resumed, "code_challenge_method")).isEqualTo("S256");
+
+        Authentication authentication = sessionAuthentication(session);
+        assertThat(authentication.getName()).isEqualTo(Long.toString(fixture.accountId()));
+        assertThat(authentication.getCredentials()).isNull();
+        assertThat(authentication.getClass().getSimpleName()).isEqualTo("IdpSessionAuthentication");
+        assertThat(sessionValues(session)).doesNotContain(
+                fixture.email(), PASSWORD, VERIFIER, "access_token", "refresh_token", "client-secret");
+        assertThat(jdbcClient.sql("select count(*) from refresh_tokens where account_id = :accountId")
+                .param("accountId", fixture.accountId()).query(Long.class).single()).isZero();
+
+        ConsentPage consent = followToConsent(session, loggedIn.getResponse().getHeader("Location"));
+        assertThat(consent.html()).contains(
+                fixture.clientDisplayName(), "기본 식별", "프로필", "이메일");
+        assertThat(consent.html()).contains("action=\"/oauth2/authorize\"");
+        assertThat(jdbcClient.sql("""
+                        select count(*) from oauth_authorization
+                         where server_state_hash = :stateHash
+                           and attributes -> 'authorizationRequest' ->> 'redirectUri' = :redirect
+                           and attributes -> 'authorizationRequest' ->> 'rpState' = :rpState
+                           and attributes -> 'authorizationRequest' ->> 'nonce' = :nonce
+                           and attributes -> 'authorizationRequest' ->> 'codeChallenge' = :challenge
+                           and attributes -> 'authorizationRequest' ->> 'codeChallengeMethod' = 'S256'
+                        """).param("stateHash", sha256(consent.serverState()))
+                .param("redirect", CALLBACK.toString()).param("rpState", rpState)
+                .param("nonce", nonce).param("challenge", challenge(VERIFIER))
+                .query(Long.class).single()).isEqualTo(1L);
+
+        URI callback = approve(session, fixture, consent.serverState(), "openid", "profile", "email");
+        assertCallback(callback, rpState);
+        assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile", "email");
+    }
+
+    @Test
+    void password_change_is_mandatory_and_resumes_only_after_the_existing_password_policy_succeeds()
+            throws Exception {
+        Fixture fixture = fixture(true, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        MockHttpSession session = new MockHttpSession();
+        String rpState = "password-state-" + UUID.randomUUID();
+        String original = beginAuthorization(fixture, session, Set.of("openid", "profile"), rpState, "password-nonce");
+
+        LoginPage page = loginPage(session);
+        MvcResult loggedIn = postLogin(session, page.flowId(), fixture.email(), PASSWORD)
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+        assertThat(loggedIn.getResponse().getHeader("Location")).isEqualTo("/idp/password");
+
+        mockMvc.perform(get(original).session(session))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(result -> assertThat(result.getResponse().getHeader("Location"))
+                        .isEqualTo("/idp/password"));
+
+        MvcResult passwordPage = mockMvc.perform(get("/idp/password").session(session))
+                .andExpect(status().isOk()).andReturn();
+        String passwordFlowId = hidden(passwordPage.getResponse().getContentAsString(), "flowId");
+        String sessionBeforeChange = session.getId();
+
+        mockMvc.perform(post("/idp/password").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("flowId", passwordFlowId)
+                        .param("currentPassword", PASSWORD)
+                        .param("newPassword", "short"))
+                .andExpect(status().isOk())
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .contains("새 비밀번호가 정책을 충족하지 않습니다"));
+
+        MvcResult refreshedPasswordPage = mockMvc.perform(get("/idp/password").session(session))
+                .andExpect(status().isOk()).andReturn();
+        passwordFlowId = hidden(refreshedPasswordPage.getResponse().getContentAsString(), "flowId");
+        MvcResult changed = mockMvc.perform(post("/idp/password").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("flowId", passwordFlowId)
+                        .param("currentPassword", PASSWORD)
+                        .param("newPassword", CHANGED_PASSWORD))
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+
+        assertThat(session.getId()).isNotEqualTo(sessionBeforeChange);
+        URI resumed = URI.create(changed.getResponse().getHeader("Location"));
+        assertThat(query(resumed, "state")).isEqualTo(rpState);
+        assertThat(jdbcClient.sql("select must_change_password from accounts where id = :id")
+                .param("id", fixture.accountId()).query(Boolean.class).single()).isFalse();
+        ConsentPage consent = followToConsent(session, resumed.toString());
+        assertCallback(approve(session, fixture, consent.serverState(), "openid", "profile"), rpState);
+    }
+
+    @Test
+    void consent_is_reused_incremental_and_deny_keeps_the_previous_grant_untouched() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile", "email"));
+        MockHttpSession session = loginFor(fixture);
+
+        ConsentPage first = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile"), "first", "nonce-first");
+        approve(session, fixture, first.serverState(), "openid", "profile");
+
+        MvcResult reused = performAuthorization(
+                fixture, session, Set.of("openid", "profile"), "reuse", "nonce-reuse")
+                .andExpect(status().is3xxRedirection()).andReturn();
+        assertThat(URI.create(reused.getResponse().getHeader("Location")).getHost()).isEqualTo("rp.example");
+
+        ConsentPage incremental = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile", "email"), "deny-state", "nonce-deny");
+        assertThat(incremental.html()).contains("모든 요청 권한", "새로 요청된 권한", "이메일");
+        MvcResult denied = mockMvc.perform(post("/idp/consent/deny").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId())
+                        .param("state", incremental.serverState()))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        URI deniedCallback = URI.create(denied.getResponse().getHeader("Location"));
+        assertThat(query(deniedCallback, "error")).isEqualTo("access_denied");
+        assertThat(query(deniedCallback, "state")).isEqualTo("deny-state");
+        assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile");
+
+        mockMvc.perform(post("/idp/consent/deny").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId())
+                        .param("state", incremental.serverState()))
+                .andExpect(status().isConflict());
+
+        ConsentPage approveIncremental = authorizeAuthenticated(
+                fixture, session, Set.of("openid", "profile", "email"), "incremental", "nonce-incremental");
+        approve(session, fixture, approveIncremental.serverState(), "openid", "profile", "email");
+        assertThat(consentScopes(fixture)).containsExactlyInAnyOrder("openid", "profile", "email");
+    }
+
+    @Test
+    void consent_required_openid_only_requires_first_consent_and_skips_only_after_real_approval()
+            throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
+        MockHttpSession session = loginFor(fixture);
+
+        ConsentPage first = authorizeAuthenticated(
+                fixture, session, Set.of("openid"), "openid-first", "openid-nonce-first");
+        assertThat(first.html()).contains(fixture.clientDisplayName(), "기본 식별");
+        assertCallback(approve(session, fixture, first.serverState(), "openid"), "openid-first");
+
+        MvcResult reused = performAuthorization(
+                fixture, session, Set.of("openid"), "openid-reuse", "openid-nonce-reuse")
+                .andExpect(status().is3xxRedirection()).andReturn();
+        URI callback = URI.create(reused.getResponse().getHeader("Location"));
+        assertThat(callback.getHost()).isEqualTo("rp.example");
+        assertThat(query(callback, "state")).isEqualTo("openid-reuse");
+    }
+
+    @Test
+    void only_trusted_first_party_skips_consent() throws Exception {
+        Fixture trusted = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid", "profile"));
+        MockHttpSession session = new MockHttpSession();
+        beginAuthorization(trusted, session, Set.of("openid", "profile"), "trusted-state", "trusted-nonce");
+        LoginPage page = loginPage(session);
+        MvcResult login = postLogin(session, page.flowId(), trusted.email(), PASSWORD)
+                .andExpect(status().is3xxRedirection()).andReturn();
+        MvcResult callback = mockMvc.perform(get(URI.create(login.getResponse().getHeader("Location"))).session(session))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        URI location = URI.create(callback.getResponse().getHeader("Location"));
+        assertThat(location.getHost()).isEqualTo("rp.example");
+        assertThat(query(location, "state")).isEqualTo("trusted-state");
+    }
+
+    @Test
+    void tenant_mismatch_is_a_generic_login_denial_and_does_not_create_an_idp_principal() throws Exception {
+        Fixture clientOwner = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
+        Fixture otherTenant = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
+        MockHttpSession session = new MockHttpSession();
+        beginAuthorization(clientOwner, session, Set.of("openid"), "tenant-state", "tenant-nonce");
+        LoginPage page = loginPage(session);
+
+        MvcResult result = postLogin(session, page.flowId(), otherTenant.email(), PASSWORD)
+                .andExpect(status().isOk()).andReturn();
+
+        assertThat(result.getResponse().getContentAsString()).contains("이메일 또는 비밀번호를 확인해 주세요");
+        assertThat(session.getAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY)).isNull();
+        assertThat(jdbcClient.sql("select count(*) from oauth_subject where account_id = :id")
+                .param("id", otherTenant.accountId()).query(Long.class).single()).isZero();
+    }
+
+    @Test
+    void login_password_and_consent_posts_require_csrf_and_the_exact_issuer_origin() throws Exception {
+        Fixture fixture = fixture(true, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        MockHttpSession loginSession = new MockHttpSession();
+        beginAuthorization(fixture, loginSession, Set.of("openid", "profile"), "security", "security-nonce");
+        LoginPage loginPage = loginPage(loginSession);
+
+        mockMvc.perform(post("/idp/login").session(loginSession)
+                        .header("Origin", ISSUER)
+                        .param("flowId", loginPage.flowId())
+                        .param("email", fixture.email()).param("password", PASSWORD))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/idp/login").session(loginSession).with(csrf())
+                        .header("Origin", "http://evil.localhost:8080")
+                        .param("flowId", loginPage.flowId())
+                        .param("email", fixture.email()).param("password", PASSWORD))
+                .andExpect(status().isForbidden());
+
+        MvcResult loggedIn = postLogin(loginSession, loginPage.flowId(), fixture.email(), PASSWORD)
+                .andExpect(status().is3xxRedirection()).andReturn();
+        MvcResult password = mockMvc.perform(get("/idp/password").session(loginSession))
+                .andExpect(status().isOk()).andReturn();
+        mockMvc.perform(post("/idp/password").session(loginSession).with(csrf())
+                        .header("Origin", "https://idp.localhost:8080")
+                        .param("flowId", hidden(password.getResponse().getContentAsString(), "flowId"))
+                        .param("currentPassword", PASSWORD).param("newPassword", CHANGED_PASSWORD))
+                .andExpect(status().isForbidden());
+
+        MvcResult freshPassword = mockMvc.perform(get("/idp/password").session(loginSession))
+                .andExpect(status().isOk()).andReturn();
+        MvcResult changed = mockMvc.perform(post("/idp/password").session(loginSession).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("flowId", hidden(freshPassword.getResponse().getContentAsString(), "flowId"))
+                        .param("currentPassword", PASSWORD).param("newPassword", CHANGED_PASSWORD))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        ConsentPage consent = followToConsent(loginSession, changed.getResponse().getHeader("Location"));
+
+        mockMvc.perform(post("/oauth2/authorize").session(loginSession).with(csrf())
+                        .header("Origin", "http://rp.localhost:5173")
+                        .param("client_id", fixture.clientId()).param("state", consent.serverState())
+                        .param("scope", "openid", "profile"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/idp/consent/deny").session(loginSession)
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId()).param("state", consent.serverState()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void idle_and_absolute_session_boundaries_are_inclusive_and_clear_the_context() throws Exception {
+        Fixture fixture = fixture(false, "TRUSTED_FIRST_PARTY", Set.of("openid"));
+        MockHttpSession idleSession = loginFor(fixture);
+
+        clock.set(BASE_TIME.plus(Duration.ofMinutes(30)).minusNanos(1));
+        mockMvc.perform(get("/idp/error").session(idleSession)).andExpect(status().isOk());
+        assertThat(idleSession.isInvalid()).isFalse();
+
+        clock.set(BASE_TIME);
+        MockHttpSession exactIdle = loginFor(fixture);
+        clock.set(BASE_TIME.plus(Duration.ofMinutes(30)));
+        MvcResult idleExpired = mockMvc.perform(get("/idp/error").session(exactIdle))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(exactIdle.isInvalid()).isTrue();
+        assertExpiredCookie(idleExpired);
+
+        clock.set(BASE_TIME);
+        MockHttpSession absolute = loginFor(fixture);
+        for (int minutes = 29; minutes < 8 * 60; minutes += 29) {
+            clock.set(BASE_TIME.plus(Duration.ofMinutes(minutes)));
+            mockMvc.perform(get("/idp/error").session(absolute)).andExpect(status().isOk());
+        }
+        clock.set(BASE_TIME.plus(Duration.ofHours(8)));
+        MvcResult absoluteExpired = mockMvc.perform(get("/idp/error").session(absolute))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(absolute.isInvalid()).isTrue();
+        assertExpiredCookie(absoluteExpired);
+    }
+
+    @Test
+    void the_same_login_form_is_single_use_under_concurrency_and_a_stale_consent_state_cannot_replay()
+            throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        MockHttpSession session = new MockHttpSession();
+        beginAuthorization(fixture, session, Set.of("openid", "profile"), "concurrent", "concurrent-nonce");
+        String flowId = loginPage(session).flowId();
+        CyclicBarrier barrier = new CyclicBarrier(2);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var results = List.of(
+                    executor.submit(() -> concurrentLogin(session, flowId, fixture, barrier)),
+                    executor.submit(() -> concurrentLogin(session, flowId, fixture, barrier)));
+            assertThat(results).extracting(result -> result.get(20, TimeUnit.SECONDS))
+                    .containsExactlyInAnyOrder(302, 409);
+        }
+
+        String resumed = session.getAttribute("TEST_LAST_LOGIN_REDIRECT") instanceof String value
+                ? value : pendingAuthorizationUri(fixture, Set.of("openid", "profile"), "concurrent", "concurrent-nonce");
+        ConsentPage consent = followToConsent(session, resumed);
+        URI callback = approve(session, fixture, consent.serverState(), "openid", "profile");
+        assertCallback(callback, "concurrent");
+
+        mockMvc.perform(post("/oauth2/authorize").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId()).param("state", consent.serverState())
+                        .param("scope", "openid", "profile"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbcClient.sql("select count(*) from oauth_authorization_code where authorization_id in (select id from oauth_authorization where registered_client_id = :id)")
+                .param("id", fixture.internalClientId()).query(Long.class).single()).isEqualTo(1L);
+    }
+
+    @Test
+    void pre_login_session_preserves_only_the_authorization_allowlist_and_never_raw_secrets() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
+        MockHttpSession session = new MockHttpSession();
+
+        mockMvc.perform(get("/oauth2/authorize").session(session)
+                        .queryParam("response_type", "code")
+                        .queryParam("client_id", fixture.clientId())
+                        .queryParam("redirect_uri", CALLBACK.toString())
+                        .queryParam("scope", "openid")
+                        .queryParam("state", "allowlist-state")
+                        .queryParam("nonce", "allowlist-nonce")
+                        .queryParam("code_challenge", challenge(VERIFIER))
+                        .queryParam("code_challenge_method", "S256")
+                        .queryParam("code_verifier", VERIFIER)
+                        .queryParam("access_token", "raw-access-token")
+                        .queryParam("client_secret", "raw-client-secret"))
+                .andExpect(status().is3xxRedirection());
+
+        assertThat(sessionValues(session)).doesNotContain(
+                VERIFIER, "raw-access-token", "raw-client-secret", "code_verifier", "access_token", "client_secret");
+    }
+
+    @Test
+    void an_unregistered_redirect_is_rejected_locally_before_credentials_are_requested() throws Exception {
+        Fixture fixture = fixture(false, "CONSENT_REQUIRED", Set.of("openid"));
+        MvcResult result = mockMvc.perform(get("/oauth2/authorize")
+                        .queryParam("response_type", "code")
+                        .queryParam("client_id", fixture.clientId())
+                        .queryParam("redirect_uri", "https://evil.example/callback")
+                        .queryParam("scope", "openid")
+                        .queryParam("state", "fixation-state")
+                        .queryParam("nonce", "fixation-nonce")
+                        .queryParam("code_challenge", challenge(VERIFIER))
+                        .queryParam("code_challenge_method", "S256"))
+                .andExpect(status().isBadRequest()).andReturn();
+        assertThat(result.getResponse().getHeader("Location")).isNull();
+    }
+
+    @Test
+    void a_login_form_is_bound_to_the_pending_authorization_snapshot_and_rejects_request_replacement()
+            throws Exception {
+        Fixture original = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        Fixture replacement = fixture(false, "CONSENT_REQUIRED", Set.of("openid", "profile"));
+        MockHttpSession session = new MockHttpSession();
+        beginAuthorization(original, session, Set.of("openid", "profile"), "original-state", "original-nonce");
+        String originalFlow = loginPage(session).flowId();
+
+        beginAuthorization(replacement, session, Set.of("openid", "profile"),
+                "replacement-state", "replacement-nonce");
+
+        postLogin(session, originalFlow, original.email(), PASSWORD)
+                .andExpect(status().isConflict());
+        assertThat(session.getAttribute(
+                HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY)).isNull();
+    }
+
+    private int concurrentLogin(MockHttpSession session, String flowId, Fixture fixture, CyclicBarrier barrier)
+            throws Exception {
+        barrier.await(10, TimeUnit.SECONDS);
+        MvcResult result = postLogin(session, flowId, fixture.email(), PASSWORD).andReturn();
+        if (result.getResponse().getStatus() == 302) {
+            session.setAttribute("TEST_LAST_LOGIN_REDIRECT", result.getResponse().getHeader("Location"));
+        }
+        return result.getResponse().getStatus();
+    }
+
+    private MockHttpSession loginFor(Fixture fixture) throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        MvcResult page = mockMvc.perform(get("/idp/login").session(session))
+                .andExpect(status().isOk()).andReturn();
+        String flowId = hidden(page.getResponse().getContentAsString(), "flowId");
+        postLogin(session, flowId, fixture.email(), PASSWORD).andExpect(status().is3xxRedirection());
+        return session;
+    }
+
+    private LoginPage loginPage(MockHttpSession session) throws Exception {
+        MvcResult result = mockMvc.perform(get("/idp/login").session(session))
+                .andExpect(status().isOk()).andReturn();
+        String html = result.getResponse().getContentAsString();
+        assertThat(html).contains("<label", "name=\"email\"", "name=\"password\"");
+        return new LoginPage(hidden(html, "flowId"), html);
+    }
+
+    private org.springframework.test.web.servlet.ResultActions postLogin(
+            MockHttpSession session, String flowId, String email, String password) throws Exception {
+        return mockMvc.perform(post("/idp/login").session(session).with(csrf())
+                .header("Origin", ISSUER)
+                .param("flowId", flowId).param("email", email).param("password", password));
+    }
+
+    private String beginAuthorization(Fixture fixture, MockHttpSession session, Set<String> scopes,
+            String state, String nonce) throws Exception {
+        MvcResult result = performAuthorization(fixture, session, scopes, state, nonce)
+                .andExpect(status().is3xxRedirection()).andReturn();
+        return result.getResponse().getHeader("Location");
+    }
+
+    private org.springframework.test.web.servlet.ResultActions performAuthorization(
+            Fixture fixture, MockHttpSession session, Set<String> scopes, String state, String nonce)
+            throws Exception {
+        return mockMvc.perform(get("/oauth2/authorize").session(session)
+                .queryParam("response_type", "code")
+                .queryParam("client_id", fixture.clientId())
+                .queryParam("redirect_uri", CALLBACK.toString())
+                .queryParam("scope", String.join(" ", scopes))
+                .queryParam("state", state)
+                .queryParam("nonce", nonce)
+                .queryParam("code_challenge", challenge(VERIFIER))
+                .queryParam("code_challenge_method", "S256"));
+    }
+
+    private ConsentPage authorizeAuthenticated(Fixture fixture, MockHttpSession session,
+            Set<String> scopes, String state, String nonce) throws Exception {
+        MvcResult result = performAuthorization(fixture, session, scopes, state, nonce)
+                .andExpect(status().is3xxRedirection()).andReturn();
+        return consentPage(session, result.getResponse().getHeader("Location"));
+    }
+
+    private ConsentPage followToConsent(MockHttpSession session, String authorizationUri) throws Exception {
+        MvcResult result = mockMvc.perform(get(URI.create(authorizationUri)).session(session))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        return consentPage(session, result.getResponse().getHeader("Location"));
+    }
+
+    private ConsentPage consentPage(MockHttpSession session, String location) throws Exception {
+        assertThat(URI.create(location).getPath()).isEqualTo("/idp/consent");
+        MvcResult result = mockMvc.perform(get(URI.create(location)).session(session))
+                .andExpect(status().isOk()).andReturn();
+        String html = result.getResponse().getContentAsString();
+        return new ConsentPage(hidden(html, "state"), html);
+    }
+
+    private URI approve(MockHttpSession session, Fixture fixture, String state, String... scopes) throws Exception {
+        MvcResult result = mockMvc.perform(post("/oauth2/authorize").session(session).with(csrf())
+                        .header("Origin", ISSUER)
+                        .param("client_id", fixture.clientId()).param("state", state)
+                        .param("scope", scopes))
+                .andExpect(status().is3xxRedirection()).andReturn();
+        return URI.create(result.getResponse().getHeader("Location"));
+    }
+
+    private void assertCallback(URI callback, String expectedState) {
+        assertThat(callback.getScheme() + "://" + callback.getAuthority() + callback.getPath())
+                .isEqualTo("https://rp.example/callback");
+        assertThat(query(callback, "source")).isEqualTo("idp");
+        assertThat(query(callback, "state")).isEqualTo(expectedState);
+        assertThat(query(callback, "code")).isNotBlank();
+        assertThat(query(callback, "error")).isNull();
+    }
+
+    private void assertCookieIsLocalDevelopmentSession(MvcResult result) {
+        String cookie = result.getResponse().getHeader("Set-Cookie");
+        assertThat(cookie).startsWith("IDP_AUTH_SESSION=")
+                .contains("Path=/", "HttpOnly", "SameSite=Lax")
+                .doesNotContain("Domain=", "Secure");
+    }
+
+    private void assertExpiredCookie(MvcResult result) {
+        assertThat(result.getResponse().getHeaders("Set-Cookie"))
+                .anySatisfy(cookie -> assertThat(cookie)
+                        .startsWith("IDP_AUTH_SESSION=").contains("Max-Age=0"));
+    }
+
+    private Authentication sessionAuthentication(MockHttpSession session) {
+        Object value = session.getAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);
+        assertThat(value).isInstanceOf(SecurityContext.class);
+        return ((SecurityContext) value).getAuthentication();
+    }
+
+    private String sessionValues(HttpSession session) {
+        StringBuilder values = new StringBuilder();
+        session.getAttributeNames().asIterator().forEachRemaining(name -> {
+            Object value = session.getAttribute(name);
+            values.append(name).append('=').append(value).append(';');
+        });
+        return values.toString();
+    }
+
+    private List<String> consentScopes(Fixture fixture) {
+        return jdbcClient.sql("""
+                        select scope from oauth_consent_scope
+                         where consent_id = (
+                               select id from oauth_consent
+                                where principal_account_id = :accountId
+                                  and registered_client_id = :clientId)
+                         order by scope
+                        """).param("accountId", fixture.accountId())
+                .param("clientId", fixture.internalClientId()).query(String.class).list();
+    }
+
+    private String pendingAuthorizationUri(Fixture fixture, Set<String> scopes, String state, String nonce) {
+        return UriComponentsBuilder.fromPath("/oauth2/authorize")
+                .queryParam("response_type", "code")
+                .queryParam("client_id", fixture.clientId())
+                .queryParam("redirect_uri", CALLBACK.toString())
+                .queryParam("scope", String.join(" ", scopes))
+                .queryParam("state", state).queryParam("nonce", nonce)
+                .queryParam("code_challenge", challenge(VERIFIER))
+                .queryParam("code_challenge_method", "S256").build().encode().toUriString();
+    }
+
+    private Fixture fixture(boolean mustChangePassword, String trust, Set<String> scopes) {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        String companyCode = "BROWSER_" + suffix.toUpperCase();
+        String domain = "browser-" + suffix + ".example";
+        String email = "user@" + domain;
+        Instant now = clock.instant();
+        long companyId = jdbcClient.sql("""
+                        insert into companies(code, name, email_domain, status, created_at, updated_at)
+                        values (:code, :code, :domain, 'ACTIVE', :now, :now) returning id
+                        """).param("code", companyCode).param("domain", domain)
+                .param("now", Timestamp.from(now)).query(Long.class).single();
+        long positionId = jdbcClient.sql("""
+                        insert into positions(company_id, code, name, level, display_order, active, created_at, updated_at)
+                        values (:companyId, 'EMPLOYEE', 'Employee', 1, 1, true, :now, :now) returning id
+                        """).param("companyId", companyId).param("now", Timestamp.from(now))
+                .query(Long.class).single();
+        long userId = jdbcClient.sql("""
+                        insert into users(company_id, code, employee_number, name, phone, hired_at, workplace,
+                                          position_id, status, created_at, updated_at)
+                        values (:companyId, 'USER', :employeeNumber, 'Browser User', '010-0000-0000', :hiredAt,
+                                'Seoul', :positionId, :status, :now, :now) returning id
+                        """).param("companyId", companyId).param("employeeNumber", "E-" + suffix)
+                .param("hiredAt", LocalDate.of(2026, 8, 21)).param("positionId", positionId)
+                .param("status", "ACTIVE")
+                .param("now", Timestamp.from(now)).query(Long.class).single();
+        long accountId = jdbcClient.sql("""
+                        insert into accounts(company_id, user_id, login_email, password_hash, status,
+                                             must_change_password, created_at, updated_at)
+                        values (:companyId, :userId, :email, :passwordHash, 'ACTIVE', :mustChange, :now, :now)
+                        returning id
+                        """).param("companyId", companyId).param("userId", userId).param("email", email)
+                .param("passwordHash", passwordEncoder.encode(PASSWORD)).param("mustChange", mustChangePassword)
+                .param("now", Timestamp.from(now)).query(Long.class).single();
+        jdbcClient.sql("insert into account_roles(account_id, role) values (:accountId, 'USER')")
+                .param("accountId", accountId).update();
+
+        String clientId = "browser-client-" + suffix;
+        String displayName = "브라우저 테스트 앱 " + suffix;
+        long internalClientId = jdbcClient.sql("""
+                        insert into oauth_client(company_id, client_id, display_name, status, trust,
+                                                 public_client, created_at, updated_at)
+                        values (:companyId, :clientId, :displayName, 'ACTIVE', :trust,
+                                true, :now, :now) returning id
+                        """).param("companyId", companyId).param("clientId", clientId)
+                .param("displayName", displayName).param("trust", trust)
+                .param("now", Timestamp.from(now)).query(Long.class).single();
+        jdbcClient.sql("""
+                        insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
+                        values (:clientId, :redirectUri, 'AUTHORIZATION')
+                        """).param("clientId", internalClientId).param("redirectUri", CALLBACK.toString()).update();
+        scopes.forEach(scope -> jdbcClient.sql(
+                        "insert into oauth_client_scope(client_id, scope) values (:clientId, :scope)")
+                .param("clientId", internalClientId).param("scope", scope).update());
+        return new Fixture(companyId, accountId, internalClientId, clientId, displayName, email);
+    }
+
+    private String hidden(String html, String name) {
+        var matcher = Pattern.compile("name=\\\"" + Pattern.quote(name)
+                + "\\\"[^>]*value=\\\"([^\\\"]+)\\\"").matcher(html);
+        assertThat(matcher.find()).as("hidden input %s", name).isTrue();
+        return matcher.group(1);
+    }
+
+    private String query(URI uri, String name) {
+        String value = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst(name);
+        return value == null ? null : java.net.URLDecoder.decode(value, StandardCharsets.UTF_8);
+    }
+
+    private static String challenge(String verifier) {
+        try {
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII)));
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private static String sha256(String value) {
+        try {
+            return java.util.HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.US_ASCII)));
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private record Fixture(long companyId, long accountId, long internalClientId,
+            String clientId, String clientDisplayName, String email) { }
+    private record LoginPage(String flowId, String html) { }
+    private record ConsentPage(String serverState, String html) { }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class MutableClockConfiguration {
+        @Bean
+        @Primary
+        MutableClock mutableClock() {
+            return new MutableClock(BASE_TIME, ZoneId.of("UTC"));
+        }
+    }
+
+    static final class MutableClock extends Clock {
+        private volatile Instant instant;
+        private final ZoneId zone;
+
+        MutableClock(Instant instant, ZoneId zone) {
+            this.instant = instant;
+            this.zone = zone;
+        }
+
+        void set(Instant instant) {
+            this.instant = instant;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return zone;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return new MutableClock(instant, zone);
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
+    }
+}

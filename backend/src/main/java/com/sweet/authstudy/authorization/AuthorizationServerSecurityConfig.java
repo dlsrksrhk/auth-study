@@ -1,13 +1,24 @@
 package com.sweet.authstudy.authorization;
 
 import java.io.IOException;
+import java.net.URI;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.domain.OAuthClient;
+import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
+import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.infrastructure.OAuthClientSecretPasswordEncoder;
 import com.sweet.authstudy.oauth.infrastructure.AtomicAuthorizationCodeClientAuthenticationProvider;
 import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
+import com.sweet.authstudy.oauth.presentation.IdpLoginController;
+import com.sweet.authstudy.oauth.presentation.IdpSessionAuthentication;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -26,12 +37,16 @@ import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.authentication.ClientSecretAuthenticationProvider;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.access.ExceptionTranslationFilter;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.savedrequest.NullRequestCache;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -46,7 +61,8 @@ public class AuthorizationServerSecurityConfig {
             OAuthSecurityProperties properties,
             AuthorizationServerSettings authorizationServerSettings,
             RegisteredClientRepository registeredClients,
-            java.time.Clock clock,
+            OAuthClientRepository oauthClients,
+            Clock clock,
             ObjectProvider<OAuth2AuthorizationService> authorizationServices,
             ObjectProvider<OAuth2AuthorizationConsentService> consentServices,
             ObjectProvider<JWKSource<SecurityContext>> jwkSources,
@@ -68,6 +84,20 @@ public class AuthorizationServerSecurityConfig {
                     .authorizationService(authorizationService)
                     .authorizationConsentService(consentService)
                     .authorizationServerSettings(authorizationServerSettings)
+                    .authorizationEndpoint(endpoint -> endpoint
+                            .consentPage("/idp/consent")
+                            .authenticationProviders(providers -> providers.stream()
+                                    .filter(OAuth2AuthorizationCodeRequestAuthenticationProvider.class::isInstance)
+                                    .map(OAuth2AuthorizationCodeRequestAuthenticationProvider.class::cast)
+                                    .forEach(provider -> provider.setAuthorizationConsentRequired(context -> {
+                                        if (!context.getRegisteredClient().getClientSettings()
+                                                .isRequireAuthorizationConsent()) {
+                                            return false;
+                                        }
+                                        var approved = context.getAuthorizationConsent();
+                                        return approved == null || !approved.getScopes().containsAll(
+                                                context.getAuthorizationRequest().getScopes());
+                                    }))))
                     .oidc(Customizer.withDefaults())
                     .clientAuthentication(clientAuthentication -> clientAuthentication
                             .authenticationConverters(converters -> {
@@ -90,16 +120,23 @@ public class AuthorizationServerSecurityConfig {
                             })));
         }
 
+        IdpBrowserRequestFilter browserRequestFilter = new IdpBrowserRequestFilter(
+                properties, oauthClients, clock);
         return http.securityMatcher("/.well-known/**", "/oauth2/**", "/userinfo", "/connect/logout", "/idp/**")
                 .csrf(Customizer.withDefaults())
+                .requestCache(cache -> cache.requestCache(new NullRequestCache()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/idp/login", "/.well-known/**", "/oauth2/**", "/userinfo", "/connect/logout")
+                        .requestMatchers("/idp/login", "/idp/error", "/idp/idp.css",
+                                "/.well-known/**", "/oauth2/token", "/oauth2/jwks",
+                                "/userinfo", "/connect/logout")
                         .permitAll()
+                        .requestMatchers("/oauth2/authorize", "/idp/password", "/idp/consent/**")
+                        .authenticated()
                         .anyRequest().denyAll())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(new LoginUrlAuthenticationEntryPoint("/idp/login")))
-                .addFilterBefore(new IdpOriginRequestGuard(properties), ExceptionTranslationFilter.class)
+                .addFilterAfter(browserRequestFilter, SecurityContextHolderFilter.class)
                 .build();
     }
 
@@ -123,10 +160,21 @@ public class AuthorizationServerSecurityConfig {
         }
     }
 
-    private static final class IdpOriginRequestGuard extends OncePerRequestFilter {
+    /**
+     * Owns the browser-only state which must exist before SAS can authenticate an authorization request.
+     * The pending snapshot is an allowlist: it never accepts a verifier, code, token, secret, or arbitrary URI.
+     */
+    private static final class IdpBrowserRequestFilter extends OncePerRequestFilter {
+        private final OAuthSecurityProperties properties;
+        private final OAuthClientRepository clients;
+        private final Clock clock;
         private final String issuerOrigin;
 
-        private IdpOriginRequestGuard(OAuthSecurityProperties properties) {
+        private IdpBrowserRequestFilter(OAuthSecurityProperties properties,
+                OAuthClientRepository clients, Clock clock) {
+            this.properties = properties;
+            this.clients = clients;
+            this.clock = clock;
             this.issuerOrigin = properties.issuer().getScheme() + "://" + properties.issuer().getAuthority();
         }
 
@@ -137,13 +185,154 @@ public class AuthorizationServerSecurityConfig {
                 response.sendError(HttpServletResponse.SC_FORBIDDEN);
                 return;
             }
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication instanceof IdpSessionAuthentication idpAuthentication
+                    && isBrowserSessionRequest(request.getRequestURI())) {
+                if (!sessionIsCurrent(request, response, idpAuthentication)) {
+                    authentication = null;
+                } else if (passwordChangeRequired(request)
+                        && !passwordChangeRouteAllowed(request.getRequestURI())) {
+                    if ("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod())) {
+                        response.sendRedirect("/idp/password");
+                    } else {
+                        response.sendError(HttpServletResponse.SC_FORBIDDEN);
+                    }
+                    return;
+                }
+            }
+
+            if (isAuthorizationGet(request) && !authenticated(authentication)) {
+                IdpLoginController.PendingAuthorizationRequest pending = capture(request);
+                if (pending == null) {
+                    if (!hasSafeRegisteredRedirect(request)) {
+                        response.sendError(HttpServletResponse.SC_BAD_REQUEST);
+                        return;
+                    }
+                } else {
+                    request.getSession(true).setAttribute(IdpLoginController.PENDING_AUTHORIZATION_ATTRIBUTE, pending);
+                }
+            }
             chain.doFilter(request, response);
         }
 
+        private boolean isBrowserSessionRequest(String requestUri) {
+            return requestUri.startsWith("/idp/") || requestUri.equals("/oauth2/authorize")
+                    || requestUri.equals("/connect/logout");
+        }
+
         private boolean requiresOriginCheck(HttpServletRequest request) {
-            if ("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod())
-                    || "OPTIONS".equals(request.getMethod())) return false;
+            return !"GET".equals(request.getMethod()) && !"HEAD".equals(request.getMethod())
+                    && !"OPTIONS".equals(request.getMethod());
+        }
+
+        private boolean sessionIsCurrent(HttpServletRequest request, HttpServletResponse response,
+                IdpSessionAuthentication authentication) {
+            var session = request.getSession(false);
+            if (session == null) return false;
+            Instant now = clock.instant();
+            Object lastAccessValue = session.getAttribute(IdpLoginController.LAST_ACCESS_ATTRIBUTE);
+            if (!(lastAccessValue instanceof Instant lastAccess)
+                    || !now.isBefore(lastAccess.plus(properties.sessionIdleTimeout()))
+                    || !now.isBefore(authentication.authenticatedAt().plus(properties.sessionAbsoluteTimeout()))) {
+                SecurityContextHolder.clearContext();
+                try {
+                    session.invalidate();
+                } catch (IllegalStateException ignored) {
+                    // A concurrent expiry winner already invalidated the same server-side session.
+                }
+                IdpLoginController.expireSessionCookie(response, properties);
+                return false;
+            }
+            session.setAttribute(IdpLoginController.LAST_ACCESS_ATTRIBUTE, now);
             return true;
+        }
+
+        private boolean passwordChangeRequired(HttpServletRequest request) {
+            var session = request.getSession(false);
+            return session != null && Boolean.TRUE.equals(
+                    session.getAttribute(IdpLoginController.PASSWORD_CHANGE_REQUIRED_ATTRIBUTE));
+        }
+
+        private boolean passwordChangeRouteAllowed(String requestUri) {
+            return requestUri.equals("/idp/password") || requestUri.equals("/idp/login")
+                    || requestUri.equals("/idp/error") || requestUri.equals("/idp/idp.css");
+        }
+
+        private boolean isAuthorizationGet(HttpServletRequest request) {
+            return "GET".equals(request.getMethod()) && "/oauth2/authorize".equals(request.getRequestURI());
+        }
+
+        private boolean authenticated(Authentication authentication) {
+            return authentication != null && authentication.isAuthenticated()
+                    && !"anonymousUser".equals(authentication.getPrincipal());
+        }
+
+        private IdpLoginController.PendingAuthorizationRequest capture(HttpServletRequest request) {
+            if (!singleValue(request, "response_type", "code")
+                    || !singleValue(request, "code_challenge_method", "S256")) return null;
+            String clientId = one(request, "client_id");
+            String redirectUri = one(request, "redirect_uri");
+            String scope = one(request, "scope");
+            String state = one(request, "state");
+            String nonce = one(request, "nonce");
+            String challenge = one(request, "code_challenge");
+            if (clientId == null || redirectUri == null || scope == null || state == null || nonce == null
+                    || challenge == null || !challenge.matches("[A-Za-z0-9_-]{43}")) return null;
+            Set<String> requestedScopes = new LinkedHashSet<>(Arrays.asList(scope.trim().split("\\s+")));
+            if (requestedScopes.isEmpty() || requestedScopes.stream().anyMatch(String::isBlank)) return null;
+            OAuthClient client = clients.findByClientId(clientId)
+                    .filter(candidate -> candidate.status() == OAuthClientStatus.ACTIVE)
+                    .orElse(null);
+            URI parsedRedirect;
+            try {
+                parsedRedirect = URI.create(redirectUri);
+            } catch (IllegalArgumentException exception) {
+                return null;
+            }
+            if (client == null || client.id() == null || !client.allowsRedirect(parsedRedirect)
+                    || !client.scopes().containsAll(requestedScopes)) return null;
+            String originalUri = org.springframework.web.util.UriComponentsBuilder.fromPath("/oauth2/authorize")
+                    .queryParam("response_type", "code")
+                    .queryParam("client_id", clientId)
+                    .queryParam("redirect_uri", redirectUri)
+                    .queryParam("scope", String.join(" ", requestedScopes))
+                    .queryParam("state", state)
+                    .queryParam("nonce", nonce)
+                    .queryParam("code_challenge", challenge)
+                    .queryParam("code_challenge_method", "S256")
+                    .build().encode().toUriString();
+            return new IdpLoginController.PendingAuthorizationRequest(
+                    client.id(), clientId, redirectUri, state, nonce, requestedScopes,
+                    challenge, "S256", originalUri);
+        }
+
+        /**
+         * A malformed request with an exact registered callback belongs to SAS so it can return the
+         * protocol error to that callback. Only an unknown client/redirect is rejected locally.
+         */
+        private boolean hasSafeRegisteredRedirect(HttpServletRequest request) {
+            String clientId = one(request, "client_id");
+            String redirectUri = one(request, "redirect_uri");
+            if (clientId == null || redirectUri == null) return false;
+            OAuthClient client = clients.findByClientId(clientId)
+                    .filter(candidate -> candidate.status() == OAuthClientStatus.ACTIVE)
+                    .orElse(null);
+            try {
+                return client != null && client.allowsRedirect(URI.create(redirectUri));
+            } catch (IllegalArgumentException exception) {
+                return false;
+            }
+        }
+
+        private boolean singleValue(HttpServletRequest request, String name, String expected) {
+            String[] values = request.getParameterValues(name);
+            return values != null && values.length == 1 && expected.equals(values[0]);
+        }
+
+        private String one(HttpServletRequest request, String name) {
+            String[] values = request.getParameterValues(name);
+            return values != null && values.length == 1 && values[0] != null && !values[0].isBlank()
+                    ? values[0] : null;
         }
     }
 }

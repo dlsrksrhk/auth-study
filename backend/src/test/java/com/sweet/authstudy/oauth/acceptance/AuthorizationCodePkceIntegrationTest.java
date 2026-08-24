@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doCallRealMethod;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -21,6 +22,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -31,7 +33,10 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
+import com.sweet.authstudy.oauth.presentation.IdpLoginController;
+import com.sweet.authstudy.oauth.presentation.IdpSessionAuthentication;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -132,16 +137,21 @@ class AuthorizationCodePkceIntegrationTest {
     }
 
     @Test
-    void consent_required_pending_authorization_round_trips_without_a_task_nine_screen() throws Exception {
+    void consent_required_pending_authorization_round_trips_through_the_project_consent_screen() throws Exception {
         Fixture fixture = fixture(true);
         Endpoints endpoints = discovery();
         String rpState = "rp-state-" + UUID.randomUUID();
         String nonce = "nonce-" + UUID.randomUUID();
         MockHttpSession session = new MockHttpSession();
+        Instant authenticatedAt = Instant.now();
+        IdpSessionAuthentication idp = new IdpSessionAuthentication(
+                fixture.accountId(), fixture.companyId(), fixture.userId(), Set.of(AccountRole.USER),
+                fixture.subject(), authenticatedAt);
+        session.setAttribute(IdpLoginController.LAST_ACCESS_ATTRIBUTE, authenticatedAt);
 
         MvcResult pendingResult = mockMvc.perform(get(endpoints.authorizationPath())
                         .session(session)
-                        .with(user(Long.toString(fixture.accountId())))
+                        .with(authentication(idp))
                         .queryParam("response_type", "code")
                         .queryParam("client_id", fixture.clientId())
                         .queryParam("redirect_uri", CALLBACK.toString())
@@ -150,10 +160,13 @@ class AuthorizationCodePkceIntegrationTest {
                         .queryParam("nonce", nonce)
                         .queryParam("code_challenge", challenge(VERIFIER))
                         .queryParam("code_challenge_method", "S256"))
-                .andExpect(status().isOk())
+                .andExpect(status().is3xxRedirection())
                 .andReturn();
-        String consentPage = pendingResult.getResponse().getContentAsString();
-        assertThat(consentPage).contains("Consent required", "action=\"/oauth2/authorize\"");
+        MvcResult consentResult = mockMvc.perform(
+                        get(URI.create(pendingResult.getResponse().getHeader("Location"))).session(session))
+                .andExpect(status().isOk()).andReturn();
+        String consentPage = consentResult.getResponse().getContentAsString();
+        assertThat(consentPage).contains("접근 권한 동의", "action=\"/oauth2/authorize\"");
         var stateMatcher = Pattern.compile("name=\"state\" value=\"([^\"]+)\"").matcher(consentPage);
         assertThat(stateMatcher.find()).isTrue();
         String consentState = stateMatcher.group(1);
@@ -168,7 +181,6 @@ class AuthorizationCodePkceIntegrationTest {
 
         MvcResult approved = mockMvc.perform(post(endpoints.authorizationPath())
                         .session(session)
-                        .with(user(Long.toString(fixture.accountId())))
                         .with(csrf())
                         .header("Origin", ISSUER)
                         .param("client_id", fixture.clientId())
@@ -215,8 +227,6 @@ class AuthorizationCodePkceIntegrationTest {
         Endpoints endpoints = discovery();
 
         MvcResult result = mockMvc.perform(get(endpoints.authorizationPath())
-                        .session(new MockHttpSession())
-                        .with(user(Long.toString(fixture.accountId())))
                         .queryParam("response_type", "code")
                         .queryParam("client_id", fixture.clientId())
                         .queryParam("redirect_uri", CALLBACK.toString())
@@ -630,8 +640,9 @@ class AuthorizationCodePkceIntegrationTest {
                 .query(Long.class).single();
         jdbcClient.sql("insert into account_roles(account_id, role) values (:accountId, 'USER')")
                 .param("accountId", accountId).update();
+        UUID subject = UUID.randomUUID();
         jdbcClient.sql("insert into oauth_subject(account_id, subject, created_at) values (:accountId, :subject, :now)")
-                .param("accountId", accountId).param("subject", UUID.randomUUID())
+                .param("accountId", accountId).param("subject", subject)
                 .param("now", Timestamp.from(now)).update();
         String clientId = "public-" + suffix;
         long internalClientId = jdbcClient.sql("""
@@ -663,7 +674,7 @@ class AuthorizationCodePkceIntegrationTest {
             jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, 'profile')")
                     .param("clientId", internalClientId).update();
         }
-        return new Fixture(accountId, internalClientId, clientId, rawSecret);
+        return new Fixture(accountId, companyId, userId, subject, internalClientId, clientId, rawSecret);
     }
 
     private Instant jdbcInstant(String sql, String authorizationId) {
@@ -710,7 +721,8 @@ class AuthorizationCodePkceIntegrationTest {
     }
 
     private record Endpoints(String authorizationPath, String tokenPath) { }
-    private record Fixture(long accountId, long internalClientId, String clientId, String rawSecret) { }
+    private record Fixture(long accountId, long companyId, long userId, UUID subject,
+            long internalClientId, String clientId, String rawSecret) { }
     private record IssuedCode(String code, String authorizationId) { }
     private record ExchangeResult(int status, String error) { }
 

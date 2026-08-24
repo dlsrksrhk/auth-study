@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>요청 오류</title>
+    <link rel="stylesheet" href="/idp/idp.css">
+</head>
+<body>
+<main class="card" aria-labelledby="page-title">
+    <p class="eyebrow">Auth Study IdP</p>
+    <h1 id="page-title">요청을 처리할 수 없습니다</h1>
+    <p role="alert" th:text="${message}">로그인을 다시 시작해 주세요.</p>
+    <a class="button-link" href="/idp/login">로그인으로 돌아가기</a>
+</main>
+</body>
+</html>

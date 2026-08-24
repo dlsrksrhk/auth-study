@@ -27,6 +27,7 @@ import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.application.OAuthConsentService;
 import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
@@ -89,7 +90,8 @@ class SpringOAuth2AuthorizationServiceTest {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         mapper = new OAuthAuthorizationMapper(clients, subjects, accounts, properties(), clock);
         service = new SpringOAuth2AuthorizationService(authorizations, mapper, clock);
-        consentService = new SpringOAuth2AuthorizationConsentService(consents, clients, clock);
+        consentService = new SpringOAuth2AuthorizationConsentService(
+                new OAuthConsentService(consents, clients, authorizations, clock));
         RequestContextHolder.setRequestAttributes(
                 new ServletRequestAttributes(new MockHttpServletRequest()));
     }
