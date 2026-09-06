@@ -30,9 +30,9 @@ it("loads the recursive API hierarchy and disables self and descendants as a par
   expect(screen.getByRole("treeitem", { name: /API/ })).toHaveAttribute("aria-level", "3");
 
   await user.click(screen.getByRole("button", { name: "HQ 이동" }));
-  expect(screen.getByRole("option", { name: "HQ" })).toBeDisabled();
-  expect(screen.getByRole("option", { name: "DEV" })).toBeDisabled();
-  expect(screen.getByRole("option", { name: "API" })).toBeDisabled();
+  expect(screen.getByRole("option", { name: "본사 (HQ)" })).toBeDisabled();
+  expect(screen.getByRole("option", { name: "개발 (DEV)" })).toBeDisabled();
+  expect(screen.getByRole("option", { name: "API (API)" })).toBeDisabled();
   expect(screen.getByRole("option", { name: "최상위 부서" })).toBeEnabled();
 });
 

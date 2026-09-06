@@ -8,12 +8,14 @@ import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
 @Profile("dev")
+@Order(0)
 public class DevAdminSeeder implements CommandLineRunner {
 
     private final AccountRepository accountRepository;

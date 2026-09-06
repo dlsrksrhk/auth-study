@@ -5,6 +5,9 @@ spring:
     password: auth_study
 
 app:
+  dev:
+    sample-data:
+      enabled: ${DEV_SAMPLE_DATA_ENABLED:false}
   oauth:
     issuer: http://idp.localhost:8080
     authorization-code-ttl: 60s

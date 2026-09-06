@@ -32,6 +32,35 @@ function listHandlers() {
 
 function renderAdmin(ui: React.ReactNode) { return render(<AdminSecretOperationProvider>{ui}</AdminSecretOperationProvider>); }
 
+it("renders the user detail action as a link to that user", async () => {
+  listHandlers();
+  server.use(http.get("/api/v1/admin/companies/ACME/users", () => HttpResponse.json({
+    content: [createdUser], page: 0, size: 20, totalElements: 1, totalPages: 1,
+  })));
+
+  renderAdmin(<UserTable companyCode="ACME" />);
+
+  expect(await screen.findByRole("link", { name: "상세" })).toHaveAttribute("href", "/companies/ACME/users/U001");
+});
+
+it("preserves newer typing when an earlier search commit reaches the URL late", async () => {
+  currentQuery = "search=a";
+  listHandlers();
+  const user = userEvent.setup();
+  const view = renderAdmin(<UserTable companyCode="ACME" />);
+  const input = screen.getByLabelText("사용자 검색");
+  await user.type(input, "b");
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab", { scroll: false }));
+  await user.type(input, "c");
+
+  currentQuery = "search=ab";
+  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+
+  expect(input).toHaveValue("abc");
+  expect(input).toHaveFocus();
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=abc", { scroll: false }));
+});
+
 async function completeCreateForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("사용자 코드"), "U001");
   await user.type(screen.getByLabelText("사번"), "E001");
@@ -73,32 +102,38 @@ it("keeps the create form mounted through the one-time password step then clears
   expect(screen.getByRole("dialog", { name: "사용자 생성" })).toBeVisible();
 });
 
-it("keeps the same focused search input through self commit and external back navigation", async () => {
-  currentQuery = "search=a";
-  listHandlers();
-  const user = userEvent.setup();
-  const view = renderAdmin(<UserTable companyCode="ACME" />);
-  await screen.findByText("등록된 사용자가 없습니다.");
-  const input = screen.getByLabelText("사용자 검색");
-  await user.click(input);
-  await user.type(input, "b");
-  expect(input).toHaveValue("ab");
-  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab", { scroll: false }));
+it("keeps the same focused search input through self commit and external back navigation without Base UI warnings", async () => {
+  const consoleError = vi.spyOn(console, "error");
+  try {
+    currentQuery = "search=a";
+    listHandlers();
+    const user = userEvent.setup();
+    const view = renderAdmin(<UserTable companyCode="ACME" />);
+    await screen.findByText("등록된 사용자가 없습니다.");
+    const input = screen.getByLabelText("사용자 검색");
+    await user.click(input);
+    await user.type(input, "b");
+    expect(input).toHaveValue("ab");
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab", { scroll: false }));
 
-  currentQuery = "search=ab";
-  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
-  expect(screen.getByLabelText("사용자 검색")).toBe(input);
-  expect(input).toHaveFocus();
-  await user.type(input, "c");
-  expect(input).toHaveValue("abc");
-  currentQuery = "search=a";
-  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+    currentQuery = "search=ab";
+    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+    expect(screen.getByLabelText("사용자 검색")).toBe(input);
+    expect(input).toHaveFocus();
+    await user.type(input, "c");
+    expect(input).toHaveValue("abc");
+    currentQuery = "search=a";
+    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
 
-  await waitFor(() => expect(input).toHaveValue("a"));
-  expect(screen.getByLabelText("사용자 검색")).toBe(input);
-  expect(input).toHaveFocus();
-  await user.type(input, "z");
-  expect(input).toHaveValue("az");
+    await waitFor(() => expect(input).toHaveValue("a"));
+    expect(screen.getByLabelText("사용자 검색")).toBe(input);
+    expect(input).toHaveFocus();
+    await user.type(input, "z");
+    expect(input).toHaveValue("az");
+    expect(consoleError.mock.calls.filter(([message]) => String(message).startsWith("Base UI:"))).toEqual([]);
+  } finally {
+    consoleError.mockRestore();
+  }
 });
 
 it("sends canonical server paging, search, status, and sort query values", async () => {

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -176,7 +176,7 @@ export function CompanyTable() {
           <AlertTitle>기본 직위 5개가 준비되었습니다.</AlertTitle>
           <AlertDescription>
             <span className="mt-2 flex flex-wrap gap-2">{defaultPositionCheck.positions.map((position) => <Badge key={position.code} variant="secondary">{position.name}</Badge>)}</span>
-            <Button className="mt-3" render={<Link href={`/companies/${defaultPositionCheck.company.code}/positions`} />} size="sm" variant="outline">직위 관리</Button>
+            <Link className={buttonVariants({ className: "mt-3", size: "sm", variant: "outline" })} href={`/companies/${defaultPositionCheck.company.code}/positions`}>직위 관리</Link>
           </AlertDescription>
         </Alert>
       ) : defaultPositionCheck?.status === "warning" ? (
@@ -184,7 +184,7 @@ export function CompanyTable() {
           <AlertTitle>회사는 생성되었지만 기본 직위 5개를 확인하지 못했습니다.</AlertTitle>
           <AlertDescription>
             회사 저장을 다시 실행할 필요는 없습니다. 직위 화면에서 현재 상태를 확인해 주세요.
-            <Button className="mt-3 block" render={<Link href={`/companies/${defaultPositionCheck.company.code}/positions`} />} size="sm" variant="outline">직위 관리</Button>
+            <Link className={buttonVariants({ className: "mt-3 block", size: "sm", variant: "outline" })} href={`/companies/${defaultPositionCheck.company.code}/positions`}>직위 관리</Link>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -200,7 +200,7 @@ export function CompanyTable() {
           {loading ? <div className="space-y-3 p-5"><span className="sr-only">회사 목록을 불러오는 중입니다.</span>{[1, 2, 3].map((item) => <Skeleton className="h-10 w-full" key={item} />)}</div>
             : error ? <div className="p-6 text-center"><p className="text-sm text-red-700">{error}</p><Button className="mt-3" onClick={() => setReload((value) => value + 1)} variant="outline">다시 시도</Button></div>
             : result.content.length === 0 ? <p className="p-12 text-center text-sm text-slate-500">등록된 회사가 없습니다.</p>
-            : <Table><TableHeader><TableRow><TableHead>코드</TableHead><TableHead>회사명</TableHead><TableHead>이메일 도메인</TableHead><TableHead>상태</TableHead><TableHead className="text-right">작업</TableHead></TableRow></TableHeader><TableBody>{result.content.map((company) => <TableRow key={company.code}><TableCell className="font-mono font-medium">{company.code}</TableCell><TableCell>{company.name}</TableCell><TableCell>{company.emailDomain}</TableCell><TableCell><Badge variant={company.status === "ACTIVE" ? "default" : "secondary"}>{company.status === "ACTIVE" ? "활성" : "비활성"}</Badge></TableCell><TableCell className="space-x-2 text-right"><Button onClick={() => setEditing(company)} size="sm" variant="outline">{company.code} 수정</Button><Button render={<Link href={`/companies/${company.code}/positions`} />} size="sm" variant="ghost">직위</Button></TableCell></TableRow>)}</TableBody></Table>}
+            : <Table><TableHeader><TableRow><TableHead>코드</TableHead><TableHead>회사명</TableHead><TableHead>이메일 도메인</TableHead><TableHead>상태</TableHead><TableHead className="text-right">작업</TableHead></TableRow></TableHeader><TableBody>{result.content.map((company) => <TableRow key={company.code}><TableCell className="font-mono font-medium">{company.code}</TableCell><TableCell>{company.name}</TableCell><TableCell>{company.emailDomain}</TableCell><TableCell><Badge variant={company.status === "ACTIVE" ? "default" : "secondary"}>{company.status === "ACTIVE" ? "활성" : "비활성"}</Badge></TableCell><TableCell className="space-x-2 text-right"><Button onClick={() => setEditing(company)} size="sm" variant="outline">{company.code} 수정</Button><Link className={buttonVariants({ size: "sm", variant: "ghost" })} href={`/companies/${company.code}/positions`}>직위</Link></TableCell></TableRow>)}</TableBody></Table>}
         </div>
         <Pagination page={result.page} totalPages={result.totalPages} totalElements={result.totalElements} onPage={(next) => replaceQuery({ page: String(next) })} />
       </div>
