@@ -240,7 +240,7 @@ class OAuthClientServiceTest {
     }
 
     @Test
-    void company_admin_can_edit_non_trust_fields_while_preserving_existing_trusted_status() {
+    void company_admin_cannot_request_trusted_status_even_when_it_is_already_trusted() {
         generator.clientIds.add("trusted-edit-client");
         OAuthClientView created = service.create(systemAdmin(),
                 createCommand("ACME", true, OAuthClientTrust.TRUSTED_FIRST_PARTY)).client();
@@ -249,13 +249,10 @@ class OAuthClientServiceTest {
                 Set.of(LOGOUT), Set.of("openid", "email"), OAuthClientTrust.TRUSTED_FIRST_PARTY,
                 OAuthClientStatus.ACTIVE, created.version());
 
-        OAuthClientView updated = service.update(
-                companyAdmin(41L), "trusted-edit-client", preservingTrust);
-
-        assertThat(updated.trust()).isEqualTo(OAuthClientTrust.TRUSTED_FIRST_PARTY);
-        assertThat(updated.displayName()).isEqualTo("Updated without trust transition");
-        assertThat(clients.findByClientId("trusted-edit-client").orElseThrow().redirectUris())
-                .containsExactly(URI.create("https://new.example/callback"));
+        assertError(ErrorCode.FORBIDDEN, () -> service.update(
+                companyAdmin(41L), "trusted-edit-client", preservingTrust));
+        assertThat(clients.findByClientId("trusted-edit-client").orElseThrow().displayName())
+                .isEqualTo("Payroll RP");
     }
 
     @Test

@@ -108,6 +108,26 @@ class OAuthClientAdminControllerIntegrationTest {
                         .header(AUTHORIZATION, "Bearer " + companyToken).contentType(MediaType.APPLICATION_JSON)
                         .content(createJson(false, "TRUSTED_FIRST_PARTY")))
                 .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/admin/companies/{code}/oauth-clients", otherCode)
+                        .header(AUTHORIZATION, "Bearer " + companyToken))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/admin/companies/{code}/oauth-clients", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + companyToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content").isArray());
+    }
+
+    @Test
+    void invalid_fields_and_missing_client_have_stable_errors() throws Exception {
+        mvc.perform(post("/api/v1/admin/companies/{code}/oauth-clients", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + companyToken).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"\",\"publicClient\":true,\"redirectUris\":[],"
+                                + "\"postLogoutRedirectUris\":[],\"scopes\":[],\"trust\":\"CONSENT_REQUIRED\"}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors[*].field",
+                        org.hamcrest.Matchers.hasItems("displayName", "redirectUris", "scopes")));
+        mvc.perform(get("/api/v1/admin/companies/{code}/oauth-clients/missing-client", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + companyToken))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
     }
 
     @Test
@@ -122,6 +142,13 @@ class OAuthClientAdminControllerIntegrationTest {
                         .header(AUTHORIZATION, "Bearer " + companyToken))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.oneTimeSecret").doesNotExist())
                 .andExpect(jsonPath("$.secretHash").doesNotExist()).andExpect(jsonPath("$.id").doesNotExist());
+        mvc.perform(get("/api/v1/admin/companies/{code}/oauth-clients", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + companyToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].oneTimeSecret").doesNotExist());
+        mvc.perform(post("/api/v1/admin/companies/{code}/oauth-clients/{id}/rotate-secret", companyCode, clientId)
+                        .header(AUTHORIZATION, "Bearer " + companyToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.oneTimeSecret").isString())
+                .andExpect(jsonPath("$.client.oneTimeSecret").doesNotExist());
         String publicBody = mvc.perform(post("/api/v1/admin/companies/{code}/oauth-clients", companyCode)
                         .header(AUTHORIZATION, "Bearer " + companyToken).contentType(MediaType.APPLICATION_JSON)
                         .content(createJson(true, "CONSENT_REQUIRED")))
@@ -157,7 +184,27 @@ class OAuthClientAdminControllerIntegrationTest {
                         .content("{\"displayName\":\"Updated\",\"redirectUris\":[\"https://client.example/cb\"],"
                                 + "\"postLogoutRedirectUris\":[],\"scopes\":[\"openid\"],"
                                 + "\"trust\":\"TRUSTED_FIRST_PARTY\",\"version\":" + currentVersion + "}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("DISABLED"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("DISABLED"))
+                .andExpect(jsonPath("$.oneTimeSecret").doesNotExist());
+        mvc.perform(get("/api/v1/admin/companies/{code}/oauth-clients/{id}", companyCode, id)
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(jsonPath("$.oneTimeSecret").doesNotExist());
+    }
+
+    @Test
+    void company_admin_cannot_submit_trusted_value_when_updating_existing_trusted_client() throws Exception {
+        String created = mvc.perform(post("/api/v1/admin/companies/{code}/oauth-clients", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(createJson(true, "TRUSTED_FIRST_PARTY")))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        String id = com.jayway.jsonpath.JsonPath.read(created, "$.client.clientId");
+        Number version = com.jayway.jsonpath.JsonPath.read(created, "$.client.version");
+        mvc.perform(put("/api/v1/admin/companies/{code}/oauth-clients/{id}", companyCode, id)
+                        .header(AUTHORIZATION, "Bearer " + companyToken).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"Forbidden edit\",\"redirectUris\":[\"https://client.example/cb\"],"
+                                + "\"postLogoutRedirectUris\":[],\"scopes\":[\"openid\"],"
+                                + "\"trust\":\"TRUSTED_FIRST_PARTY\",\"version\":" + version + "}"))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     private String token(AuthenticatedAccount actor) { return jwtTokenService.issue(actor, false).accessToken(); }

@@ -271,7 +271,8 @@ public class OAuthClientService {
     private OAuthClientTrust requireUpdateTrust(
             AuthenticatedAccount actor, OAuthClientTrust existing, OAuthClientTrust requested) {
         OAuthClientTrust required = requireTrust(requested);
-        if (existing != required && !actor.roles().contains(AccountRole.SYSTEM_ADMIN)) {
+        if (!actor.roles().contains(AccountRole.SYSTEM_ADMIN)
+                && (required == OAuthClientTrust.TRUSTED_FIRST_PARTY || existing != required)) {
             throw new ApiException(
                     ErrorCode.FORBIDDEN, "Only a system administrator may change client trust.");
         }

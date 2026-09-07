@@ -10,7 +10,6 @@ import com.sweet.authstudy.shared.presentation.Locations;
 import com.sweet.authstudy.shared.presentation.PageResponse;
 import com.sweet.authstudy.shared.presentation.PageRules;
 import com.sweet.authstudy.shared.security.ActorContext;
-import com.sweet.authstudy.shared.validation.ValidCode;
 import jakarta.validation.Valid;
 import java.util.Set;
 import org.springframework.http.ResponseEntity;
@@ -30,7 +29,7 @@ public class OAuthClientAdminController {
     }
 
     @GetMapping("/companies/{companyCode}/oauth-clients")
-    public PageResponse<ClientResponse> list(@PathVariable @ValidCode String companyCode,
+    public PageResponse<ClientResponse> list(@PathVariable String companyCode,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
         PageRules.validate(page, size, "clientId", SORTS);
         var result = service.list(actors.current(), companyCode, page, size);
@@ -50,7 +49,7 @@ public class OAuthClientAdminController {
     }
 
     @PostMapping("/companies/{companyCode}/oauth-clients")
-    public ResponseEntity<OneTimeClientSecretResponse> create(@PathVariable @ValidCode String companyCode,
+    public ResponseEntity<OneTimeClientSecretResponse> create(@PathVariable String companyCode,
             @Valid @RequestBody CreateClientRequest request) {
         var result = service.create(actors.current(), new CreateClient(companyCode, request.displayName(),
                 request.publicClient(), request.redirectUris(), nullSafe(request.postLogoutRedirectUris()),
@@ -61,13 +60,13 @@ public class OAuthClientAdminController {
     }
 
     @GetMapping("/companies/{companyCode}/oauth-clients/{clientId}")
-    public ClientResponse find(@PathVariable @ValidCode String companyCode, @PathVariable String clientId) {
+    public ClientResponse find(@PathVariable String companyCode, @PathVariable String clientId) {
         service.requireClientInCompany(actors.current(), companyCode, clientId);
         return ClientResponse.from(service.find(actors.current(), clientId));
     }
 
     @PutMapping("/companies/{companyCode}/oauth-clients/{clientId}")
-    public ClientResponse update(@PathVariable @ValidCode String companyCode, @PathVariable String clientId,
+    public ClientResponse update(@PathVariable String companyCode, @PathVariable String clientId,
             @Valid @RequestBody UpdateClientRequest request) {
         service.requireClientInCompany(actors.current(), companyCode, clientId);
         return ClientResponse.from(service.update(actors.current(), clientId, new UpdateClient(request.displayName(),
@@ -76,7 +75,7 @@ public class OAuthClientAdminController {
     }
 
     @PostMapping("/companies/{companyCode}/oauth-clients/{clientId}/rotate-secret")
-    public OneTimeClientSecretResponse rotate(@PathVariable @ValidCode String companyCode,
+    public OneTimeClientSecretResponse rotate(@PathVariable String companyCode,
             @PathVariable String clientId) {
         service.requireClientInCompany(actors.current(), companyCode, clientId);
         var result = service.rotateSecret(actors.current(), clientId);
@@ -84,7 +83,7 @@ public class OAuthClientAdminController {
     }
 
     @PostMapping("/companies/{companyCode}/oauth-clients/{clientId}/disable")
-    public ResponseEntity<Void> disable(@PathVariable @ValidCode String companyCode, @PathVariable String clientId,
+    public ResponseEntity<Void> disable(@PathVariable String companyCode, @PathVariable String clientId,
             @Valid @RequestBody ExpectedVersionRequest request) {
         service.requireClientInCompany(actors.current(), companyCode, clientId);
         service.disable(actors.current(), clientId, request.version());
@@ -92,7 +91,7 @@ public class OAuthClientAdminController {
     }
 
     @PostMapping("/companies/{companyCode}/oauth-clients/{clientId}/enable")
-    public ResponseEntity<Void> enable(@PathVariable @ValidCode String companyCode, @PathVariable String clientId,
+    public ResponseEntity<Void> enable(@PathVariable String companyCode, @PathVariable String clientId,
             @Valid @RequestBody ExpectedVersionRequest request) {
         service.requireClientInCompany(actors.current(), companyCode, clientId);
         service.enable(actors.current(), clientId, request.version());
