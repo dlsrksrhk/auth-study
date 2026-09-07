@@ -23,4 +23,23 @@ public final class OAuthAdminResponses {
     }
 
     public record OneTimeClientSecretResponse(ClientResponse client, String oneTimeSecret) {}
+
+    public record ConsentResponse(java.util.UUID subject, Set<String> approvedScopes,
+            Instant grantedAt, Instant updatedAt) {
+        public static ConsentResponse from(com.sweet.authstudy.oauth.application.OAuthConsentAdminQuery.Entry entry) {
+            return new ConsentResponse(entry.subject(), entry.approvedScopes(), entry.grantedAt(), entry.updatedAt());
+        }
+    }
+
+    public record ProtocolEventResponse(long id, Instant occurredAt, String correlationId,
+            com.sweet.authstudy.oauth.domain.OAuthProtocolEvent.EventType eventType,
+            com.sweet.authstudy.oauth.domain.OAuthProtocolEvent.Outcome outcome,
+            String clientId, java.util.UUID subject, String authorizationId, String errorCode,
+            java.util.Map<String,Object> metadata) {
+        public static ProtocolEventResponse from(com.sweet.authstudy.oauth.domain.OAuthProtocolEvent event) {
+            return new ProtocolEventResponse(event.id(),event.occurredAt(),event.correlationId(),event.eventType(),
+                    event.outcome(),event.clientId(),event.subject(),event.authorizationId(),event.errorCode(),event.metadata().toMap());
+        }
+    }
+    public record CursorResponse<T>(java.util.List<T> content,String nextCursor,boolean hasNext) {}
 }

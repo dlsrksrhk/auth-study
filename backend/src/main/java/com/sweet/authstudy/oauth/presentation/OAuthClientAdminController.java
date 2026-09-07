@@ -90,6 +90,12 @@ public class OAuthClientAdminController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/companies/{companyCode}/oauth-clients/{clientId}/revoke-secret")
+    public ClientResponse revokeSecret(@PathVariable String companyCode, @PathVariable String clientId) {
+        service.requireClientInCompany(actors.current(), companyCode, clientId);
+        return ClientResponse.from(service.revokeSecret(actors.current(), clientId));
+    }
+
     @PostMapping("/companies/{companyCode}/oauth-clients/{clientId}/enable")
     public ResponseEntity<Void> enable(@PathVariable String companyCode, @PathVariable String clientId,
             @Valid @RequestBody ExpectedVersionRequest request) {

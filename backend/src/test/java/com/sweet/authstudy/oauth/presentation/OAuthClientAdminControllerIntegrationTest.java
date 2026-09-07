@@ -84,11 +84,26 @@ class OAuthClientAdminControllerIntegrationTest {
         String ownId = com.jayway.jsonpath.JsonPath.read(own, "$.client.clientId");
         String otherId = com.jayway.jsonpath.JsonPath.read(other, "$.client.clientId");
 
-        mvc.perform(get("/api/v1/admin/oauth-clients")
+        String firstPage = mvc.perform(get("/api/v1/admin/oauth-clients")
                         .header(AUTHORIZATION, "Bearer " + systemToken))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.content").isArray())
                 .andExpect(jsonPath("$.page").value(0)).andExpect(jsonPath("$.size").value(20))
-                .andExpect(jsonPath("$.content[*].clientId", org.hamcrest.Matchers.hasItems(ownId, otherId)));
+                .andReturn().getResponse().getContentAsString();
+        int totalPages = com.jayway.jsonpath.JsonPath.read(firstPage, "$.totalPages");
+        org.assertj.core.api.Assertions.assertThat(totalPages).isBetween(1, 100);
+        java.util.List<String> allClientIds = new java.util.ArrayList<>(
+                com.jayway.jsonpath.JsonPath.<java.util.List<String>>read(firstPage, "$.content[*].clientId"));
+        for (int page = 1; page < totalPages; page++) {
+            String response = mvc.perform(get("/api/v1/admin/oauth-clients").param("page", Integer.toString(page))
+                            .header(AUTHORIZATION, "Bearer " + systemToken))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.page").value(page))
+                    .andExpect(jsonPath("$.totalPages").value(totalPages))
+                    .andReturn().getResponse().getContentAsString();
+            allClientIds.addAll(com.jayway.jsonpath.JsonPath.<java.util.List<String>>read(response, "$.content[*].clientId"));
+        }
+        org.assertj.core.api.Assertions.assertThat(allClientIds).contains(ownId, otherId).doesNotHaveDuplicates();
+        Number totalElements = com.jayway.jsonpath.JsonPath.read(firstPage, "$.totalElements");
+        org.assertj.core.api.Assertions.assertThat(allClientIds).hasSize(totalElements.intValue());
         mvc.perform(get("/api/v1/admin/oauth-clients").param("companyCode", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken))
                 .andExpect(status().isOk())

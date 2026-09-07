@@ -8,6 +8,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import com.sweet.authstudy.audit.application.AuditService;
+import com.sweet.authstudy.audit.application.AuditActions;
 
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
@@ -41,6 +43,7 @@ public class OAuthClientService {
     private final OAuthClientSecretGenerator secretGenerator;
     private final OAuthGrantRevocationPort oauthGrants;
     private final Clock clock;
+    private final AuditService audit;
 
     public OAuthClientService(
             CompanyRepository companyRepository,
@@ -49,7 +52,7 @@ public class OAuthClientService {
             PasswordEncoder passwordEncoder,
             OAuthClientSecretGenerator secretGenerator,
             OAuthGrantRevocationPort oauthGrants,
-            Clock clock) {
+            Clock clock, AuditService audit) {
         this.companyRepository = companyRepository;
         this.clientRepository = clientRepository;
         this.tenantGuard = tenantGuard;
@@ -57,6 +60,7 @@ public class OAuthClientService {
         this.secretGenerator = secretGenerator;
         this.oauthGrants = oauthGrants;
         this.clock = clock;
+        this.audit = audit;
     }
 
     @Transactional
@@ -82,6 +86,7 @@ public class OAuthClientService {
             throw validation(exception.getMessage());
         }
         OAuthClient saved = clientRepository.save(candidate);
+        audit(actor, AuditActions.OAUTH_CLIENT_CREATED, saved);
         return new ClientSecretResult(OAuthClientView.from(saved, company.code()), rawSecret);
     }
 
@@ -111,6 +116,7 @@ public class OAuthClientService {
             throw validation(exception.getMessage());
         }
         OAuthClient saved = clientRepository.save(client);
+        audit(actor, AuditActions.OAUTH_CLIENT_UPDATED, saved);
         return OAuthClientView.from(saved, context.company().code());
     }
 
@@ -131,6 +137,7 @@ public class OAuthClientService {
         client = clientRepository.save(client);
         client.addSecret(toSecret(rawSecret, now), now);
         OAuthClient saved = clientRepository.save(client);
+        audit(actor, AuditActions.OAUTH_CLIENT_SECRET_ROTATED, saved);
         return new ClientSecretResult(
                 OAuthClientView.from(saved, context.company().code()), rawSecret);
     }
@@ -145,7 +152,9 @@ public class OAuthClientService {
         Instant now = clock.instant();
         oauthGrants.revokeClient(client.id(), now);
         client.revokeActiveSecrets(now);
-        return OAuthClientView.from(clientRepository.save(client), context.company().code());
+        OAuthClient saved = clientRepository.save(client);
+        audit(actor, AuditActions.OAUTH_CLIENT_SECRET_REVOKED, saved);
+        return OAuthClientView.from(saved, context.company().code());
     }
 
     @Transactional(readOnly = true)
@@ -216,7 +225,13 @@ public class OAuthClientService {
         if (status == OAuthClientStatus.DISABLED) oauthGrants.revokeClient(client.id(), clock.instant());
         client.update(client.displayName(), status, client.trust(), client.redirectUris(),
                 client.postLogoutRedirectUris(), client.scopes(), clock.instant());
-        return OAuthClientView.from(clientRepository.save(client), context.company().code());
+        OAuthClient saved = clientRepository.save(client);
+        audit(actor, status == OAuthClientStatus.DISABLED ? AuditActions.OAUTH_CLIENT_DISABLED : AuditActions.OAUTH_CLIENT_ENABLED, saved);
+        return OAuthClientView.from(saved, context.company().code());
+    }
+
+    private void audit(AuthenticatedAccount actor, String action, OAuthClient client) {
+        audit.record(actor, action, "OAUTH_CLIENT", client.id(), client.companyId(), java.util.Map.of());
     }
 
     private PageResult<OAuthClientView> mapPage(PageResult<OAuthClient> result, String companyCode) {

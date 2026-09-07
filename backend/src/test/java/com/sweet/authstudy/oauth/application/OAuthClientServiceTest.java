@@ -54,7 +54,7 @@ class OAuthClientServiceTest {
     private final OAuthGrantRevocationPort oauthGrants = mock(OAuthGrantRevocationPort.class);
     private final OAuthClientService service = new OAuthClientService(
             companies, clients, new TenantGuard(companies), passwordEncoder, generator, oauthGrants,
-            Clock.fixed(NOW, ZoneOffset.UTC));
+            Clock.fixed(NOW, ZoneOffset.UTC), mock(com.sweet.authstudy.audit.application.AuditService.class));
 
     private Company acme;
     private Company other;
