@@ -371,7 +371,11 @@ function ClientDetail({
             >
               취소
             </Button>
-            <Button disabled={pending} onClick={() => void runAction()}>
+            <Button
+              aria-label={action ? `${actions[action].label} 확인` : "작업 확인"}
+              disabled={pending}
+              onClick={() => void runAction()}
+            >
               {pending ? "처리 중" : "확인"}
             </Button>
           </DialogFooter>

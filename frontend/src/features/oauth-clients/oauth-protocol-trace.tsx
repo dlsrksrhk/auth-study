@@ -217,9 +217,10 @@ function Trace({
         </Link>
       </div>
       <div className="flex flex-wrap gap-4">
-        <label>
+        <label htmlFor="oauth-event-type">
           이벤트 유형
           <select
+            id="oauth-event-type"
             className="ml-2 rounded border p-2"
             value={type ?? ""}
             onChange={(e) =>
@@ -239,9 +240,10 @@ function Trace({
             ))}
           </select>
         </label>
-        <label>
+        <label htmlFor="oauth-event-outcome">
           결과
           <select
+            id="oauth-event-outcome"
             className="ml-2 rounded border p-2"
             value={outcome ?? ""}
             onChange={(e) =>

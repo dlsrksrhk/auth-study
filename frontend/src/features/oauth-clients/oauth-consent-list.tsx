@@ -266,7 +266,11 @@ function ConsentList({ companyCode, clientId }: Props) {
             >
               취소
             </Button>
-            <Button disabled={pending} onClick={() => void revoke()}>
+            <Button
+              aria-label={action === "all" ? "전체 로그인 유지 권한 폐기 확인" : "동의 폐기 확인"}
+              disabled={pending}
+              onClick={() => void revoke()}
+            >
               {pending ? "처리 중" : "확인"}
             </Button>
           </DialogFooter>

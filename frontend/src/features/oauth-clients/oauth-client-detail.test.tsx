@@ -82,7 +82,8 @@ async function confirm(label: string) {
     screen.getByRole("button", { name: label }),
   );
   const dialog = screen.getByRole("dialog");
-  await userEvent.click(within(dialog).getByRole("button", { name: "확인" }));
+  expect(dialog).toHaveAccessibleDescription();
+  await userEvent.click(within(dialog).getByRole("button", { name: `${label} 확인` }));
 }
 it("fixes client_id, copies with a value-free live announcement, and hides public secret actions", async () => {
   const user = userEvent.setup();
@@ -112,11 +113,11 @@ it("confirms disable revocation, sends expected version, and reloads detail", as
   expect(oauthClientApi.disable).not.toHaveBeenCalled();
   vi.mocked(oauthClientApi.get).mockResolvedValue({
     ...client,
-    status: "INACTIVE",
+    status: "DISABLED",
     version: 8,
   });
   await userEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "확인" }),
+    within(screen.getByRole("dialog")).getByRole("button", { name: "비활성화 확인" }),
   );
   await screen.findByRole("button", { name: "활성화" });
   expect(oauthClientApi.disable).toHaveBeenCalledWith(
@@ -130,7 +131,7 @@ it("confirms disable revocation, sends expected version, and reloads detail", as
   ).not.toBeInTheDocument();
 });
 it("enables an inactive client with the current version", async () => {
-  await show({ publicClient: false, status: "INACTIVE" });
+  await show({ publicClient: false, status: "DISABLED" });
   expect(
     screen.queryByRole("button", { name: /secret/ }),
   ).not.toBeInTheDocument();
@@ -224,7 +225,7 @@ it("hands rotation directly to provider after explicit revocation confirmation",
     /기존 secret.*활성 authorization과 refresh.*폐기/,
   );
   await userEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "확인" }),
+    within(screen.getByRole("dialog")).getByRole("button", { name: "secret 회전 확인" }),
   );
   await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
   expect(rotate).toHaveBeenCalledWith("ACME", client.clientId);
@@ -366,8 +367,8 @@ it("prevents duplicate mutations while confirmation is pending", async () => {
   );
   await show();
   await confirm("비활성화");
-  expect(screen.getByRole("button", { name: "처리 중" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "처리 중" }));
+  expect(screen.getByRole("button", { name: "비활성화 확인" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "비활성화 확인" }));
   expect(oauthClientApi.disable).toHaveBeenCalledTimes(1);
   await act(async () => finish());
 });

@@ -9,6 +9,9 @@ describe("resolveAdminRedirect", () => {
     ["authenticated", ["USER"], "ACME", "/", "/account"],
     ["authenticated", ["COMPANY_ADMIN"], "ACME", "/companies/OTHER/positions", "/companies/ACME/positions"],
     ["authenticated", ["COMPANY_ADMIN"], "ACME", "/companies", "/"],
+    ["authenticated", ["USER"], "ACME", "/companies/ACME/oauth-clients/new", "/account"],
+    ["authenticated", ["USER"], "ACME", "/companies/ACME/oauth-clients/id/protocol-events", "/account"],
+    ["authenticated", ["COMPANY_ADMIN"], "ACME", "/companies/OTHER/oauth-clients/id", "/companies/ACME/oauth-clients/id"],
   ] as const)("redirects %s from %s", (status, roles, companyCode, pathname, expected) => {
     expect(resolveAdminRedirect({ status, roles: [...roles], companyCode, pathname })).toBe(expected);
   });

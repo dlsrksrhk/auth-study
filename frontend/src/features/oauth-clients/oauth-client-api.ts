@@ -9,7 +9,7 @@ export type OAuthScope =
   | "hr.organization"
   | "hr.roles";
 
-export type OAuthClientStatus = "ACTIVE" | "INACTIVE";
+export type OAuthClientStatus = "ACTIVE" | "DISABLED";
 export type OAuthClientTrust = "CONSENT_REQUIRED" | "TRUSTED_FIRST_PARTY";
 
 export type OAuthClientInput = {

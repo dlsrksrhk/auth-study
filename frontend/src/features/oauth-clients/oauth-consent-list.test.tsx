@@ -57,7 +57,7 @@ it("confirms subject consent removal plus grants and refresh revocation then rel
   );
   expect(oauthClientApi.revokeConsent).not.toHaveBeenCalled();
   await userEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "확인" }),
+    within(screen.getByRole("dialog")).getByRole("button", { name: /폐기 확인$/ }),
   );
   await waitFor(() =>
     expect(oauthClientApi.listConsents).toHaveBeenCalledTimes(2),
@@ -78,7 +78,7 @@ it("separately confirms all client authorizations while preserving consent", asy
     /모든 사용자.*refresh.*폐기.*동의.*유지/,
   );
   await userEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "확인" }),
+    within(screen.getByRole("dialog")).getByRole("button", { name: /폐기 확인$/ }),
   );
   await waitFor(() =>
     expect(oauthClientApi.revokeAuthorizations).toHaveBeenCalledWith(
@@ -142,7 +142,7 @@ it("supports consent pages and recovers after deleting the last row on a later p
     .mockResolvedValueOnce({ ...page, content: [], page: 1 })
     .mockResolvedValue(page);
   await userEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "확인" }),
+    within(screen.getByRole("dialog")).getByRole("button", { name: /폐기 확인$/ }),
   );
   await waitFor(() =>
     expect(oauthClientApi.listConsents).toHaveBeenLastCalledWith(
@@ -168,7 +168,7 @@ it("keeps failed revocation retryable and never displays raw error details", asy
   expect(oauthClientApi.revokeConsent).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "동의 폐기" }));
   await userEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "확인" }),
+    within(screen.getByRole("dialog")).getByRole("button", { name: /폐기 확인$/ }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "폐기하지 못했습니다",
@@ -190,10 +190,10 @@ it("blocks repeated confirmation and ignores pending mutation completion after l
     await screen.findByRole("button", { name: "동의 폐기" }),
   );
   await userEvent.dblClick(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "확인" }),
+    within(screen.getByRole("dialog")).getByRole("button", { name: /폐기 확인$/ }),
   );
   expect(oauthClientApi.revokeConsent).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("button", { name: "처리 중" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "동의 폐기 확인" })).toBeDisabled();
   auth.status = "unauthenticated";
   view.rerender(<OAuthConsentList companyCode="ACME" clientId="portal" />);
   await act(async () => resolve());

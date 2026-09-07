@@ -16,8 +16,8 @@ function renderSidebar(roles: Role[], companyCode: string | null = null) {
 
 describe("AdminSidebar", () => {
   it.each([
-    [["SYSTEM_ADMIN"] as Role[], ["대시보드", "회사", "직위", "부서", "사용자", "감사 로그"]],
-    [["COMPANY_ADMIN"] as Role[], ["대시보드", "직위", "부서", "사용자", "감사 로그"]],
+    [["SYSTEM_ADMIN"] as Role[], ["대시보드", "회사", "직위", "부서", "사용자", "감사 로그", "인증/인가 설정"]],
+    [["COMPANY_ADMIN"] as Role[], ["대시보드", "직위", "부서", "사용자", "감사 로그", "인증/인가 설정"]],
     [["USER"] as Role[], ["내 계정"]],
   ])("shows only allowed navigation for %s", (roles, labels) => {
     renderSidebar(roles, roles[0] === "SYSTEM_ADMIN" ? "ZEN" : "ACME");
@@ -45,5 +45,19 @@ describe("AdminSidebar", () => {
       "href",
       "/companies/ZEN/departments",
     );
+  });
+
+  it.each(["SYSTEM_ADMIN", "COMPANY_ADMIN"] as const)("scopes OAuth navigation for %s and marks nested routes active", (role) => {
+    render(<AdminSidebar roles={[role]} companyCode="acme" currentPath="/companies/ACME/oauth-clients/client/protocol-events" />);
+    const link = screen.getByRole("link", { name: "인증/인가 설정" });
+    expect(link).toHaveAttribute("href", "/companies/ACME/oauth-clients");
+    expect(link).toHaveAttribute("aria-current", "page");
+    expect(link.querySelector("svg")).toHaveClass("lucide-shield-keyhole");
+  });
+
+  it("guides system admins to select a company before OAuth administration", () => {
+    renderSidebar(["SYSTEM_ADMIN"]);
+    expect(screen.getByRole("link", { name: "인증/인가 설정" })).toHaveAttribute("href", "/companies");
+    expect(screen.getByText("인증/인가 설정을 관리하려면 먼저 회사를 선택해 주세요.")).toBeVisible();
   });
 });

@@ -7,6 +7,7 @@ import {
   FileClock,
   IdCard,
   Network,
+  ShieldKeyhole,
   UserRound,
 } from "lucide-react";
 
@@ -32,6 +33,7 @@ export function AdminSidebar({ roles, companyCode, currentPath }: AdminSidebarPr
         { label: "부서", href: code ? `${companyBase}/departments` : companyBase, icon: Network },
         { label: "사용자", href: code ? `${companyBase}/users` : companyBase, icon: UserRound },
         { label: "감사 로그", href: code ? `${companyBase}/audit-logs` : companyBase, icon: FileClock },
+        { label: "인증/인가 설정", href: code ? `${companyBase}/oauth-clients` : companyBase, icon: ShieldKeyhole },
       ]
     : [{ label: "내 계정", href: "/account", icon: UserRound }];
 
@@ -65,6 +67,9 @@ export function AdminSidebar({ roles, companyCode, currentPath }: AdminSidebarPr
           })}
         </ul>
       </nav>
+      {systemAdmin && !code ? (
+        <p className="px-4 pb-4 text-xs text-slate-300">인증/인가 설정을 관리하려면 먼저 회사를 선택해 주세요.</p>
+      ) : null}
     </aside>
   );
 }

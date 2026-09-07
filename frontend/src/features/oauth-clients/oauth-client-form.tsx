@@ -254,8 +254,9 @@ export function OAuthClientForm({
           <legend className="mb-3 text-sm font-medium">Scopes</legend>
           <div className="grid gap-3 sm:grid-cols-2">
             {(Object.keys(oauthScopeCatalog) as OAuthScope[]).map((scope) => (
-              <label key={scope} className="flex items-center gap-2 text-sm">
+              <label key={scope} htmlFor={`oauth-scope-${scope}`} className="flex items-center gap-2 text-sm">
                 <input
+                  id={`oauth-scope-${scope}`}
                   name="scopes"
                   type="checkbox"
                   className="size-4 accent-teal-700"

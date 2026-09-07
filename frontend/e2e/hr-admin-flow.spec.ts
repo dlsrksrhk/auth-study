@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Response } from "@playwright/test";
+import { expect, test, type Browser, type BrowserContext, type Page, type Response } from "@playwright/test";
 
 import {
   findSetCookiesByName,
@@ -7,6 +7,16 @@ import {
 } from "../src/test/set-cookie";
 
 test("system admin provisions a company and company admin manages organization", async ({ page, context, browser }) => {
+  try {
+    await runHrFlow(page, context, browser);
+  } catch {
+    // Password/cookie assertions may include credentials in their original error.
+    // The list reporter and error-context must receive only this safe summary.
+    throw new Error("HR administration regression failed. Sensitive diagnostics suppressed.");
+  }
+});
+
+async function runHrFlow(page: Page, context: BrowserContext, browser: Browser) {
   const suffix = `${Date.now()}${Math.random().toString(36).slice(2, 7)}`.slice(-14).toUpperCase();
   const companyCode = `E${suffix}`.slice(0, 15);
   const companyDomain = `e2e-${suffix.toLowerCase()}.example`;
@@ -120,7 +130,7 @@ test("system admin provisions a company and company admin manages organization",
   await expect(page.getByText("USER_CREATE", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("MEMBERSHIP_CREATE", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: /수정|삭제/ })).toHaveCount(0);
-});
+}
 
 async function login(page: Page, email: string, password: string) {
   await page.getByLabel("이메일").fill(email);
