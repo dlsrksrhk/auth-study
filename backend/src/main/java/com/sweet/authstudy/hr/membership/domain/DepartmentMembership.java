@@ -82,15 +82,47 @@ public final class DepartmentMembership {
         this.updatedAt = Objects.requireNonNull(now);
     }
 
-    public Long id() { return id; }
-    public long companyId() { return companyId; }
-    public long userId() { return userId; }
-    public long departmentId() { return departmentId; }
-    public DepartmentRole role() { return role; }
-    public boolean primary() { return primary; }
-    public Instant startedAt() { return startedAt; }
-    public Instant endedAt() { return endedAt; }
-    public long version() { return version; }
-    public Instant createdAt() { return createdAt; }
-    public Instant updatedAt() { return updatedAt; }
+    public Long id() {
+        return id;
+    }
+
+    public long companyId() {
+        return companyId;
+    }
+
+    public long userId() {
+        return userId;
+    }
+
+    public long departmentId() {
+        return departmentId;
+    }
+
+    public DepartmentRole role() {
+        return role;
+    }
+
+    public boolean primary() {
+        return primary;
+    }
+
+    public Instant startedAt() {
+        return startedAt;
+    }
+
+    public Instant endedAt() {
+        return endedAt;
+    }
+
+    public long version() {
+        return version;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
+    public Instant updatedAt() {
+        return updatedAt;
+    }
 }

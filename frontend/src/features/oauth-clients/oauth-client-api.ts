@@ -1,13 +1,13 @@
-import type { PageResponse } from "@/features/companies/company-api";
-import { apiClient } from "@/lib/api/client";
+import type {PageResponse} from "@/features/companies/company-api";
+import {apiClient} from "@/lib/api/client";
 
 export type OAuthScope =
-  | "openid"
-  | "profile"
-  | "email"
-  | "hr.company"
-  | "hr.organization"
-  | "hr.roles";
+    | "openid"
+    | "profile"
+    | "email"
+    | "hr.company"
+    | "hr.organization"
+    | "hr.roles";
 
 export type OAuthClientStatus = "ACTIVE" | "DISABLED";
 export type OAuthClientTrust = "CONSENT_REQUIRED" | "TRUSTED_FIRST_PARTY";
@@ -56,23 +56,23 @@ export type ConsentSummary = {
 };
 
 export type ProtocolEventType =
-  | "AUTHORIZATION_REQUEST_VALIDATED"
-  | "LOGIN_REQUIRED"
-  | "LOGIN_SUCCEEDED"
-  | "LOGIN_FAILED"
-  | "PASSWORD_CHANGE_REQUIRED"
-  | "PASSWORD_CHANGED"
-  | "CONSENT_GRANTED"
-  | "CONSENT_DENIED"
-  | "AUTHORIZATION_CODE_ISSUED"
-  | "AUTHORIZATION_CODE_EXCHANGED"
-  | "AUTHORIZATION_CODE_REPLAY_REJECTED"
-  | "REFRESH_ROTATED"
-  | "REFRESH_REUSE_DETECTED"
-  | "AUTHORIZATION_REVOKED"
-  | "USERINFO_SUCCEEDED"
-  | "USERINFO_DENIED"
-  | "LOGOUT_COMPLETED";
+    | "AUTHORIZATION_REQUEST_VALIDATED"
+    | "LOGIN_REQUIRED"
+    | "LOGIN_SUCCEEDED"
+    | "LOGIN_FAILED"
+    | "PASSWORD_CHANGE_REQUIRED"
+    | "PASSWORD_CHANGED"
+    | "CONSENT_GRANTED"
+    | "CONSENT_DENIED"
+    | "AUTHORIZATION_CODE_ISSUED"
+    | "AUTHORIZATION_CODE_EXCHANGED"
+    | "AUTHORIZATION_CODE_REPLAY_REJECTED"
+    | "REFRESH_ROTATED"
+    | "REFRESH_REUSE_DETECTED"
+    | "AUTHORIZATION_REVOKED"
+    | "USERINFO_SUCCEEDED"
+    | "USERINFO_DENIED"
+    | "LOGOUT_COMPLETED";
 
 export type ProtocolEventOutcome = "SUCCESS" | "FAILURE" | "DENIED";
 
@@ -103,20 +103,20 @@ export type ProtocolEventParams = {
   outcome?: ProtocolEventOutcome;
 };
 
-const jsonHeaders = { "Content-Type": "application/json" } as const;
+const jsonHeaders = {"Content-Type": "application/json"} as const;
 const segment = (value: string) => encodeURIComponent(value);
 const collectionPath = (companyCode: string) =>
-  `/api/v1/admin/companies/${segment(companyCode)}/oauth-clients`;
+    `/api/v1/admin/companies/${segment(companyCode)}/oauth-clients`;
 const clientPath = (companyCode: string, clientId: string) =>
-  `${collectionPath(companyCode)}/${segment(clientId)}`;
-const pageQuery = ({ page, size }: PageParams) =>
-  new URLSearchParams({ page: String(page), size: String(size) }).toString();
+    `${collectionPath(companyCode)}/${segment(clientId)}`;
+const pageQuery = ({page, size}: PageParams) =>
+    new URLSearchParams({page: String(page), size: String(size)}).toString();
 
 export const oauthClientApi = {
   list(companyCode: string, params: PageParams, signal?: AbortSignal) {
     return apiClient.request<PageResponse<OAuthClientSummary>>(
-      `${collectionPath(companyCode)}?${pageQuery(params)}`,
-      { signal },
+        `${collectionPath(companyCode)}?${pageQuery(params)}`,
+        {signal},
     );
   },
 
@@ -129,7 +129,7 @@ export const oauthClientApi = {
   },
 
   get(companyCode: string, clientId: string, signal?: AbortSignal) {
-    return apiClient.request<OAuthClientDetail>(clientPath(companyCode, clientId), { signal });
+    return apiClient.request<OAuthClientDetail>(clientPath(companyCode, clientId), {signal});
   },
 
   update(companyCode: string, clientId: string, input: OAuthClientUpdate) {
@@ -162,15 +162,15 @@ export const oauthClientApi = {
 
   listConsents(companyCode: string, clientId: string, params: PageParams, signal?: AbortSignal) {
     return apiClient.request<PageResponse<ConsentSummary>>(
-      `${clientPath(companyCode, clientId)}/consents?${pageQuery(params)}`,
-      { signal },
+        `${clientPath(companyCode, clientId)}/consents?${pageQuery(params)}`,
+        {signal},
     );
   },
 
   revokeConsent(companyCode: string, clientId: string, subject: string) {
     return apiClient.request<void>(
-      `${clientPath(companyCode, clientId)}/consents/${segment(subject)}`,
-      { method: "DELETE" },
+        `${clientPath(companyCode, clientId)}/consents/${segment(subject)}`,
+        {method: "DELETE"},
     );
   },
 
@@ -181,18 +181,18 @@ export const oauthClientApi = {
   },
 
   listProtocolEvents(
-    companyCode: string,
-    clientId: string,
-    params: ProtocolEventParams,
-    signal?: AbortSignal,
+      companyCode: string,
+      clientId: string,
+      params: ProtocolEventParams,
+      signal?: AbortSignal,
   ) {
-    const query = new URLSearchParams({ size: String(params.size) });
+    const query = new URLSearchParams({size: String(params.size)});
     if (params.cursor) query.set("cursor", params.cursor);
     if (params.type) query.set("type", params.type);
     if (params.outcome) query.set("outcome", params.outcome);
     return apiClient.request<CursorResponse<ProtocolEvent>>(
-      `${clientPath(companyCode, clientId)}/protocol-events?${query}`,
-      { signal },
+        `${clientPath(companyCode, clientId)}/protocol-events?${query}`,
+        {signal},
     );
   },
 };
@@ -201,6 +201,6 @@ function statusChange(companyCode: string, clientId: string, action: "enable" | 
   return apiClient.request<void>(`${clientPath(companyCode, clientId)}/${action}`, {
     method: "POST",
     headers: jsonHeaders,
-    body: JSON.stringify({ version }),
+    body: JSON.stringify({version}),
   });
 }

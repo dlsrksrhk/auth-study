@@ -1,14 +1,14 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.time.Instant;
-import java.util.List;
-import java.util.function.Supplier;
-
 import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
 import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
 import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.function.Supplier;
 
 @Repository
 public class OAuthSigningKeyRepositoryAdapter implements OAuthSigningKeyRepository {
@@ -31,10 +31,10 @@ public class OAuthSigningKeyRepositoryAdapter implements OAuthSigningKeyReposito
     @Transactional(readOnly = true)
     public List<OAuthSigningKey> findVerificationOnlyRetiredAfter(Instant cutoff) {
         return entityManager.createQuery("""
-                select key from OAuthSigningKeyJpaEntity key
-                where key.status = :status and key.retiredAt > :cutoff
-                order by key.retiredAt desc, key.id desc
-                """, OAuthSigningKeyJpaEntity.class)
+                        select key from OAuthSigningKeyJpaEntity key
+                        where key.status = :status and key.retiredAt > :cutoff
+                        order by key.retiredAt desc, key.id desc
+                        """, OAuthSigningKeyJpaEntity.class)
                 .setParameter("status", OAuthSigningKey.Status.VERIFICATION_ONLY)
                 .setParameter("cutoff", cutoff)
                 .getResultList().stream().map(OAuthSigningKeyJpaEntity::toDomain).toList();
@@ -77,8 +77,8 @@ public class OAuthSigningKeyRepositoryAdapter implements OAuthSigningKeyReposito
 
     private List<OAuthSigningKeyJpaEntity> activeKeys() {
         return entityManager.createQuery("""
-                select key from OAuthSigningKeyJpaEntity key where key.status = :status
-                """, OAuthSigningKeyJpaEntity.class)
+                        select key from OAuthSigningKeyJpaEntity key where key.status = :status
+                        """, OAuthSigningKeyJpaEntity.class)
                 .setParameter("status", OAuthSigningKey.Status.ACTIVE)
                 .getResultList();
     }

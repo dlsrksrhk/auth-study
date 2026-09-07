@@ -1,14 +1,14 @@
 package com.sweet.authstudy.hr.department.infrastructure;
 
-import java.util.List;
-import java.util.Optional;
-
 import com.sweet.authstudy.hr.department.domain.DepartmentStatus;
-import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+
+import java.util.List;
+import java.util.Optional;
 
 interface DepartmentJpaRepository extends JpaRepository<DepartmentJpaEntity, Long> {
 
@@ -26,5 +26,5 @@ interface DepartmentJpaRepository extends JpaRepository<DepartmentJpaEntity, Lon
                 or lower(d.name) like lower(concat('%', :search, '%')))
             """)
     Page<DepartmentJpaEntity> search(@Param("companyId") long companyId,
-            @Param("search") String search, @Param("status") DepartmentStatus status, Pageable pageable);
+                                     @Param("search") String search, @Param("status") DepartmentStatus status, Pageable pageable);
 }

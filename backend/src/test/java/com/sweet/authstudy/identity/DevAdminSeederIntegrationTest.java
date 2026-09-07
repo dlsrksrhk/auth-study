@@ -1,7 +1,5 @@
 package com.sweet.authstudy.identity;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountRole;
@@ -13,6 +11,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)

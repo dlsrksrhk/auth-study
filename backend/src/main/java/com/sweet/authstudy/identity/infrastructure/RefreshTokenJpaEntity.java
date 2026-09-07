@@ -1,20 +1,16 @@
 package com.sweet.authstudy.identity.infrastructure;
 
+import com.sweet.authstudy.identity.domain.RefreshToken;
+import jakarta.persistence.*;
+
 import java.time.Instant;
 import java.util.UUID;
-
-import com.sweet.authstudy.identity.domain.RefreshToken;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "refresh_tokens")
 class RefreshTokenJpaEntity {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     @Column(name = "token_hash", nullable = false, unique = true, length = 64)
     private String tokenHash;
@@ -31,7 +27,9 @@ class RefreshTokenJpaEntity {
     @Column(name = "revoked_at")
     private Instant revokedAt;
 
-    protected RefreshTokenJpaEntity() {}
+    protected RefreshTokenJpaEntity() {
+    }
+
     private RefreshTokenJpaEntity(RefreshToken token) {
         this.tokenHash = token.tokenHash();
         this.familyId = token.familyId();
@@ -40,11 +38,16 @@ class RefreshTokenJpaEntity {
         this.expiresAt = token.expiresAt();
         updateFrom(token);
     }
-    static RefreshTokenJpaEntity from(RefreshToken token) { return new RefreshTokenJpaEntity(token); }
+
+    static RefreshTokenJpaEntity from(RefreshToken token) {
+        return new RefreshTokenJpaEntity(token);
+    }
+
     void updateFrom(RefreshToken token) {
         this.usedAt = token.usedAt();
         this.revokedAt = token.revokedAt();
     }
+
     RefreshToken toDomain() {
         return RefreshToken.restore(id, tokenHash, familyId, accountId, issuedAt, expiresAt, usedAt, revokedAt);
     }

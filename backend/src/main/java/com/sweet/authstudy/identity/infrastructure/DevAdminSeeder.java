@@ -1,8 +1,5 @@
 package com.sweet.authstudy.identity.infrastructure;
 
-import java.time.Clock;
-import java.util.Locale;
-
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
@@ -12,6 +9,9 @@ import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.util.Locale;
 
 @Component
 @Profile("dev")

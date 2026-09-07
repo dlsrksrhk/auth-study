@@ -1,17 +1,12 @@
 package com.sweet.authstudy.oauth.application;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
-
 import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.*;
 
 @Service
 public final class OAuthUserInfoService {
@@ -26,7 +21,7 @@ public final class OAuthUserInfoService {
 
     @Autowired
     public OAuthUserInfoService(OAuthUserInfoClaimSource claimSource, Clock clock,
-            OAuthProtocolEventService protocolEvents) {
+                                OAuthProtocolEventService protocolEvents) {
         this.claimSource = claimSource;
         this.clock = clock;
         this.protocolEvents = protocolEvents;

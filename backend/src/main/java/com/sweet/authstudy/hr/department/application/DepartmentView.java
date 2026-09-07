@@ -1,9 +1,9 @@
 package com.sweet.authstudy.hr.department.application;
 
-import java.time.Instant;
-
 import com.sweet.authstudy.hr.department.domain.Department;
 import com.sweet.authstudy.hr.department.domain.DepartmentStatus;
+
+import java.time.Instant;
 
 public record DepartmentView(
         Long id,

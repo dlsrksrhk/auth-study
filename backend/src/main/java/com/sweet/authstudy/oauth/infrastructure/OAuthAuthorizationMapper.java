@@ -1,34 +1,10 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.net.URI;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.Principal;
-import java.time.Clock;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.UUID;
-
-import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountStatus;
-import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
-import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
-import com.sweet.authstudy.oauth.domain.OAuthSubject;
-import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.domain.*;
 import com.sweet.authstudy.oauth.presentation.IdpSessionAuthentication;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
@@ -42,6 +18,14 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
 import org.springframework.stereotype.Component;
+
+import java.net.URI;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.Principal;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.*;
 
 /**
  * Maps Spring Authorization Server protocol objects to the deliberately small persistence model.
@@ -62,7 +46,7 @@ public final class OAuthAuthorizationMapper {
     private final Clock clock;
 
     public OAuthAuthorizationMapper(OAuthClientRepository clients, OAuthSubjectRepository subjects,
-            AccountRepository accounts, OAuthSecurityProperties properties, Clock clock) {
+                                    AccountRepository accounts, OAuthSecurityProperties properties, Clock clock) {
         this.clients = clients;
         this.subjects = subjects;
         this.accounts = accounts;
@@ -103,19 +87,19 @@ public final class OAuthAuthorizationMapper {
                 : existing.expiresAt();
         com.sweet.authstudy.oauth.domain.OAuthAuthorization mapped = existing == null
                 ? com.sweet.authstudy.oauth.domain.OAuthAuthorization.create(
-                        source.getId(),
-                        com.sweet.authstudy.oauth.domain.OAuthAuthorization.Ownership.verified(
-                                client, subject, accountId, account.companyId()),
-                        source.getAuthorizationGrantType().getValue(), source.getAuthorizedScopes(),
-                        attributes, serverStateHash, authenticatedAt, createdAt, expiresAt)
+                source.getId(),
+                com.sweet.authstudy.oauth.domain.OAuthAuthorization.Ownership.verified(
+                        client, subject, accountId, account.companyId()),
+                source.getAuthorizationGrantType().getValue(), source.getAuthorizedScopes(),
+                attributes, serverStateHash, authenticatedAt, createdAt, expiresAt)
                 : com.sweet.authstudy.oauth.domain.OAuthAuthorization.restore(
-                        existing.id(), existing.registeredClientId(), existing.subject(),
-                        existing.principalAccountId(), existing.companyId(),
-                        source.getAuthorizationGrantType().getValue(), source.getAuthorizedScopes(),
-                        attributes, serverStateHash, existing.authenticatedAt(), existing.status(),
-                        existing.revocationReason(), existing.createdAt(), existing.expiresAt(),
-                        existing.revokedAt(), existing.idTokenEvidence().orElse(null),
-                        null, null, null);
+                existing.id(), existing.registeredClientId(), existing.subject(),
+                existing.principalAccountId(), existing.companyId(),
+                source.getAuthorizationGrantType().getValue(), source.getAuthorizedScopes(),
+                attributes, serverStateHash, existing.authenticatedAt(), existing.status(),
+                existing.revocationReason(), existing.createdAt(), existing.expiresAt(),
+                existing.revokedAt(), existing.idTokenEvidence().orElse(null),
+                null, null, null);
 
         mapAuthorizationCode(source, request, existing).ifPresent(mapped::attachAuthorizationCode);
         mapAccessToken(source, existing).ifPresent(mapped::attachAccessToken);
@@ -124,12 +108,12 @@ public final class OAuthAuthorizationMapper {
     }
 
     OAuth2Authorization toSpring(com.sweet.authstudy.oauth.domain.OAuthAuthorization source,
-            String lookedUpToken, String lookedUpTokenType) {
+                                 String lookedUpToken, String lookedUpTokenType) {
         return toSpring(source, lookedUpToken, lookedUpTokenType, false);
     }
 
     OAuth2Authorization toSpring(com.sweet.authstudy.oauth.domain.OAuthAuthorization source,
-            String lookedUpToken, String lookedUpTokenType, boolean activeConsumedCode) {
+                                 String lookedUpToken, String lookedUpTokenType, boolean activeConsumedCode) {
         return toSpring(source, lookedUpToken, lookedUpTokenType, activeConsumedCode, false);
     }
 
@@ -141,8 +125,8 @@ public final class OAuthAuthorizationMapper {
     }
 
     private OAuth2Authorization toSpring(com.sweet.authstudy.oauth.domain.OAuthAuthorization source,
-            String lookedUpToken, String lookedUpTokenType, boolean activeConsumedCode,
-            boolean userInfoLookup) {
+                                         String lookedUpToken, String lookedUpTokenType, boolean activeConsumedCode,
+                                         boolean userInfoLookup) {
         Objects.requireNonNull(source, "authorization");
         if (source.status() != com.sweet.authstudy.oauth.domain.OAuthAuthorization.Status.ACTIVE
                 || source.revokedAt() != null) {
@@ -383,7 +367,7 @@ public final class OAuthAuthorizationMapper {
     }
 
     private <T> String hashOrExisting(String tokenValue, T existing,
-            java.util.function.Function<T, String> existingHash) {
+                                      java.util.function.Function<T, String> existingHash) {
         if (existing != null && tokenValue.equals(existingHash.apply(existing))) {
             return tokenValue;
         }
@@ -495,7 +479,8 @@ public final class OAuthAuthorizationMapper {
                 authorization.getToken(org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode.class);
         if (code != null) issued.add(code.getToken().getIssuedAt());
         if (authorization.getAccessToken() != null) issued.add(authorization.getAccessToken().getToken().getIssuedAt());
-        if (authorization.getRefreshToken() != null) issued.add(authorization.getRefreshToken().getToken().getIssuedAt());
+        if (authorization.getRefreshToken() != null)
+            issued.add(authorization.getRefreshToken().getToken().getIssuedAt());
         return issued.stream().filter(Objects::nonNull).min(Instant::compareTo).orElse(clock.instant());
     }
 
@@ -509,7 +494,7 @@ public final class OAuthAuthorizationMapper {
     }
 
     private String tokenValue(String hash, String lookedUpToken, String lookedUpTokenType,
-            String expectedType) {
+                              String expectedType) {
         return expectedType.equals(lookedUpTokenType) && lookedUpToken != null ? lookedUpToken : hash;
     }
 

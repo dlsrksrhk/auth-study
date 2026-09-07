@@ -1,8 +1,8 @@
 package com.sweet.authstudy.hr.membership.application;
 
-import java.time.Instant;
-
 import com.sweet.authstudy.hr.membership.domain.DepartmentRole;
+
+import java.time.Instant;
 
 public final class MembershipCommands {
 

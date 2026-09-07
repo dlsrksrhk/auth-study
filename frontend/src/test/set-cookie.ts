@@ -16,9 +16,9 @@ const refreshCookiePath = "/api/v1/auth";
 
 export function findSetCookiesByName(headers: HeaderEntry[], cookieName: string): ParsedSetCookie[] {
   return headers
-    .filter((header) => header.name.toLowerCase() === "set-cookie")
-    .map((header) => parseSetCookie(header.value))
-    .filter((cookie) => cookie.name === cookieName);
+      .filter((header) => header.name.toLowerCase() === "set-cookie")
+      .map((header) => parseSetCookie(header.value))
+      .filter((cookie) => cookie.name === cookieName);
 }
 
 export function parseSetCookie(value: string): ParsedSetCookie {
@@ -47,8 +47,8 @@ export function parseSetCookie(value: string): ParsedSetCookie {
 }
 
 export function requireSingleRefreshCookie(
-  cookies: ParsedSetCookie[],
-  mode: RefreshCookieMode,
+    cookies: ParsedSetCookie[],
+    mode: RefreshCookieMode,
 ): ParsedSetCookie {
   if (cookies.length !== 1) {
     throw new Error(`Expected exactly one ${refreshCookieName} Set-Cookie header, received ${cookies.length}`);

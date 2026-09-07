@@ -1,25 +1,26 @@
 package com.sweet.authstudy.hr.membership.presentation;
 
-import java.time.Instant;
-
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.sweet.authstudy.hr.membership.domain.DepartmentRole;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 import com.sweet.authstudy.shared.validation.ValidCode;
+import jakarta.validation.constraints.NotNull;
+
+import java.time.Instant;
 
 public final class MembershipRequests {
-    private MembershipRequests() {}
+    private MembershipRequests() {
+    }
 
     public record AssignMembershipRequest(
             @ValidCode String departmentCode,
             @NotNull DepartmentRole role,
             @NotNull Boolean primary,
-            @NotNull @JsonFormat(shape = JsonFormat.Shape.STRING) Instant startedAt) {}
+            @NotNull @JsonFormat(shape = JsonFormat.Shape.STRING) Instant startedAt) {
+    }
 
     public record UpdateMembershipRequest(
             @NotNull DepartmentRole role,
             @NotNull Boolean primary,
-            @NotNull Long version) {}
+            @NotNull Long version) {
+    }
 }

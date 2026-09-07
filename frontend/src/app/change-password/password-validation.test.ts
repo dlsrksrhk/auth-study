@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import {describe, expect, it} from "vitest";
 
-import { validateNewPassword } from "./password-validation";
+import {validateNewPassword} from "./password-validation";
 
 describe("validateNewPassword", () => {
   it.each([

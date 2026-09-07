@@ -26,8 +26,19 @@ public final class OAuthSubject {
         return new OAuthSubject(id, accountId, subject, createdAt);
     }
 
-    public Long id() { return id; }
-    public long accountId() { return accountId; }
-    public UUID subject() { return subject; }
-    public Instant createdAt() { return createdAt; }
+    public Long id() {
+        return id;
+    }
+
+    public long accountId() {
+        return accountId;
+    }
+
+    public UUID subject() {
+        return subject;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
 }

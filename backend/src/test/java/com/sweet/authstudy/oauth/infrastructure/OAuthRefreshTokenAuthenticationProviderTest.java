@@ -1,15 +1,5 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import java.time.Clock;
-import java.util.Map;
-import java.util.Set;
-
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
@@ -27,14 +17,28 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator;
 
+import java.time.Clock;
+import java.util.Map;
+import java.util.Set;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
+
 @ExtendWith(MockitoExtension.class)
 class OAuthRefreshTokenAuthenticationProviderTest {
-    @Mock OAuthAuthorizationRepository authorizations;
-    @Mock OAuthAuthorizationMapper mapper;
-    @Mock OAuth2TokenGenerator<org.springframework.security.oauth2.core.OAuth2Token> tokenGenerator;
-    @Mock OAuthSecurityProperties properties;
-    @Mock OAuthClientRepository clients;
-    @Mock OAuthProtocolEventService events;
+    @Mock
+    OAuthAuthorizationRepository authorizations;
+    @Mock
+    OAuthAuthorizationMapper mapper;
+    @Mock
+    OAuth2TokenGenerator<org.springframework.security.oauth2.core.OAuth2Token> tokenGenerator;
+    @Mock
+    OAuthSecurityProperties properties;
+    @Mock
+    OAuthClientRepository clients;
+    @Mock
+    OAuthProtocolEventService events;
 
     @Test
     void context_repository_failure_becomes_server_error_before_refresh_rotation() {

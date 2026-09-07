@@ -1,15 +1,19 @@
 package com.sweet.authstudy.oauth.domain;
 
+import com.sweet.authstudy.shared.application.PageResult;
+
 import java.util.List;
 import java.util.Optional;
-import com.sweet.authstudy.shared.application.PageResult;
 
 public interface OAuthClientRepository {
 
     OAuthClient save(OAuthClient client);
 
     Optional<OAuthClient> findById(long id);
-    default Optional<OAuthClient> findByIdForUpdate(long id) { return findById(id); }
+
+    default Optional<OAuthClient> findByIdForUpdate(long id) {
+        return findById(id);
+    }
 
     Optional<OAuthClient> findByClientId(String clientId);
 

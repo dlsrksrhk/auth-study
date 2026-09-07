@@ -1,12 +1,12 @@
 package com.sweet.authstudy.oauth.application;
 
-import java.time.Instant;
-
 import com.sweet.authstudy.identity.application.OAuthGrantRevocationPort;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
 
 @Service
 public class OAuthGrantRevocationService implements OAuthGrantRevocationPort {

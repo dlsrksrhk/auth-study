@@ -1,39 +1,35 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.time.Clock;
-import java.security.Principal;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.function.Function;
-
-import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
-import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
+import com.sweet.authstudy.oauth.domain.*;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository.LockedCodeExchange;
-import org.springframework.context.annotation.Primary;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Primary;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationException;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationToken;
-import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
+
+import java.security.Principal;
+import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Function;
 
 @Service
 @Primary
@@ -54,16 +50,16 @@ public class SpringOAuth2AuthorizationService implements OAuth2AuthorizationServ
     private final OAuthProtocolEventService protocolEvents;
 
     public SpringOAuth2AuthorizationService(OAuthAuthorizationRepository authorizations,
-            OAuthAuthorizationMapper mapper, Clock clock) {
+                                            OAuthAuthorizationMapper mapper, Clock clock) {
         this(authorizations, mapper, clock, null, null, null);
     }
 
     @Autowired
     SpringOAuth2AuthorizationService(OAuthAuthorizationRepository authorizations,
-            OAuthAuthorizationMapper mapper, Clock clock,
-            OAuthConsentDecisionCoordinator consentCoordinator,
-            OAuthConsentDecisionContext consentDecisions,
-            OAuthProtocolEventService protocolEvents) {
+                                     OAuthAuthorizationMapper mapper, Clock clock,
+                                     OAuthConsentDecisionCoordinator consentCoordinator,
+                                     OAuthConsentDecisionContext consentDecisions,
+                                     OAuthProtocolEventService protocolEvents) {
         this.authorizations = authorizations;
         this.mapper = mapper;
         this.clock = clock;
@@ -184,7 +180,7 @@ public class SpringOAuth2AuthorizationService implements OAuth2AuthorizationServ
     }
 
     public org.springframework.security.oauth2.server.authorization.OAuth2Authorization
-            findByAccessTokenForUserInfo(String rawAccessToken) {
+    findByAccessTokenForUserInfo(String rawAccessToken) {
         Assert.hasText(rawAccessToken, "access token cannot be empty");
         String hash = OAuthAuthorizationMapper.sha256(rawAccessToken);
         return authorizations.findByAccessTokenHash(hash)
@@ -235,7 +231,8 @@ public class SpringOAuth2AuthorizationService implements OAuth2AuthorizationServ
                 .orElse(null);
     }
 
-    private record Match(String authorizationId, String tokenType) { }
+    private record Match(String authorizationId, String tokenType) {
+    }
 
     private CachedAuthorization cachedAuthorization(String rawCode) {
         CachedAuthorization cached = cachedAuthorization();
@@ -297,13 +294,13 @@ public class SpringOAuth2AuthorizationService implements OAuth2AuthorizationServ
                 ? authentication : SecurityContextHolder.getContext().getAuthentication();
         OAuth2AuthorizationCodeRequestAuthenticationToken token = request == null ? null
                 : new OAuth2AuthorizationCodeRequestAuthenticationToken(
-                        request.getAuthorizationUri(), request.getClientId(), principal,
-                        request.getRedirectUri(), request.getState(), request.getScopes(),
-                        request.getAdditionalParameters());
+                request.getAuthorizationUri(), request.getClientId(), principal,
+                request.getRedirectUri(), request.getState(), request.getScopes(),
+                request.getAdditionalParameters());
         return new OAuth2AuthorizationCodeRequestAuthenticationException(new OAuth2Error(
                 errorCode, errorCode.equals(OAuth2ErrorCodes.SERVER_ERROR)
-                        ? "The authorization request could not be completed."
-                        : "The consent decision is stale or invalid.", null),
+                ? "The authorization request could not be completed."
+                : "The consent decision is stale or invalid.", null),
                 cause, token);
     }
 
@@ -326,9 +323,10 @@ public class SpringOAuth2AuthorizationService implements OAuth2AuthorizationServ
                 .build();
     }
 
-    private enum AuthorizationSource { PERSISTED }
+    private enum AuthorizationSource {PERSISTED}
 
     private record CachedAuthorization(OAuthAuthorizationCodeExchangeBinding binding,
-            org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization,
-            String authenticatedSecretHash) { }
+                                       org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization,
+                                       String authenticatedSecretHash) {
+    }
 }

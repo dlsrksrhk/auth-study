@@ -1,15 +1,5 @@
 package com.sweet.authstudy.identity;
 
-import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.time.Clock;
-import java.time.LocalDate;
-import java.util.UUID;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-
-import javax.sql.DataSource;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
@@ -22,13 +12,13 @@ import com.sweet.authstudy.hr.membership.domain.DepartmentRole;
 import com.sweet.authstudy.hr.user.application.UserCommands.CreateUserCommand;
 import com.sweet.authstudy.hr.user.application.UserService;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
+import com.sweet.authstudy.identity.application.AuthCommands.LoginCommand;
+import com.sweet.authstudy.identity.application.AuthTokens.LoginResult;
+import com.sweet.authstudy.identity.application.AuthTokens.RefreshResult;
+import com.sweet.authstudy.identity.application.AuthenticationService;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.RefreshToken;
 import com.sweet.authstudy.identity.domain.RefreshTokenRepository;
-import com.sweet.authstudy.identity.application.AuthCommands.LoginCommand;
-import com.sweet.authstudy.identity.application.AuthenticationService;
-import com.sweet.authstudy.identity.application.AuthTokens.LoginResult;
-import com.sweet.authstudy.identity.application.AuthTokens.RefreshResult;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.Test;
@@ -39,22 +29,43 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 
+import javax.sql.DataSource;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
+import static org.assertj.core.api.Assertions.assertThat;
+
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)
 @ActiveProfiles("test")
 class AccountRevocationIntegrationTest {
 
-    @Autowired CompanyService companyService;
-    @Autowired DepartmentService departmentService;
-    @Autowired MembershipService membershipService;
-    @Autowired UserService userService;
-    @Autowired AccountRepository accountRepository;
-    @Autowired RefreshTokenRepository refreshTokenRepository;
-    @Autowired AuthenticationService authenticationService;
-    @Autowired PasswordEncoder passwordEncoder;
-    @Autowired JdbcTemplate jdbc;
-    @Autowired DataSource dataSource;
-    @Autowired Clock clock;
+    @Autowired
+    CompanyService companyService;
+    @Autowired
+    DepartmentService departmentService;
+    @Autowired
+    MembershipService membershipService;
+    @Autowired
+    UserService userService;
+    @Autowired
+    AccountRepository accountRepository;
+    @Autowired
+    RefreshTokenRepository refreshTokenRepository;
+    @Autowired
+    AuthenticationService authenticationService;
+    @Autowired
+    PasswordEncoder passwordEncoder;
+    @Autowired
+    JdbcTemplate jdbc;
+    @Autowired
+    DataSource dataSource;
+    @Autowired
+    Clock clock;
 
     @Test
     void user_lock_temporary_password_reset_and_role_changes_revoke_every_refresh() {
@@ -118,7 +129,7 @@ class AccountRevocationIntegrationTest {
             RefreshResult successor = rotation.get();
 
             org.assertj.core.api.Assertions.assertThatThrownBy(
-                    () -> authenticationService.refresh(successor.refreshToken()))
+                            () -> authenticationService.refresh(successor.refreshToken()))
                     .isInstanceOf(ApiException.class);
         } finally {
             removeDelayedRefreshInsert();
@@ -135,7 +146,7 @@ class AccountRevocationIntegrationTest {
                 "select count(*) from refresh_tokens where account_id = ?", Long.class, account.id());
 
         try (var blocker = dataSource.getConnection();
-                var executor = Executors.newFixedThreadPool(2)) {
+             var executor = Executors.newFixedThreadPool(2)) {
             blocker.setAutoCommit(false);
             try (var statement = blocker.prepareStatement("select id from accounts where id = ? for update")) {
                 statement.setLong(1, account.id());
@@ -244,5 +255,6 @@ class AccountRevocationIntegrationTest {
     }
 
     private record Fixture(
-            String companyCode, String domain, String userCode, long userVersion, long accountId) {}
+            String companyCode, String domain, String userCode, long userVersion, long accountId) {
+    }
 }

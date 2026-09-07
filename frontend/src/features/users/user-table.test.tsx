@@ -1,36 +1,81 @@
-import { HttpResponse, http } from "msw";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {HttpResponse, http} from "msw";
+import {fireEvent, render, screen, waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
-import { useState } from "react";
+import {beforeEach, expect, it, vi} from "vitest";
+import {useState} from "react";
 
-import { server } from "@/test/setup";
-import { UserTable } from "./user-table";
-import { UserDetail } from "./user-detail";
-import { AdminSecretOperationProvider } from "./admin-secret-operation-provider";
+import {server} from "@/test/setup";
+import {UserTable} from "./user-table";
+import {UserDetail} from "./user-detail";
+import {AdminSecretOperationProvider} from "./admin-secret-operation-provider";
 
 const replace = vi.fn();
 let currentQuery = "";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/companies/ACME/users",
-  useRouter: () => ({ replace }),
+  useRouter: () => ({replace}),
   useSearchParams: () => new URLSearchParams(currentQuery),
 }));
 
-beforeEach(() => { replace.mockReset(); currentQuery = ""; });
+beforeEach(() => {
+  replace.mockReset();
+  currentQuery = "";
+});
 
-const position = { id: 5, companyId: 7, code: "EMPLOYEE", name: "사원", level: 10, displayOrder: 10, active: true, version: 1, createdAt: "", updatedAt: "" };
-const createdUser = { id: 10, companyId: 7, code: "U001", employeeNumber: "E001", name: "홍길동", loginEmail: "u001@acme.test", phone: "010", hiredAt: "2026-08-20", workplace: "서울", profileImageUrl: "", positionId: 5, status: "PENDING", version: 0, createdAt: "", updatedAt: "", roles: ["USER"] };
+const position = {
+  id: 5,
+  companyId: 7,
+  code: "EMPLOYEE",
+  name: "사원",
+  level: 10,
+  displayOrder: 10,
+  active: true,
+  version: 1,
+  createdAt: "",
+  updatedAt: ""
+};
+const createdUser = {
+  id: 10,
+  companyId: 7,
+  code: "U001",
+  employeeNumber: "E001",
+  name: "홍길동",
+  loginEmail: "u001@acme.test",
+  phone: "010",
+  hiredAt: "2026-08-20",
+  workplace: "서울",
+  profileImageUrl: "",
+  positionId: 5,
+  status: "PENDING",
+  version: 0,
+  createdAt: "",
+  updatedAt: "",
+  roles: ["USER"]
+};
 
 function listHandlers() {
   server.use(
-    http.get("/api/v1/admin/companies/ACME/users", () => HttpResponse.json({ content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 })),
-    http.get("/api/v1/admin/companies/ACME/positions", () => HttpResponse.json({ content: [position], page: 0, size: 100, totalElements: 1, totalPages: 1 })),
+      http.get("/api/v1/admin/companies/ACME/users", () => HttpResponse.json({
+        content: [],
+        page: 0,
+        size: 20,
+        totalElements: 0,
+        totalPages: 0
+      })),
+      http.get("/api/v1/admin/companies/ACME/positions", () => HttpResponse.json({
+        content: [position],
+        page: 0,
+        size: 100,
+        totalElements: 1,
+        totalPages: 1
+      })),
   );
 }
 
-function renderAdmin(ui: React.ReactNode) { return render(<AdminSecretOperationProvider>{ui}</AdminSecretOperationProvider>); }
+function renderAdmin(ui: React.ReactNode) {
+  return render(<AdminSecretOperationProvider>{ui}</AdminSecretOperationProvider>);
+}
 
 it("renders the user detail action as a link to that user", async () => {
   listHandlers();
@@ -38,27 +83,27 @@ it("renders the user detail action as a link to that user", async () => {
     content: [createdUser], page: 0, size: 20, totalElements: 1, totalPages: 1,
   })));
 
-  renderAdmin(<UserTable companyCode="ACME" />);
+  renderAdmin(<UserTable companyCode="ACME"/>);
 
-  expect(await screen.findByRole("link", { name: "상세" })).toHaveAttribute("href", "/companies/ACME/users/U001");
+  expect(await screen.findByRole("link", {name: "상세"})).toHaveAttribute("href", "/companies/ACME/users/U001");
 });
 
 it("preserves newer typing when an earlier search commit reaches the URL late", async () => {
   currentQuery = "search=a";
   listHandlers();
   const user = userEvent.setup();
-  const view = renderAdmin(<UserTable companyCode="ACME" />);
+  const view = renderAdmin(<UserTable companyCode="ACME"/>);
   const input = screen.getByLabelText("사용자 검색");
   await user.type(input, "b");
-  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab", { scroll: false }));
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab", {scroll: false}));
   await user.type(input, "c");
 
   currentQuery = "search=ab";
-  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME"/></AdminSecretOperationProvider>);
 
   expect(input).toHaveValue("abc");
   expect(input).toHaveFocus();
-  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=abc", { scroll: false }));
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=abc", {scroll: false}));
 });
 
 async function completeCreateForm(user: ReturnType<typeof userEvent.setup>) {
@@ -76,12 +121,15 @@ it("keeps the create form mounted through the one-time password step then clears
   listHandlers();
   const user = userEvent.setup();
   const writeText = vi.fn().mockResolvedValue(undefined);
-  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
-  server.use(http.post("/api/v1/admin/companies/ACME/users", () => HttpResponse.json({ user: createdUser, temporaryPassword: "ParentLives123!" }, { status: 201 })));
+  Object.defineProperty(navigator, "clipboard", {configurable: true, value: {writeText}});
+  server.use(http.post("/api/v1/admin/companies/ACME/users", () => HttpResponse.json({
+    user: createdUser,
+    temporaryPassword: "ParentLives123!"
+  }, {status: 201})));
 
-  renderAdmin(<UserTable companyCode="ACME" />);
+  renderAdmin(<UserTable companyCode="ACME"/>);
   await screen.findByText("등록된 사용자가 없습니다.");
-  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+  await user.click(screen.getByRole("button", {name: "사용자 생성"}));
   await user.type(screen.getByLabelText("사용자 코드"), "U001");
   await user.type(screen.getByLabelText("사번"), "E001");
   await user.type(screen.getByLabelText("이름"), "홍길동");
@@ -90,16 +138,16 @@ it("keeps the create form mounted through the one-time password step then clears
   await user.type(screen.getByLabelText("입사일"), "2026-08-20");
   await user.type(screen.getByLabelText("근무지"), "서울");
   await user.selectOptions(screen.getByLabelText("직위"), "EMPLOYEE");
-  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+  await user.click(screen.getByRole("button", {name: "사용자 생성"}));
 
   expect(await screen.findByText("ParentLives123!")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "복사" }));
+  await user.click(screen.getByRole("button", {name: "복사"}));
   expect(writeText).toHaveBeenCalledWith("ParentLives123!");
-  await user.click(screen.getByRole("button", { name: "비밀번호 확인 완료" }));
+  await user.click(screen.getByRole("button", {name: "비밀번호 확인 완료"}));
   expect(screen.queryByText("ParentLives123!")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+  await user.click(screen.getByRole("button", {name: "사용자 생성"}));
   expect(screen.queryByText("ParentLives123!")).not.toBeInTheDocument();
-  expect(screen.getByRole("dialog", { name: "사용자 생성" })).toBeVisible();
+  expect(screen.getByRole("dialog", {name: "사용자 생성"})).toBeVisible();
 });
 
 it("keeps the same focused search input through self commit and external back navigation without Base UI warnings", async () => {
@@ -108,22 +156,22 @@ it("keeps the same focused search input through self commit and external back na
     currentQuery = "search=a";
     listHandlers();
     const user = userEvent.setup();
-    const view = renderAdmin(<UserTable companyCode="ACME" />);
+    const view = renderAdmin(<UserTable companyCode="ACME"/>);
     await screen.findByText("등록된 사용자가 없습니다.");
     const input = screen.getByLabelText("사용자 검색");
     await user.click(input);
     await user.type(input, "b");
     expect(input).toHaveValue("ab");
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab", { scroll: false }));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab", {scroll: false}));
 
     currentQuery = "search=ab";
-    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME"/></AdminSecretOperationProvider>);
     expect(screen.getByLabelText("사용자 검색")).toBe(input);
     expect(input).toHaveFocus();
     await user.type(input, "c");
     expect(input).toHaveValue("abc");
     currentQuery = "search=a";
-    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME"/></AdminSecretOperationProvider>);
 
     await waitFor(() => expect(input).toHaveValue("a"));
     expect(screen.getByLabelText("사용자 검색")).toBe(input);
@@ -140,10 +188,19 @@ it("sends canonical server paging, search, status, and sort query values", async
   currentQuery = "search=kim&status=LOCKED&page=2&size=50&sort=name";
   let observed = "";
   server.use(
-    http.get("/api/v1/admin/companies/ACME/users", ({ request }) => { observed = new URL(request.url).searchParams.toString(); return HttpResponse.json({ content: [], page: 2, size: 50, totalElements: 0, totalPages: 0 }); }),
-    http.get("/api/v1/admin/companies/ACME/positions", () => HttpResponse.json({ content: [position], page: 0, size: 100, totalElements: 1, totalPages: 1 })),
+      http.get("/api/v1/admin/companies/ACME/users", ({request}) => {
+        observed = new URL(request.url).searchParams.toString();
+        return HttpResponse.json({content: [], page: 2, size: 50, totalElements: 0, totalPages: 0});
+      }),
+      http.get("/api/v1/admin/companies/ACME/positions", () => HttpResponse.json({
+        content: [position],
+        page: 0,
+        size: 100,
+        totalElements: 1,
+        totalPages: 1
+      })),
   );
-  renderAdmin(<UserTable companyCode="ACME" />);
+  renderAdmin(<UserTable companyCode="ACME"/>);
   await screen.findByText("등록된 사용자가 없습니다.");
   expect(observed).toBe("page=2&size=50&sort=name&search=kim&status=LOCKED");
   expect(screen.getByLabelText("사용자 검색")).toHaveValue("kim");
@@ -155,43 +212,53 @@ it("does not mistake a later external query for an earlier trimmed self commit",
   currentQuery = "search=a";
   listHandlers();
   const user = userEvent.setup();
-  const view = renderAdmin(<UserTable companyCode="ACME" />);
+  const view = renderAdmin(<UserTable companyCode="ACME"/>);
   const input = await screen.findByLabelText("사용자 검색");
   await user.click(input);
   await user.type(input, " ");
-  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=a", { scroll: false }));
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=a", {scroll: false}));
 
   currentQuery = "search=b";
-  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME"/></AdminSecretOperationProvider>);
   await waitFor(() => expect(input).toHaveValue("b"));
   currentQuery = "search=a";
-  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+  view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME"/></AdminSecretOperationProvider>);
   await waitFor(() => expect(input).toHaveValue("a"));
   expect(input).toHaveFocus();
 });
 
 it.each([
-  { label: "상태", value: "LOCKED", query: "search=a&status=LOCKED", expected: "/companies/ACME/users?search=ab&status=LOCKED" },
-  { label: "정렬", value: "name", query: "search=a&sort=name", expected: "/companies/ACME/users?search=ab&sort=name" },
-  { label: "페이지 크기", value: "50", query: "search=a&size=50", expected: "/companies/ACME/users?search=ab&size=50" },
-])("merges a pending search into the latest $label query without losing focus", async ({ label, value, query, expected }) => {
+  {
+    label: "상태",
+    value: "LOCKED",
+    query: "search=a&status=LOCKED",
+    expected: "/companies/ACME/users?search=ab&status=LOCKED"
+  },
+  {label: "정렬", value: "name", query: "search=a&sort=name", expected: "/companies/ACME/users?search=ab&sort=name"},
+  {label: "페이지 크기", value: "50", query: "search=a&size=50", expected: "/companies/ACME/users?search=ab&size=50"},
+])("merges a pending search into the latest $label query without losing focus", async ({
+                                                                                         label,
+                                                                                         value,
+                                                                                         query,
+                                                                                         expected
+                                                                                       }) => {
   currentQuery = "search=a";
   listHandlers();
-  const view = renderAdmin(<UserTable companyCode="ACME" />);
+  const view = renderAdmin(<UserTable companyCode="ACME"/>);
   const input = await screen.findByLabelText("사용자 검색");
   input.focus();
   vi.useFakeTimers();
   try {
-    fireEvent.change(input, { target: { value: "ab" } });
-    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.change(input, {target: {value: "ab"}});
+    fireEvent.change(screen.getByLabelText(label), {target: {value}});
     currentQuery = query;
-    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME"/></AdminSecretOperationProvider>);
     replace.mockClear();
     expect(input).toHaveValue("ab");
     expect(input).toHaveFocus();
 
     await vi.advanceTimersByTimeAsync(300);
-    expect(replace).toHaveBeenCalledWith(expected, { scroll: false });
+    expect(replace).toHaveBeenCalledWith(expected, {scroll: false});
     expect(input).toHaveValue("ab");
     expect(input).toHaveFocus();
   } finally {
@@ -202,16 +269,16 @@ it.each([
 it("merges a filter intent into a pending search even before the URL navigation resolves", async () => {
   currentQuery = "search=a";
   listHandlers();
-  renderAdmin(<UserTable companyCode="ACME" />);
+  renderAdmin(<UserTable companyCode="ACME"/>);
   const input = await screen.findByLabelText("사용자 검색");
   vi.useFakeTimers();
   try {
-    fireEvent.change(input, { target: { value: "ab" } });
-    fireEvent.change(screen.getByLabelText("상태"), { target: { value: "LOCKED" } });
+    fireEvent.change(input, {target: {value: "ab"}});
+    fireEvent.change(screen.getByLabelText("상태"), {target: {value: "LOCKED"}});
     replace.mockClear();
 
     await vi.advanceTimersByTimeAsync(300);
-    expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab&status=LOCKED", { scroll: false });
+    expect(replace).toHaveBeenCalledWith("/companies/ACME/users?search=ab&status=LOCKED", {scroll: false});
   } finally {
     vi.useRealTimers();
   }
@@ -220,14 +287,14 @@ it("merges a filter intent into a pending search even before the URL navigation 
 it("cancels a pending search when external navigation changes search", async () => {
   currentQuery = "search=a";
   listHandlers();
-  const view = renderAdmin(<UserTable companyCode="ACME" />);
+  const view = renderAdmin(<UserTable companyCode="ACME"/>);
   const input = await screen.findByLabelText("사용자 검색");
   input.focus();
   vi.useFakeTimers();
   try {
-    fireEvent.change(input, { target: { value: "ab" } });
+    fireEvent.change(input, {target: {value: "ab"}});
     currentQuery = "search=back";
-    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME" /></AdminSecretOperationProvider>);
+    view.rerender(<AdminSecretOperationProvider><UserTable companyCode="ACME"/></AdminSecretOperationProvider>);
     replace.mockClear();
 
     await vi.advanceTimersByTimeAsync(300);
@@ -244,18 +311,24 @@ it("keeps a delayed committed create alive when the user page route child unmoun
   const user = userEvent.setup();
   let requestSignal: AbortSignal | undefined;
   let release: (() => void) | undefined;
-  server.use(http.post("/api/v1/admin/companies/ACME/users", async ({ request }) => {
+  server.use(http.post("/api/v1/admin/companies/ACME/users", async ({request}) => {
     requestSignal = request.signal;
-    await new Promise<void>((resolve) => { release = resolve; });
-    return HttpResponse.json({ user: createdUser, temporaryPassword: "MustNotSurface123!" }, { status: 201 });
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return HttpResponse.json({user: createdUser, temporaryPassword: "MustNotSurface123!"}, {status: 201});
   }));
+
   function Routes() {
     const [route, setRoute] = useState<"users" | "departments">("users");
-    return <AdminSecretOperationProvider><button type="button" onClick={() => setRoute("departments")}>부서 관리로 이동</button>{route === "users" ? <UserTable companyCode="ACME" /> : <p>부서 관리 route</p>}</AdminSecretOperationProvider>;
+    return <AdminSecretOperationProvider>
+      <button type="button" onClick={() => setRoute("departments")}>부서 관리로 이동</button>
+      {route === "users" ? <UserTable companyCode="ACME"/> : <p>부서 관리 route</p>}</AdminSecretOperationProvider>;
   }
-  render(<Routes />);
+
+  render(<Routes/>);
   await screen.findByText("등록된 사용자가 없습니다.");
-  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+  await user.click(screen.getByRole("button", {name: "사용자 생성"}));
   await user.type(screen.getByLabelText("사용자 코드"), "U001");
   await user.type(screen.getByLabelText("사번"), "E001");
   await user.type(screen.getByLabelText("이름"), "홍길동");
@@ -264,7 +337,7 @@ it("keeps a delayed committed create alive when the user page route child unmoun
   await user.type(screen.getByLabelText("입사일"), "2026-08-20");
   await user.type(screen.getByLabelText("근무지"), "서울");
   await user.selectOptions(screen.getByLabelText("직위"), "EMPLOYEE");
-  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+  await user.click(screen.getByRole("button", {name: "사용자 생성"}));
   await waitFor(() => expect(requestSignal).toBeDefined());
   fireEvent.click(screen.getByText("부서 관리로 이동"));
   expect(screen.getByText("부서 관리 route")).toBeVisible();
@@ -279,25 +352,51 @@ it("blocks reset while a create is pending across a route switch and preserves t
   let releaseCreate: (() => void) | undefined;
   let resetCalls = 0;
   server.use(
-    http.post("/api/v1/admin/companies/ACME/users", async () => { await new Promise<void>((resolve) => { releaseCreate = resolve; }); return HttpResponse.json({ user: createdUser, temporaryPassword: "CreateWins123!" }, { status: 201 }); }),
-    http.get("/api/v1/admin/companies/ACME/users/U001", () => HttpResponse.json(createdUser)),
-    http.get("/api/v1/admin/companies/ACME/departments", () => HttpResponse.json({ content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 })),
-    http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({ content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 })),
-    http.post("/api/v1/admin/companies/ACME/users/U001/temporary-password", () => { resetCalls += 1; return HttpResponse.json({ temporaryPassword: "WrongReset123!" }); }),
+      http.post("/api/v1/admin/companies/ACME/users", async () => {
+        await new Promise<void>((resolve) => {
+          releaseCreate = resolve;
+        });
+        return HttpResponse.json({user: createdUser, temporaryPassword: "CreateWins123!"}, {status: 201});
+      }),
+      http.get("/api/v1/admin/companies/ACME/users/U001", () => HttpResponse.json(createdUser)),
+      http.get("/api/v1/admin/companies/ACME/departments", () => HttpResponse.json({
+        content: [],
+        page: 0,
+        size: 100,
+        totalElements: 0,
+        totalPages: 0
+      })),
+      http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({
+        content: [],
+        page: 0,
+        size: 100,
+        totalElements: 0,
+        totalPages: 0
+      })),
+      http.post("/api/v1/admin/companies/ACME/users/U001/temporary-password", () => {
+        resetCalls += 1;
+        return HttpResponse.json({temporaryPassword: "WrongReset123!"});
+      }),
   );
+
   function Routes() {
     const [route, setRoute] = useState<"users" | "detail">("users");
-    return <AdminSecretOperationProvider><button onClick={() => setRoute(route === "users" ? "detail" : "users")}>관리 route 전환</button>{route === "users" ? <UserTable companyCode="ACME" /> : <UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />}</AdminSecretOperationProvider>;
+    return <AdminSecretOperationProvider>
+      <button onClick={() => setRoute(route === "users" ? "detail" : "users")}>관리 route 전환</button>
+      {route === "users" ? <UserTable companyCode="ACME"/> :
+          <UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001"/>}
+    </AdminSecretOperationProvider>;
   }
-  render(<Routes />);
+
+  render(<Routes/>);
   await screen.findByText("등록된 사용자가 없습니다.");
-  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+  await user.click(screen.getByRole("button", {name: "사용자 생성"}));
   await completeCreateForm(user);
-  await user.click(screen.getByRole("button", { name: "사용자 생성" }));
+  await user.click(screen.getByRole("button", {name: "사용자 생성"}));
   await waitFor(() => expect(releaseCreate).toBeDefined());
   fireEvent.click(screen.getByText("관리 route 전환"));
 
-  const reset = await screen.findByRole("button", { name: "임시 비밀번호 재발급" });
+  const reset = await screen.findByRole("button", {name: "임시 비밀번호 재발급"});
   expect(reset).toBeDisabled();
   await user.click(reset);
   expect(resetCalls).toBe(0);
@@ -315,24 +414,50 @@ it("blocks create while a reset is pending across a route switch and preserves t
   let releaseReset: (() => void) | undefined;
   let createCalls = 0;
   server.use(
-    http.get("/api/v1/admin/companies/ACME/users/U001", () => HttpResponse.json(createdUser)),
-    http.get("/api/v1/admin/companies/ACME/departments", () => HttpResponse.json({ content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 })),
-    http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({ content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 })),
-    http.post("/api/v1/admin/companies/ACME/users/U001/temporary-password", async () => { await new Promise<void>((resolve) => { releaseReset = resolve; }); return HttpResponse.json({ temporaryPassword: "ResetWins123!" }); }),
-    http.post("/api/v1/admin/companies/ACME/users", () => { createCalls += 1; return HttpResponse.json({ user: createdUser, temporaryPassword: "WrongCreate123!" }, { status: 201 }); }),
+      http.get("/api/v1/admin/companies/ACME/users/U001", () => HttpResponse.json(createdUser)),
+      http.get("/api/v1/admin/companies/ACME/departments", () => HttpResponse.json({
+        content: [],
+        page: 0,
+        size: 100,
+        totalElements: 0,
+        totalPages: 0
+      })),
+      http.get("/api/v1/admin/companies/ACME/users/U001/memberships", () => HttpResponse.json({
+        content: [],
+        page: 0,
+        size: 100,
+        totalElements: 0,
+        totalPages: 0
+      })),
+      http.post("/api/v1/admin/companies/ACME/users/U001/temporary-password", async () => {
+        await new Promise<void>((resolve) => {
+          releaseReset = resolve;
+        });
+        return HttpResponse.json({temporaryPassword: "ResetWins123!"});
+      }),
+      http.post("/api/v1/admin/companies/ACME/users", () => {
+        createCalls += 1;
+        return HttpResponse.json({user: createdUser, temporaryPassword: "WrongCreate123!"}, {status: 201});
+      }),
   );
+
   function Routes() {
     const [route, setRoute] = useState<"users" | "detail">("detail");
-    return <AdminSecretOperationProvider><button onClick={() => setRoute(route === "users" ? "detail" : "users")}>관리 route 전환</button>{route === "users" ? <UserTable companyCode="ACME" /> : <UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001" />}</AdminSecretOperationProvider>;
+    return <AdminSecretOperationProvider>
+      <button onClick={() => setRoute(route === "users" ? "detail" : "users")}>관리 route 전환</button>
+      {route === "users" ? <UserTable companyCode="ACME"/> :
+          <UserDetail actorRoles={["SYSTEM_ADMIN"]} companyCode="ACME" userCode="U001"/>}
+    </AdminSecretOperationProvider>;
   }
-  render(<Routes />);
-  await user.click(await screen.findByRole("button", { name: "임시 비밀번호 재발급" }));
-  await user.click(screen.getByRole("button", { name: "재발급 확인" }));
+
+  render(<Routes/>);
+  await user.click(await screen.findByRole("button", {name: "임시 비밀번호 재발급"}));
+  await user.click(screen.getByRole("button", {name: "재발급 확인"}));
   await waitFor(() => expect(releaseReset).toBeDefined());
   fireEvent.click(screen.getByText("관리 route 전환"));
 
   await screen.findByText("등록된 사용자가 없습니다.");
-  const create = screen.getByRole("button", { name: "사용자 생성" });
+  const create = screen.getByRole("button", {name: "사용자 생성"});
   expect(create).toBeDisabled();
   await user.click(create);
   expect(createCalls).toBe(0);

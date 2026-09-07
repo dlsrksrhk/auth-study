@@ -1,17 +1,17 @@
 package com.sweet.authstudy.oauth.presentation;
 
-import java.net.URI;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-
 import com.sweet.authstudy.oauth.domain.OAuthPublicClientRedirectRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
+
+import java.net.URI;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 public final class OAuthProtocolCorsConfigurationSource implements CorsConfigurationSource {
 

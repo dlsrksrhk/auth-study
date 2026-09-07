@@ -1,14 +1,14 @@
 package com.sweet.authstudy.hr.user.infrastructure;
 
-import java.util.Optional;
-import java.util.List;
-
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class UserRepositoryAdapter implements UserRepository {
@@ -24,7 +24,7 @@ public class UserRepositoryAdapter implements UserRepository {
         UserJpaEntity entity = user.id() == null
                 ? UserJpaEntity.from(user)
                 : repository.findById(user.id())
-                        .orElseThrow(() -> new IllegalStateException("User does not exist."));
+                .orElseThrow(() -> new IllegalStateException("User does not exist."));
         if (user.id() != null) {
             entity.updateFrom(user);
         }

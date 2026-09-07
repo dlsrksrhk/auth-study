@@ -1,14 +1,14 @@
 package com.sweet.authstudy.hr.position.infrastructure;
 
-import java.util.List;
-import java.util.Optional;
-
 import com.sweet.authstudy.hr.position.domain.Position;
 import com.sweet.authstudy.hr.position.domain.PositionRepository;
 import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class PositionRepositoryAdapter implements PositionRepository {
@@ -24,7 +24,7 @@ public class PositionRepositoryAdapter implements PositionRepository {
         PositionJpaEntity entity = position.id() == null
                 ? PositionJpaEntity.from(position)
                 : repository.findById(position.id())
-                        .orElseThrow(() -> new IllegalStateException("Position does not exist."));
+                .orElseThrow(() -> new IllegalStateException("Position does not exist."));
         if (position.id() != null) {
             entity.updateFrom(position);
         }

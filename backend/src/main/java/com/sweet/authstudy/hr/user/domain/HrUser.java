@@ -122,18 +122,59 @@ public final class HrUser {
         this.updatedAt = Objects.requireNonNull(now);
     }
 
-    public Long id() { return id; }
-    public long companyId() { return companyId; }
-    public String code() { return code; }
-    public String employeeNumber() { return employeeNumber; }
-    public String name() { return name; }
-    public String phone() { return phone; }
-    public LocalDate hiredAt() { return hiredAt; }
-    public String workplace() { return workplace; }
-    public String profileImageUrl() { return profileImageUrl; }
-    public long positionId() { return positionId; }
-    public UserStatus status() { return status; }
-    public long version() { return version; }
-    public Instant createdAt() { return createdAt; }
-    public Instant updatedAt() { return updatedAt; }
+    public Long id() {
+        return id;
+    }
+
+    public long companyId() {
+        return companyId;
+    }
+
+    public String code() {
+        return code;
+    }
+
+    public String employeeNumber() {
+        return employeeNumber;
+    }
+
+    public String name() {
+        return name;
+    }
+
+    public String phone() {
+        return phone;
+    }
+
+    public LocalDate hiredAt() {
+        return hiredAt;
+    }
+
+    public String workplace() {
+        return workplace;
+    }
+
+    public String profileImageUrl() {
+        return profileImageUrl;
+    }
+
+    public long positionId() {
+        return positionId;
+    }
+
+    public UserStatus status() {
+        return status;
+    }
+
+    public long version() {
+        return version;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
+    public Instant updatedAt() {
+        return updatedAt;
+    }
 }

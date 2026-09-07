@@ -1,11 +1,5 @@
 package com.sweet.authstudy.authorization;
 
-import java.io.IOException;
-import java.util.Base64;
-
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
-
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
 import com.sweet.authstudy.shared.error.ErrorCode;
@@ -14,22 +8,27 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.annotation.Order;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.filter.OncePerRequestFilter;
+
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import java.io.IOException;
+import java.util.Base64;
 
 @Configuration(proxyBeanMethods = false)
 @EnableMethodSecurity
@@ -43,8 +42,8 @@ public class SecurityConfig {
     @Bean
     @Order(2)
     SecurityFilterChain securityFilterChain(HttpSecurity http, JwtAuthenticationConverter converter,
-            SameOriginRequestGuard sameOriginRequestGuard, SecurityProblemWriter problemWriter,
-            @Qualifier("hrJwtDecoder") JwtDecoder hrJwtDecoder) throws Exception {
+                                            SameOriginRequestGuard sameOriginRequestGuard, SecurityProblemWriter problemWriter,
+                                            @Qualifier("hrJwtDecoder") JwtDecoder hrJwtDecoder) throws Exception {
         return http.securityMatcher("/api/v1/**")
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -52,7 +51,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/auth/login", "/api/v1/auth/refresh").permitAll()
                         .requestMatchers("/api/v1/admin/oauth-clients/**").hasRole("SYSTEM_ADMIN")
                         .requestMatchers("/api/v1/admin/companies/*/oauth-clients/**")
-                            .hasAnyRole("SYSTEM_ADMIN", "COMPANY_ADMIN")
+                        .hasAnyRole("SYSTEM_ADMIN", "COMPANY_ADMIN")
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint((request, response, exception) -> problemWriter.write(
@@ -86,8 +85,9 @@ public class SecurityConfig {
 
     private OncePerRequestFilter passwordChangeOnlyFilter(SecurityProblemWriter problemWriter) {
         return new OncePerRequestFilter() {
-            @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
-                    FilterChain chain) throws ServletException, IOException {
+            @Override
+            protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+                                            FilterChain chain) throws ServletException, IOException {
                 var authentication = org.springframework.security.core.context.SecurityContextHolder
                         .getContext().getAuthentication();
                 if (authentication != null && authentication.getPrincipal() instanceof AuthenticatedAccount account

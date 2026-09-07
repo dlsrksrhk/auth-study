@@ -1,7 +1,7 @@
 package com.sweet.authstudy.oauth.presentation;
 
-import com.sweet.authstudy.oauth.application.OAuthConsentService;
 import com.sweet.authstudy.oauth.application.OAuthConsentDecisionService;
+import com.sweet.authstudy.oauth.application.OAuthConsentService;
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
 import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import jakarta.servlet.http.HttpServletResponse;
@@ -27,7 +27,7 @@ public class IdpConsentController {
     private final OAuthProtocolEventService protocolEvents;
 
     public IdpConsentController(OAuth2AuthorizationService authorizations, OAuthConsentService consents,
-            OAuthConsentDecisionService decisionCoordinator, OAuthProtocolEventService protocolEvents) {
+                                OAuthConsentDecisionService decisionCoordinator, OAuthProtocolEventService protocolEvents) {
         this.authorizations = authorizations;
         this.consents = consents;
         this.decisionCoordinator = decisionCoordinator;
@@ -36,10 +36,10 @@ public class IdpConsentController {
 
     @GetMapping("/idp/consent")
     String consent(@RequestParam("client_id") String clientId,
-            @RequestParam String state,
-            Authentication authentication,
-            HttpServletResponse response,
-            Model model) {
+                   @RequestParam String state,
+                   Authentication authentication,
+                   HttpServletResponse response,
+                   Model model) {
         PendingView pending = pending(clientId, state, authentication);
         if (pending == null) return stale(response, model);
         model.addAttribute("clientId", clientId);
@@ -52,10 +52,10 @@ public class IdpConsentController {
 
     @PostMapping("/idp/consent/deny")
     String deny(@RequestParam("client_id") String clientId,
-            @RequestParam String state,
-            Authentication authentication,
-            HttpServletResponse response,
-            Model model) {
+                @RequestParam String state,
+                Authentication authentication,
+                HttpServletResponse response,
+                Model model) {
         PendingView pending = pending(clientId, state, authentication);
         if (pending == null) return stale(response, model);
         IdpSessionAuthentication idp = (IdpSessionAuthentication) authentication;
@@ -116,5 +116,6 @@ public class IdpConsentController {
     }
 
     private record PendingView(OAuth2Authorization authorization,
-            OAuth2AuthorizationRequest request, OAuthConsentService.ConsentReview review) { }
+                               OAuth2AuthorizationRequest request, OAuthConsentService.ConsentReview review) {
+    }
 }

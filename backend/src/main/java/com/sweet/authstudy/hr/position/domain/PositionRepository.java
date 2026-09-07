@@ -1,8 +1,9 @@
 package com.sweet.authstudy.hr.position.domain;
 
+import com.sweet.authstudy.shared.application.PageResult;
+
 import java.util.List;
 import java.util.Optional;
-import com.sweet.authstudy.shared.application.PageResult;
 
 public interface PositionRepository {
 

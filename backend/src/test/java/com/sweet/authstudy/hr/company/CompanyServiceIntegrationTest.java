@@ -1,9 +1,5 @@
 package com.sweet.authstudy.hr.company;
 
-import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
@@ -22,6 +18,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)
@@ -56,7 +56,7 @@ class CompanyServiceIntegrationTest {
         companyService.create(SYSTEM_ADMIN, new CreateCompanyCommand("ACME", "Acme", "acme.example"));
 
         assertThatThrownBy(() -> companyService.create(SYSTEM_ADMIN,
-                        new CreateCompanyCommand("BETA", "Beta", "ACME.EXAMPLE")))
+                new CreateCompanyCommand("BETA", "Beta", "ACME.EXAMPLE")))
                 .isInstanceOf(ApiException.class)
                 .extracting(exception -> ((ApiException) exception).errorCode())
                 .isEqualTo(ErrorCode.DUPLICATE_EMAIL);
@@ -65,7 +65,7 @@ class CompanyServiceIntegrationTest {
     @Test
     void rejects_reserved_auth_study_local_domain() {
         assertThatThrownBy(() -> companyService.create(SYSTEM_ADMIN,
-                        new CreateCompanyCommand("LOCAL", "Local", "auth-study.local")))
+                new CreateCompanyCommand("LOCAL", "Local", "auth-study.local")))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.INVALID_STATE));
@@ -108,7 +108,7 @@ class CompanyServiceIntegrationTest {
         positionService.create(SYSTEM_ADMIN, "ACME", new CreatePositionCommand("LEAD", "Lead", 60, 60));
 
         assertThatThrownBy(() -> positionService.create(SYSTEM_ADMIN,
-                        "ACME", new CreatePositionCommand(" lead ", "Lead II", 70, 70)))
+                "ACME", new CreatePositionCommand(" lead ", "Lead II", 70, 70)))
                 .isInstanceOfSatisfying(
                         ApiException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.DUPLICATE_CODE));

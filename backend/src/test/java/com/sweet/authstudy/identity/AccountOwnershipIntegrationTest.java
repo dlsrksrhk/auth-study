@@ -1,11 +1,5 @@
 package com.sweet.authstudy.identity;
 
-import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.time.Clock;
-import java.time.LocalDate;
-
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.company.application.CompanyView;
@@ -22,6 +16,12 @@ import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.time.LocalDate;
+
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)

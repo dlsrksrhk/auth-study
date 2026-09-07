@@ -1,32 +1,15 @@
 package com.sweet.authstudy.authorization;
 
-import static org.springframework.http.HttpHeaders.AUTHORIZATION;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.hamcrest.Matchers.matchesPattern;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.time.Clock;
-import java.time.LocalDate;
-import java.time.Instant;
-import java.util.Set;
-import java.util.UUID;
-
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
-import com.sweet.authstudy.hr.position.domain.Position;
-import com.sweet.authstudy.hr.position.domain.PositionRepository;
 import com.sweet.authstudy.hr.department.domain.Department;
 import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
 import com.sweet.authstudy.hr.membership.domain.DepartmentMembership;
 import com.sweet.authstudy.hr.membership.domain.DepartmentRole;
 import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
+import com.sweet.authstudy.hr.position.domain.Position;
+import com.sweet.authstudy.hr.position.domain.PositionRepository;
 import com.sweet.authstudy.hr.user.application.UserService;
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
@@ -34,10 +17,10 @@ import com.sweet.authstudy.identity.application.JwtTokenService;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountRole;
-import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.ActorContext;
+import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,12 +28,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.http.MediaType;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.springframework.http.HttpHeaders.AUTHORIZATION;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -58,18 +52,30 @@ import org.springframework.http.MediaType;
 @ActiveProfiles("test")
 class TenantAuthorizationIntegrationTest {
 
-    @Autowired MockMvc mvc;
-    @Autowired CompanyRepository companyRepository;
-    @Autowired PositionRepository positionRepository;
-    @Autowired UserRepository userRepository;
-    @Autowired AccountRepository accountRepository;
-    @Autowired JwtTokenService jwtTokenService;
-    @Autowired PasswordEncoder passwordEncoder;
-    @Autowired Clock clock;
-    @Autowired ActorContext actorContext;
-    @Autowired DepartmentRepository departmentRepository;
-    @Autowired MembershipRepository membershipRepository;
-    @Autowired UserService userService;
+    @Autowired
+    MockMvc mvc;
+    @Autowired
+    CompanyRepository companyRepository;
+    @Autowired
+    PositionRepository positionRepository;
+    @Autowired
+    UserRepository userRepository;
+    @Autowired
+    AccountRepository accountRepository;
+    @Autowired
+    JwtTokenService jwtTokenService;
+    @Autowired
+    PasswordEncoder passwordEncoder;
+    @Autowired
+    Clock clock;
+    @Autowired
+    ActorContext actorContext;
+    @Autowired
+    DepartmentRepository departmentRepository;
+    @Autowired
+    MembershipRepository membershipRepository;
+    @Autowired
+    UserService userService;
 
     private String companyAdminToken;
     private String acmeCode;

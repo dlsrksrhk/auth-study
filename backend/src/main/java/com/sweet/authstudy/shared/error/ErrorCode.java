@@ -31,7 +31,11 @@ public enum ErrorCode {
         return status;
     }
 
-    public java.net.URI type() { return type; }
+    public java.net.URI type() {
+        return type;
+    }
 
-    public String title() { return title; }
+    public String title() {
+        return title;
+    }
 }

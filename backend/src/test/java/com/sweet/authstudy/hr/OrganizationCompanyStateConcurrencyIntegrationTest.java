@@ -1,18 +1,5 @@
 package com.sweet.authstudy.hr;
 
-import static com.sweet.authstudy.hr.membership.domain.DepartmentRole.MEMBER;
-import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
-
-import java.time.Instant;
-import java.time.LocalDate;
-import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
@@ -37,6 +24,19 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import static com.sweet.authstudy.hr.membership.domain.DepartmentRole.MEMBER;
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)

@@ -1,15 +1,14 @@
 package com.sweet.authstudy;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
+import com.sweet.authstudy.shared.config.AppSecurityProperties;
+import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
-import com.sweet.authstudy.shared.config.AppSecurityProperties;
-import com.sweet.authstudy.support.PostgresContainerConfiguration;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)

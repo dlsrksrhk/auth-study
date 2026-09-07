@@ -1,20 +1,20 @@
 package com.sweet.authstudy.identity.infrastructure;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.util.UUID;
-
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.identity.application.AuthTokens;
 import com.sweet.authstudy.identity.application.JwtTokenService;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.stereotype.Service;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.UUID;
 
 @Service
 public class NimbusJwtTokenService implements JwtTokenService {
@@ -23,7 +23,7 @@ public class NimbusJwtTokenService implements JwtTokenService {
     private final Clock clock;
 
     public NimbusJwtTokenService(@Qualifier("hrJwtEncoder") JwtEncoder encoder,
-            AppSecurityProperties properties, Clock clock) {
+                                 AppSecurityProperties properties, Clock clock) {
         this.encoder = encoder;
         this.properties = properties;
         this.clock = clock;

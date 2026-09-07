@@ -1,26 +1,18 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
+import com.sweet.authstudy.oauth.domain.OAuthConsent;
+import jakarta.persistence.*;
+
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Set;
-
-import com.sweet.authstudy.oauth.domain.OAuthConsent;
-import jakarta.persistence.CollectionTable;
-import jakarta.persistence.Column;
-import jakarta.persistence.ElementCollection;
-import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "oauth_consent")
 class OAuthConsentJpaEntity {
 
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(name = "principal_account_id", nullable = false)
@@ -40,7 +32,8 @@ class OAuthConsentJpaEntity {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    protected OAuthConsentJpaEntity() { }
+    protected OAuthConsentJpaEntity() {
+    }
 
     private OAuthConsentJpaEntity(OAuthConsent consent) {
         principalAccountId = consent.principalAccountId();
@@ -49,7 +42,9 @@ class OAuthConsentJpaEntity {
         updateFrom(consent);
     }
 
-    static OAuthConsentJpaEntity from(OAuthConsent consent) { return new OAuthConsentJpaEntity(consent); }
+    static OAuthConsentJpaEntity from(OAuthConsent consent) {
+        return new OAuthConsentJpaEntity(consent);
+    }
 
     void updateFrom(OAuthConsent consent) {
         if (principalAccountId != consent.principalAccountId()

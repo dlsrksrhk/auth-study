@@ -6,7 +6,7 @@ import java.util.Objects;
 
 public final class OAuthAuthorizationCode {
 
-    public enum Consumption { CONSUMED, EXPIRED, ALREADY_USED }
+    public enum Consumption {CONSUMED, EXPIRED, ALREADY_USED}
 
     private final Long id;
     private final String authorizationId;
@@ -19,7 +19,7 @@ public final class OAuthAuthorizationCode {
     private Instant usedAt;
 
     private OAuthAuthorizationCode(Long id, String authorizationId, String codeHash, URI redirectUri,
-            String codeChallenge, String nonce, Instant issuedAt, Instant expiresAt, Instant usedAt) {
+                                   String codeChallenge, String nonce, Instant issuedAt, Instant expiresAt, Instant usedAt) {
         this.id = id;
         this.authorizationId = OAuthRefreshToken.requireText(authorizationId, "authorizationId");
         this.codeHash = OAuthRefreshToken.requireSha256(codeHash);
@@ -35,14 +35,14 @@ public final class OAuthAuthorizationCode {
     }
 
     public static OAuthAuthorizationCode issue(String authorizationId, String codeHash, URI redirectUri,
-            String codeChallenge, String nonce, Instant issuedAt, Instant expiresAt) {
+                                               String codeChallenge, String nonce, Instant issuedAt, Instant expiresAt) {
         return new OAuthAuthorizationCode(null, authorizationId, codeHash, redirectUri,
                 codeChallenge, nonce, issuedAt, expiresAt, null);
     }
 
     public static OAuthAuthorizationCode restore(Long id, String authorizationId, String codeHash,
-            URI redirectUri, String codeChallenge, String nonce, Instant issuedAt, Instant expiresAt,
-            Instant usedAt) {
+                                                 URI redirectUri, String codeChallenge, String nonce, Instant issuedAt, Instant expiresAt,
+                                                 Instant usedAt) {
         return new OAuthAuthorizationCode(id, authorizationId, codeHash, redirectUri,
                 codeChallenge, nonce, issuedAt, expiresAt, usedAt);
     }
@@ -60,15 +60,41 @@ public final class OAuthAuthorizationCode {
         return !expiresAt.isAfter(Objects.requireNonNull(now, "now"));
     }
 
-    public Long id() { return id; }
-    public String authorizationId() { return authorizationId; }
-    public String codeHash() { return codeHash; }
-    public URI redirectUri() { return redirectUri; }
-    public String codeChallenge() { return codeChallenge; }
-    public String nonce() { return nonce; }
-    public Instant issuedAt() { return issuedAt; }
-    public Instant expiresAt() { return expiresAt; }
-    public Instant usedAt() { return usedAt; }
+    public Long id() {
+        return id;
+    }
+
+    public String authorizationId() {
+        return authorizationId;
+    }
+
+    public String codeHash() {
+        return codeHash;
+    }
+
+    public URI redirectUri() {
+        return redirectUri;
+    }
+
+    public String codeChallenge() {
+        return codeChallenge;
+    }
+
+    public String nonce() {
+        return nonce;
+    }
+
+    public Instant issuedAt() {
+        return issuedAt;
+    }
+
+    public Instant expiresAt() {
+        return expiresAt;
+    }
+
+    public Instant usedAt() {
+        return usedAt;
+    }
 
     private static String requireS256Challenge(String challenge) {
         if (challenge == null || !challenge.matches("[A-Za-z0-9_-]{43}")) {

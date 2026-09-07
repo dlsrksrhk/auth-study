@@ -1,17 +1,8 @@
 package com.sweet.authstudy.hr.department.application;
 
-import static com.sweet.authstudy.hr.department.application.DepartmentCommands.CreateDepartmentCommand;
-import static com.sweet.authstudy.hr.department.application.DepartmentCommands.ChangeDepartmentStatusCommand;
-import static com.sweet.authstudy.hr.department.application.DepartmentCommands.MoveDepartmentCommand;
-import static com.sweet.authstudy.hr.department.application.DepartmentCommands.UpdateDepartmentCommand;
-
-import java.time.Clock;
-import java.util.List;
-import java.util.Map;
-
 import com.sweet.authstudy.audit.application.AuditActions;
-import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.audit.application.AuditFailurePlan;
+import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.audit.application.AuditedTransactionExecutor;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
@@ -21,15 +12,21 @@ import com.sweet.authstudy.hr.department.domain.Department;
 import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
 import com.sweet.authstudy.hr.department.domain.DepartmentStatus;
 import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
+import com.sweet.authstudy.shared.application.PageResult;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
 import com.sweet.authstudy.shared.validation.BusinessCode;
-import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.util.List;
+import java.util.Map;
+
+import static com.sweet.authstudy.hr.department.application.DepartmentCommands.*;
 
 @Service
 public class DepartmentService {
@@ -189,7 +186,7 @@ public class DepartmentService {
 
     @Transactional(readOnly = true)
     public PageResult<DepartmentView> search(AuthenticatedAccount actor, String companyCode,
-            String search, DepartmentStatus status, int page, int size, String sort) {
+                                             String search, DepartmentStatus status, int page, int size, String sort) {
         Company company = findCompany(companyCode);
         tenantGuard.requireCompanyAccess(actor, company.id());
         var result = departmentRepository.search(company.id(), search, status, page, size, sort);

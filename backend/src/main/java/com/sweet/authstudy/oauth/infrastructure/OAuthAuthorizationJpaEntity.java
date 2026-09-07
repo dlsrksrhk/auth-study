@@ -1,24 +1,18 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
+import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
+import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
+import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-
-import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
-import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
-import jakarta.persistence.Column;
-import jakarta.persistence.Convert;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "oauth_authorization")
@@ -62,7 +56,8 @@ class OAuthAuthorizationJpaEntity {
     @Column(name = "id_token_expires_at")
     private Instant idTokenExpiresAt;
 
-    protected OAuthAuthorizationJpaEntity() { }
+    protected OAuthAuthorizationJpaEntity() {
+    }
 
     static OAuthAuthorizationJpaEntity from(OAuthAuthorization authorization) {
         OAuthAuthorizationJpaEntity entity = new OAuthAuthorizationJpaEntity();
@@ -104,7 +99,7 @@ class OAuthAuthorizationJpaEntity {
     }
 
     OAuthAuthorization toDomain(OAuthAuthorizationCode code, OAuthAccessToken accessToken,
-            OAuthRefreshToken refreshToken) {
+                                OAuthRefreshToken refreshToken) {
         Set<String> scopes = authorizedScopes.isBlank() ? Set.of()
                 : Arrays.stream(authorizedScopes.split(" ")).collect(Collectors.toUnmodifiableSet());
         return OAuthAuthorization.restore(id, registeredClientId, subject, principalAccountId, companyId,

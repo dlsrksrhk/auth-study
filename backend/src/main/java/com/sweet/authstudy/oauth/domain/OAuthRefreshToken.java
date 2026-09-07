@@ -20,8 +20,8 @@ public final class OAuthRefreshToken {
     private Long successorId;
 
     private OAuthRefreshToken(Long id, String authorizationId, String refreshTokenHash, UUID familyId,
-            Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt,
-            Instant usedAt, Instant revokedAt, Long successorId) {
+                              Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt,
+                              Instant usedAt, Instant revokedAt, Long successorId) {
         this.id = id;
         this.authorizationId = requireText(authorizationId, "authorizationId");
         this.refreshTokenHash = requireSha256(refreshTokenHash);
@@ -38,26 +38,26 @@ public final class OAuthRefreshToken {
     }
 
     public static OAuthRefreshToken issue(String authorizationId, String refreshTokenHash, UUID familyId,
-            Instant issuedAt, Instant expiresAt) {
+                                          Instant issuedAt, Instant expiresAt) {
         return issue(authorizationId, refreshTokenHash, familyId, Set.of("openid"), issuedAt, expiresAt);
     }
 
     public static OAuthRefreshToken issue(String authorizationId, String refreshTokenHash, UUID familyId,
-            Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt) {
+                                          Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt) {
         return new OAuthRefreshToken(null, authorizationId, refreshTokenHash, familyId,
                 authorizedScopes, issuedAt, expiresAt, null, null, null);
     }
 
     public static OAuthRefreshToken restore(Long id, String authorizationId, String refreshTokenHash,
-            UUID familyId, Instant issuedAt, Instant expiresAt, Instant usedAt, Instant revokedAt,
-            Long successorId) {
+                                            UUID familyId, Instant issuedAt, Instant expiresAt, Instant usedAt, Instant revokedAt,
+                                            Long successorId) {
         return restore(id, authorizationId, refreshTokenHash, familyId, Set.of("openid"),
                 issuedAt, expiresAt, usedAt, revokedAt, successorId);
     }
 
     public static OAuthRefreshToken restore(Long id, String authorizationId, String refreshTokenHash,
-            UUID familyId, Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt,
-            Instant usedAt, Instant revokedAt, Long successorId) {
+                                            UUID familyId, Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt,
+                                            Instant usedAt, Instant revokedAt, Long successorId) {
         return new OAuthRefreshToken(id, authorizationId, refreshTokenHash, familyId,
                 authorizedScopes, issuedAt, expiresAt, usedAt, revokedAt, successorId);
     }
@@ -115,16 +115,45 @@ public final class OAuthRefreshToken {
         return !expiresAt.isAfter(Objects.requireNonNull(now, "now"));
     }
 
-    public Long id() { return id; }
-    public String authorizationId() { return authorizationId; }
-    public String refreshTokenHash() { return refreshTokenHash; }
-    public UUID familyId() { return familyId; }
-    public Set<String> authorizedScopes() { return authorizedScopes; }
-    public Instant issuedAt() { return issuedAt; }
-    public Instant expiresAt() { return expiresAt; }
-    public Instant usedAt() { return usedAt; }
-    public Instant revokedAt() { return revokedAt; }
-    public Long successorId() { return successorId; }
+    public Long id() {
+        return id;
+    }
+
+    public String authorizationId() {
+        return authorizationId;
+    }
+
+    public String refreshTokenHash() {
+        return refreshTokenHash;
+    }
+
+    public UUID familyId() {
+        return familyId;
+    }
+
+    public Set<String> authorizedScopes() {
+        return authorizedScopes;
+    }
+
+    public Instant issuedAt() {
+        return issuedAt;
+    }
+
+    public Instant expiresAt() {
+        return expiresAt;
+    }
+
+    public Instant usedAt() {
+        return usedAt;
+    }
+
+    public Instant revokedAt() {
+        return revokedAt;
+    }
+
+    public Long successorId() {
+        return successorId;
+    }
 
     static String requireSha256(String hash) {
         if (hash == null || !hash.matches("[0-9a-f]{64}")) {

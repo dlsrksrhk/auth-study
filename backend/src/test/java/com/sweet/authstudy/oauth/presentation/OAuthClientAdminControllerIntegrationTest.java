@@ -1,12 +1,5 @@
 package com.sweet.authstudy.oauth.presentation;
 
-import static org.springframework.http.HttpHeaders.AUTHORIZATION;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
@@ -19,20 +12,26 @@ import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
-import java.time.Clock;
-import java.time.LocalDate;
-import java.util.Set;
-import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.Set;
+import java.util.UUID;
+
+import static org.springframework.http.HttpHeaders.AUTHORIZATION;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -40,14 +39,22 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 @ActiveProfiles("test")
 class OAuthClientAdminControllerIntegrationTest {
 
-    @Autowired MockMvc mvc;
-    @Autowired JwtTokenService jwtTokenService;
-    @Autowired CompanyRepository companies;
-    @Autowired PositionRepository positions;
-    @Autowired UserRepository users;
-    @Autowired AccountRepository accounts;
-    @Autowired PasswordEncoder passwordEncoder;
-    @Autowired Clock clock;
+    @Autowired
+    MockMvc mvc;
+    @Autowired
+    JwtTokenService jwtTokenService;
+    @Autowired
+    CompanyRepository companies;
+    @Autowired
+    PositionRepository positions;
+    @Autowired
+    UserRepository users;
+    @Autowired
+    AccountRepository accounts;
+    @Autowired
+    PasswordEncoder passwordEncoder;
+    @Autowired
+    Clock clock;
     private String systemToken;
     private String companyToken;
     private String companyCode;
@@ -206,7 +213,7 @@ class OAuthClientAdminControllerIntegrationTest {
                         .content("{\"version\":" + version + "}"))
                 .andExpect(status().isConflict());
         String current = mvc.perform(get("/api/v1/admin/companies/{code}/oauth-clients/{id}", companyCode, id)
-                        .header(AUTHORIZATION, "Bearer " + systemToken)).andReturn().getResponse().getContentAsString();
+                .header(AUTHORIZATION, "Bearer " + systemToken)).andReturn().getResponse().getContentAsString();
         Number currentVersion = com.jayway.jsonpath.JsonPath.read(current, "$.version");
         mvc.perform(put("/api/v1/admin/companies/{code}/oauth-clients/{id}", companyCode, id)
                         .header(AUTHORIZATION, "Bearer " + systemToken).contentType(MediaType.APPLICATION_JSON)
@@ -236,7 +243,9 @@ class OAuthClientAdminControllerIntegrationTest {
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
-    private String token(AuthenticatedAccount actor) { return jwtTokenService.issue(actor, false).accessToken(); }
+    private String token(AuthenticatedAccount actor) {
+        return jwtTokenService.issue(actor, false).accessToken();
+    }
 
     private String createJson(boolean publicClient, String trust) {
         return "{\"displayName\":\"Client\",\"publicClient\":" + publicClient

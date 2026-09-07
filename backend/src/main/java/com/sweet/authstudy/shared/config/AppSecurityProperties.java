@@ -1,8 +1,8 @@
 package com.sweet.authstudy.shared.config;
 
-import java.time.Duration;
-
 import org.springframework.boot.context.properties.ConfigurationProperties;
+
+import java.time.Duration;
 
 @ConfigurationProperties(prefix = "app.security")
 public record AppSecurityProperties(

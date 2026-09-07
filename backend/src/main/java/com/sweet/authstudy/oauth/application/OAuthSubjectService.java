@@ -1,14 +1,14 @@
 package com.sweet.authstudy.oauth.application;
 
-import java.nio.ByteBuffer;
-import java.security.SecureRandom;
-import java.time.Clock;
-import java.util.UUID;
-
 import com.sweet.authstudy.oauth.domain.OAuthSubject;
 import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.ByteBuffer;
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.util.UUID;
 
 @Service
 public class OAuthSubjectService {

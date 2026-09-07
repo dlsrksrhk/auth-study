@@ -1,11 +1,5 @@
 package com.sweet.authstudy.hr.user;
 
-import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.time.LocalDate;
-
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
@@ -19,10 +13,10 @@ import com.sweet.authstudy.hr.user.application.UserCommands.CreateUserCommand;
 import com.sweet.authstudy.hr.user.application.UserService;
 import com.sweet.authstudy.hr.user.application.UserViews.CreatedUserView;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
+import com.sweet.authstudy.identity.application.AccountService;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountRole;
-import com.sweet.authstudy.identity.application.AccountService;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
@@ -34,6 +28,12 @@ import org.springframework.context.annotation.Import;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)

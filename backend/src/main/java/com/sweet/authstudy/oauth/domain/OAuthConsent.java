@@ -16,7 +16,7 @@ public final class OAuthConsent {
     private Instant updatedAt;
 
     private OAuthConsent(Long id, long principalAccountId, long registeredClientId, Set<String> scopes,
-            Instant createdAt, Instant updatedAt) {
+                         Instant createdAt, Instant updatedAt) {
         this.id = id;
         this.principalAccountId = principalAccountId;
         this.registeredClientId = registeredClientId;
@@ -26,12 +26,12 @@ public final class OAuthConsent {
     }
 
     public static OAuthConsent create(long principalAccountId, long registeredClientId,
-            Set<String> scopes, Instant now) {
+                                      Set<String> scopes, Instant now) {
         return new OAuthConsent(null, principalAccountId, registeredClientId, scopes, now, now);
     }
 
     public static OAuthConsent restore(Long id, long principalAccountId, long registeredClientId,
-            Set<String> scopes, Instant createdAt, Instant updatedAt) {
+                                       Set<String> scopes, Instant createdAt, Instant updatedAt) {
         return new OAuthConsent(id, principalAccountId, registeredClientId, scopes, createdAt, updatedAt);
     }
 
@@ -50,12 +50,29 @@ public final class OAuthConsent {
         return scopes.containsAll(normalizeScopes(requestedScopes));
     }
 
-    public Long id() { return id; }
-    public long principalAccountId() { return principalAccountId; }
-    public long registeredClientId() { return registeredClientId; }
-    public Set<String> scopes() { return Set.copyOf(scopes); }
-    public Instant createdAt() { return createdAt; }
-    public Instant updatedAt() { return updatedAt; }
+    public Long id() {
+        return id;
+    }
+
+    public long principalAccountId() {
+        return principalAccountId;
+    }
+
+    public long registeredClientId() {
+        return registeredClientId;
+    }
+
+    public Set<String> scopes() {
+        return Set.copyOf(scopes);
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
+    public Instant updatedAt() {
+        return updatedAt;
+    }
 
     static Set<String> normalizeScopes(Set<String> values) {
         Objects.requireNonNull(values, "scopes");

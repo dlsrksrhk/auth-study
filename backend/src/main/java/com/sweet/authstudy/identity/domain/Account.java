@@ -166,17 +166,55 @@ public final class Account {
         }
     }
 
-    public Long id() { return id; }
-    public Long companyId() { return companyId; }
-    public Long userId() { return userId; }
-    public String loginEmail() { return loginEmail; }
-    public String passwordHash() { return passwordHash; }
-    public AccountStatus status() { return status; }
-    public boolean mustChangePassword() { return mustChangePassword; }
-    public int failedLoginAttempts() { return failedLoginAttempts; }
-    public Instant lockedUntil() { return lockedUntil; }
-    public Set<AccountRole> roles() { return Collections.unmodifiableSet(roles); }
-    public long version() { return version; }
-    public Instant createdAt() { return createdAt; }
-    public Instant updatedAt() { return updatedAt; }
+    public Long id() {
+        return id;
+    }
+
+    public Long companyId() {
+        return companyId;
+    }
+
+    public Long userId() {
+        return userId;
+    }
+
+    public String loginEmail() {
+        return loginEmail;
+    }
+
+    public String passwordHash() {
+        return passwordHash;
+    }
+
+    public AccountStatus status() {
+        return status;
+    }
+
+    public boolean mustChangePassword() {
+        return mustChangePassword;
+    }
+
+    public int failedLoginAttempts() {
+        return failedLoginAttempts;
+    }
+
+    public Instant lockedUntil() {
+        return lockedUntil;
+    }
+
+    public Set<AccountRole> roles() {
+        return Collections.unmodifiableSet(roles);
+    }
+
+    public long version() {
+        return version;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
+    public Instant updatedAt() {
+        return updatedAt;
+    }
 }

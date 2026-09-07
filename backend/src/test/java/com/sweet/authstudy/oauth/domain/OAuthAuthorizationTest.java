@@ -1,13 +1,13 @@
 package com.sweet.authstudy.oauth.domain;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.Test;
 
 import java.net.URI;
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OAuthAuthorizationTest {
 

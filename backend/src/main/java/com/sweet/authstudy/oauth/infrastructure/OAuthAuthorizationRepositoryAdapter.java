@@ -1,12 +1,5 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.net.URI;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Optional;
-import java.util.UUID;
-import java.util.function.Function;
-
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
@@ -17,23 +10,24 @@ import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountStatus;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
-import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
-import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
-import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
+import com.sweet.authstudy.oauth.domain.*;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Function;
+
 @Repository
 public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRepository {
 
-    /** Maximum time from token issuance to the atomic finalization commit. */
+    /**
+     * Maximum time from token issuance to the atomic finalization commit.
+     */
     private static final Duration TOKEN_FINALIZATION_WINDOW = Duration.ofSeconds(30);
 
     private final OAuthAuthorizationJpaRepository authorizations;
@@ -48,11 +42,11 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     private final OAuthSecurityProperties properties;
 
     public OAuthAuthorizationRepositoryAdapter(OAuthAuthorizationJpaRepository authorizations,
-            OAuthAuthorizationCodeJpaRepository codes, OAuthAccessTokenJpaRepository accessTokens,
-            OAuthRefreshTokenJpaRepository refreshTokens, OAuthClientJpaRepository clients,
-            OAuthConsentJpaRepository consents,
-            CompanyRepository companies, AccountRepository accounts, UserRepository users,
-            OAuthSecurityProperties properties) {
+                                               OAuthAuthorizationCodeJpaRepository codes, OAuthAccessTokenJpaRepository accessTokens,
+                                               OAuthRefreshTokenJpaRepository refreshTokens, OAuthClientJpaRepository clients,
+                                               OAuthConsentJpaRepository consents,
+                                               CompanyRepository companies, AccountRepository accounts, UserRepository users,
+                                               OAuthSecurityProperties properties) {
         this.authorizations = authorizations;
         this.codes = codes;
         this.accessTokens = accessTokens;
@@ -197,7 +191,8 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     public <T> RefreshRotation<T> rotateRefreshAtomically(
             String refreshTokenHash, Instant exchangedAt,
             Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange) {
-        return rotateRefreshAtomically(refreshTokenHash, exchangedAt, exchange, ignored -> { });
+        return rotateRefreshAtomically(refreshTokenHash, exchangedAt, exchange, ignored -> {
+        });
     }
 
     @Override
@@ -248,9 +243,9 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
         boolean consentActive = client.trust() == OAuthClientTrust.TRUSTED_FIRST_PARTY
                 || consents.findForUpdate(
                         authorization.principalAccountId(), authorization.registeredClientId())
-                        .map(consent -> consent.toDomain().scopes()
-                                .containsAll(current.authorizedScopes()))
-                        .orElse(false);
+                .map(consent -> consent.toDomain().scopes()
+                        .containsAll(current.authorizedScopes()))
+                .orElse(false);
         Optional<RefreshSuccess<T>> generated = exchange.apply(
                 new LockedRefreshExchange(
                         current, authorization, client, principalActive, consentActive));
@@ -273,7 +268,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     }
 
     private boolean validRefreshSuccess(RefreshSuccess<?> success, OAuthRefreshToken current,
-            OAuthAuthorization authorization, Instant exchangedAt) {
+                                        OAuthAuthorization authorization, Instant exchangedAt) {
         OAuthAccessToken accessToken = success.accessToken();
         OAuthRefreshToken successor = success.successor();
         return authorization.activeAt(exchangedAt)
@@ -291,15 +286,15 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
     }
 
     private boolean validFinalization(CodeFinalization finalization, Instant finalizedAt,
-            OAuthAuthorizationCode code, OAuthAuthorization authorization,
-            OAuthClient client, boolean principalActive) {
+                                      OAuthAuthorizationCode code, OAuthAuthorization authorization,
+                                      OAuthClient client, boolean principalActive) {
         OAuthAuthorization.AuthorizationRequest request = authorization.attributes().authorizationRequest();
         boolean secretActive = client.publicClient()
                 ? finalization.authenticatedSecretHash() == null
                 : finalization.authenticatedSecretHash() != null && client.secrets().stream().anyMatch(secret ->
-                        finalization.authenticatedSecretHash().equals(secret.secretHash())
-                                && secret.revokedAt() == null
-                                && (secret.expiresAt() == null || secret.expiresAt().isAfter(finalizedAt)));
+                                                                                                       finalization.authenticatedSecretHash().equals(secret.secretHash())
+                                                                                                       && secret.revokedAt() == null
+                                                                                                       && (secret.expiresAt() == null || secret.expiresAt().isAfter(finalizedAt)));
         boolean openid = authorization.authorizedScopes().contains("openid");
         OAuthAuthorizationRepository.IdTokenCandidate idToken = finalization.idTokenCandidate();
         boolean accessTokenTimeValid = validTokenTime(
@@ -307,13 +302,13 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 properties.accessTokenTtl(), code.usedAt(), finalizedAt, authorization.expiresAt());
         boolean idTokenValid = openid
                 ? idToken != null
-                    && code.usedAt() != null
-                    && authorization.idTokenEvidence().isEmpty()
-                    && authorization.subject().toString().equals(idToken.subject())
-                    && idToken.audiences().equals(java.util.Set.of(client.clientId()))
-                    && idToken.issuedAt().equals(finalization.accessToken().issuedAt())
-                    && validTokenTime(idToken.issuedAt(), idToken.expiresAt(), properties.idTokenTtl(),
-                            code.usedAt(), finalizedAt, authorization.expiresAt())
+                  && code.usedAt() != null
+                  && authorization.idTokenEvidence().isEmpty()
+                  && authorization.subject().toString().equals(idToken.subject())
+                  && idToken.audiences().equals(java.util.Set.of(client.clientId()))
+                  && idToken.issuedAt().equals(finalization.accessToken().issuedAt())
+                  && validTokenTime(idToken.issuedAt(), idToken.expiresAt(), properties.idTokenTtl(),
+                code.usedAt(), finalizedAt, authorization.expiresAt())
                 : idToken == null && authorization.idTokenEvidence().isEmpty();
         return code.usedAt() != null
                 && authorization.id().equals(finalization.consumedBinding().authorizationId())
@@ -338,12 +333,12 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
                 && finalization.accessToken().authorizedScopes().equals(finalization.accessTokenScopes())
                 && authorization.id().equals(finalization.accessToken().authorizationId())
                 && (finalization.refreshToken() == null
-                    || authorization.id().equals(finalization.refreshToken().authorizationId())
-                    && finalization.refreshToken().authorizedScopes().equals(finalization.accessTokenScopes()));
+                || authorization.id().equals(finalization.refreshToken().authorizationId())
+                && finalization.refreshToken().authorizedScopes().equals(finalization.accessTokenScopes()));
     }
 
     private boolean validTokenTime(Instant issuedAt, Instant expiresAt, Duration timeToLive,
-            Instant consumedAt, Instant finalizedAt, Instant authorizationExpiresAt) {
+                                   Instant consumedAt, Instant finalizedAt, Instant authorizationExpiresAt) {
         return consumedAt != null
                 && !issuedAt.isBefore(consumedAt)
                 && !issuedAt.isAfter(finalizedAt)
@@ -408,7 +403,7 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
         OAuthAccessTokenJpaEntity entity = token.id() == null
                 ? OAuthAccessTokenJpaEntity.from(token)
                 : accessTokens.findById(token.id())
-                        .orElseThrow(() -> new IllegalStateException("Access token does not exist."));
+                .orElseThrow(() -> new IllegalStateException("Access token does not exist."));
         if (token.id() != null) entity.updateFrom(token);
         return accessTokens.saveAndFlush(entity).toDomain();
     }
@@ -419,19 +414,22 @@ public class OAuthAuthorizationRepositoryAdapter implements OAuthAuthorizationRe
         OAuthRefreshTokenJpaEntity entity = token.id() == null
                 ? OAuthRefreshTokenJpaEntity.from(token)
                 : refreshTokens.findById(token.id())
-                        .orElseThrow(() -> new IllegalStateException("Refresh token does not exist."));
+                .orElseThrow(() -> new IllegalStateException("Refresh token does not exist."));
         if (token.id() != null) entity.updateFrom(token);
         return refreshTokens.saveAndFlush(entity).toDomain();
     }
 
     @Override
     @Transactional
-    public void remove(String authorizationId) { authorizations.deleteById(authorizationId); }
+    public void remove(String authorizationId) {
+        authorizations.deleteById(authorizationId);
+    }
 
     @Override
     @Transactional
     public void revokeAuthorization(String authorizationId, Instant revokedAt) {
-        revokeAuthorization(authorizationId, revokedAt, () -> { });
+        revokeAuthorization(authorizationId, revokedAt, () -> {
+        });
     }
 
     @Override

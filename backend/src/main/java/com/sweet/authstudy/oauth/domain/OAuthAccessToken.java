@@ -17,8 +17,8 @@ public final class OAuthAccessToken {
     private Instant revokedAt;
 
     private OAuthAccessToken(Long id, String authorizationId, String accessTokenHash, String jti,
-            String audience, Set<String> authorizedScopes,
-            Instant issuedAt, Instant expiresAt, Instant revokedAt) {
+                             String audience, Set<String> authorizedScopes,
+                             Instant issuedAt, Instant expiresAt, Instant revokedAt) {
         this.id = id;
         this.authorizationId = OAuthRefreshToken.requireText(authorizationId, "authorizationId");
         this.accessTokenHash = OAuthRefreshToken.requireSha256(accessTokenHash);
@@ -34,25 +34,25 @@ public final class OAuthAccessToken {
     }
 
     public static OAuthAccessToken issue(String authorizationId, String accessTokenHash, String jti,
-            String audience, Instant issuedAt, Instant expiresAt) {
+                                         String audience, Instant issuedAt, Instant expiresAt) {
         return issue(authorizationId, accessTokenHash, jti, audience, Set.of("openid"), issuedAt, expiresAt);
     }
 
     public static OAuthAccessToken issue(String authorizationId, String accessTokenHash, String jti,
-            String audience, Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt) {
+                                         String audience, Set<String> authorizedScopes, Instant issuedAt, Instant expiresAt) {
         return new OAuthAccessToken(null, authorizationId, accessTokenHash, jti, audience,
                 authorizedScopes, issuedAt, expiresAt, null);
     }
 
     public static OAuthAccessToken restore(Long id, String authorizationId, String accessTokenHash,
-            String jti, String audience, Instant issuedAt, Instant expiresAt, Instant revokedAt) {
+                                           String jti, String audience, Instant issuedAt, Instant expiresAt, Instant revokedAt) {
         return restore(id, authorizationId, accessTokenHash, jti, audience, Set.of("openid"),
                 issuedAt, expiresAt, revokedAt);
     }
 
     public static OAuthAccessToken restore(Long id, String authorizationId, String accessTokenHash,
-            String jti, String audience, Set<String> authorizedScopes,
-            Instant issuedAt, Instant expiresAt, Instant revokedAt) {
+                                           String jti, String audience, Set<String> authorizedScopes,
+                                           Instant issuedAt, Instant expiresAt, Instant revokedAt) {
         return new OAuthAccessToken(id, authorizationId, accessTokenHash, jti, audience,
                 authorizedScopes, issuedAt, expiresAt, revokedAt);
     }
@@ -62,14 +62,43 @@ public final class OAuthAccessToken {
         if (revokedAt == null) revokedAt = now;
     }
 
-    public boolean expiredAt(Instant now) { return !expiresAt.isAfter(Objects.requireNonNull(now)); }
-    public Long id() { return id; }
-    public String authorizationId() { return authorizationId; }
-    public String accessTokenHash() { return accessTokenHash; }
-    public String jti() { return jti; }
-    public String audience() { return audience; }
-    public Set<String> authorizedScopes() { return authorizedScopes; }
-    public Instant issuedAt() { return issuedAt; }
-    public Instant expiresAt() { return expiresAt; }
-    public Instant revokedAt() { return revokedAt; }
+    public boolean expiredAt(Instant now) {
+        return !expiresAt.isAfter(Objects.requireNonNull(now));
+    }
+
+    public Long id() {
+        return id;
+    }
+
+    public String authorizationId() {
+        return authorizationId;
+    }
+
+    public String accessTokenHash() {
+        return accessTokenHash;
+    }
+
+    public String jti() {
+        return jti;
+    }
+
+    public String audience() {
+        return audience;
+    }
+
+    public Set<String> authorizedScopes() {
+        return authorizedScopes;
+    }
+
+    public Instant issuedAt() {
+        return issuedAt;
+    }
+
+    public Instant expiresAt() {
+        return expiresAt;
+    }
+
+    public Instant revokedAt() {
+        return revokedAt;
+    }
 }

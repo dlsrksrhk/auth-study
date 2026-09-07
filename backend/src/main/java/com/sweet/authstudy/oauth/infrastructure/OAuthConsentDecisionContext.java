@@ -5,7 +5,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 
-/** Request-local hand-off between SAS's consent and authorization persistence calls. */
+/**
+ * Request-local hand-off between SAS's consent and authorization persistence calls.
+ */
 @Component
 final class OAuthConsentDecisionContext {
     private static final String VALIDATED = OAuthConsentService.ApprovalDecision.class.getName();

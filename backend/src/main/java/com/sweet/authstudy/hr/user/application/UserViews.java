@@ -1,14 +1,14 @@
 package com.sweet.authstudy.hr.user.application;
 
-import java.time.Instant;
-import java.time.LocalDate;
-import java.util.List;
-import java.util.Set;
-
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRole;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
 
 public final class UserViews {
 
@@ -45,5 +45,6 @@ public final class UserViews {
     public record CreatedUserView(UserView user, String temporaryPassword) {
     }
 
-    public record UserPage(List<UserView> content, long totalElements, int totalPages) {}
+    public record UserPage(List<UserView> content, long totalElements, int totalPages) {
+    }
 }

@@ -54,11 +54,31 @@ public final class OAuthClientSecret {
         }
     }
 
-    public Long id() { return id; }
-    public String secretHash() { return secretHash; }
-    public String secretHint() { return secretHint; }
-    public Instant createdAt() { return createdAt; }
-    public Instant expiresAt() { return expiresAt; }
-    public Instant revokedAt() { return revokedAt; }
-    public long version() { return version; }
+    public Long id() {
+        return id;
+    }
+
+    public String secretHash() {
+        return secretHash;
+    }
+
+    public String secretHint() {
+        return secretHint;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
+    public Instant expiresAt() {
+        return expiresAt;
+    }
+
+    public Instant revokedAt() {
+        return revokedAt;
+    }
+
+    public long version() {
+        return version;
+    }
 }

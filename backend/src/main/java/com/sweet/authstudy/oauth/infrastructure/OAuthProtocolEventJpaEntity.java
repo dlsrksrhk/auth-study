@@ -1,20 +1,13 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
+import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
-
-import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "oauth_protocol_event")
@@ -49,7 +42,8 @@ class OAuthProtocolEventJpaEntity {
     @Column(nullable = false, columnDefinition = "jsonb", updatable = false)
     private Map<String, Object> metadata;
 
-    protected OAuthProtocolEventJpaEntity() { }
+    protected OAuthProtocolEventJpaEntity() {
+    }
 
     static OAuthProtocolEventJpaEntity from(OAuthProtocolEvent event) {
         OAuthProtocolEventJpaEntity entity = new OAuthProtocolEventJpaEntity();

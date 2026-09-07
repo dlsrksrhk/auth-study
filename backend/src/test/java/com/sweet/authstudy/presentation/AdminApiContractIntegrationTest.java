@@ -1,34 +1,14 @@
 package com.sweet.authstudy.presentation;
 
-import static org.hamcrest.Matchers.endsWith;
-import static org.hamcrest.Matchers.matchesPattern;
-import static org.springframework.http.HttpHeaders.AUTHORIZATION;
-import static org.springframework.http.MediaType.APPLICATION_JSON;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.clearInvocations;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.time.Clock;
-import java.util.UUID;
-
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
+import com.sweet.authstudy.hr.company.domain.CompanyRepository;
+import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
+import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
+import com.sweet.authstudy.hr.position.domain.PositionRepository;
+import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.identity.application.JwtTokenService;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
-import com.sweet.authstudy.hr.company.domain.CompanyRepository;
-import com.sweet.authstudy.hr.position.domain.PositionRepository;
-import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
-import com.sweet.authstudy.hr.user.domain.UserRepository;
-import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,8 +18,21 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.Clock;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.*;
+import static org.springframework.http.HttpHeaders.AUTHORIZATION;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -47,16 +40,26 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 @ActiveProfiles("test")
 class AdminApiContractIntegrationTest {
 
-    @Autowired MockMvc mvc;
-    @MockitoSpyBean AccountRepository accountRepository;
-    @MockitoSpyBean CompanyRepository companyRepository;
-    @MockitoSpyBean PositionRepository positionRepository;
-    @MockitoSpyBean DepartmentRepository departmentRepository;
-    @MockitoSpyBean MembershipRepository membershipRepository;
-    @Autowired UserRepository userRepository;
-    @Autowired JwtTokenService jwtTokenService;
-    @Autowired PasswordEncoder passwordEncoder;
-    @Autowired Clock clock;
+    @Autowired
+    MockMvc mvc;
+    @MockitoSpyBean
+    AccountRepository accountRepository;
+    @MockitoSpyBean
+    CompanyRepository companyRepository;
+    @MockitoSpyBean
+    PositionRepository positionRepository;
+    @MockitoSpyBean
+    DepartmentRepository departmentRepository;
+    @MockitoSpyBean
+    MembershipRepository membershipRepository;
+    @Autowired
+    UserRepository userRepository;
+    @Autowired
+    JwtTokenService jwtTokenService;
+    @Autowired
+    PasswordEncoder passwordEncoder;
+    @Autowired
+    Clock clock;
 
     private String systemToken;
 
@@ -398,11 +401,11 @@ class AdminApiContractIntegrationTest {
         mvc.perform(get("/api/v1/admin/companies").header(AUTHORIZATION, "Bearer " + systemToken))
                 .andExpect(status().isOk());
         mvc.perform(get("/api/v1/admin/companies/{companyCode}/positions", companyCode)
-                        .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isOk());
+                .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isOk());
         mvc.perform(get("/api/v1/admin/companies/{companyCode}/departments", companyCode)
-                        .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isOk());
+                .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isOk());
         mvc.perform(get("/api/v1/admin/companies/{companyCode}/users/U001/memberships", companyCode)
-                        .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isOk());
+                .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isOk());
 
         verify(companyRepository, never()).findAll();
         verify(positionRepository, never()).findAllByCompanyId(anyLong());

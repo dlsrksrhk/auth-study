@@ -1,32 +1,5 @@
 package com.sweet.authstudy.oauth.acceptance;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
-
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.lang.reflect.InvocationTargetException;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.time.LocalDate;
-import java.util.Base64;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.regex.Pattern;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
@@ -34,30 +7,46 @@ import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.oauth.presentation.IdpLoginController;
 import com.sweet.authstudy.oauth.presentation.IdpSessionAuthentication;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
-import org.springframework.security.oauth2.jwt.JwtClaimsSet;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.JwtEncoder;
-import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
-import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.util.UriComponentsBuilder;
+
+import java.lang.reflect.InvocationTargetException;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.regex.Pattern;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -70,13 +59,22 @@ class OAuthProtocolSecurityAcceptanceTest {
     private static final String CSP = "default-src 'self'; base-uri 'none'; form-action 'self'; "
             + "frame-ancestors 'none'; object-src 'none'";
 
-    @Autowired private MockMvc mockMvc;
-    @Autowired private JdbcClient jdbcClient;
-    @Autowired private ApplicationContext applicationContext;
-    @Autowired private ObjectMapper objectMapper;
-    @Autowired private PasswordEncoder passwordEncoder;
-    @Autowired @Qualifier("oauthJwtEncoder") private JwtEncoder jwtEncoder;
-    @Autowired @Qualifier("oauthJwtDecoder") private JwtDecoder jwtDecoder;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private JdbcClient jdbcClient;
+    @Autowired
+    private ApplicationContext applicationContext;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+    @Autowired
+    @Qualifier("oauthJwtEncoder")
+    private JwtEncoder jwtEncoder;
+    @Autowired
+    @Qualifier("oauthJwtDecoder")
+    private JwtDecoder jwtDecoder;
 
     @AfterEach
     void removeLegacyRedirectFixtures() {
@@ -950,13 +948,13 @@ class OAuthProtocolSecurityAcceptanceTest {
                 .isEqualTo("denied-state");
 
         List<Map<String, Object>> events = jdbcClient.sql("""
-                select event_type, outcome, client_id, subject::text, account_id, company_id,
-                       authorization_id, error_code, metadata::text
-                  from oauth_protocol_event
-                 where client_id in (:approved, :denied)
-                   and event_type in ('CONSENT_GRANTED', 'CONSENT_DENIED')
-                 order by id
-                """).param("approved", approvedFixture.clientId())
+                        select event_type, outcome, client_id, subject::text, account_id, company_id,
+                               authorization_id, error_code, metadata::text
+                          from oauth_protocol_event
+                         where client_id in (:approved, :denied)
+                           and event_type in ('CONSENT_GRANTED', 'CONSENT_DENIED')
+                         order by id
+                        """).param("approved", approvedFixture.clientId())
                 .param("denied", deniedFixture.clientId()).query().listOfRows();
         assertThat(events).hasSize(2);
         assertThat(events).anySatisfy(event -> assertThat(event)
@@ -1042,9 +1040,9 @@ class OAuthProtocolSecurityAcceptanceTest {
                             URI.create(response.getResponse().getHeader("Location"))).build()
                     .getQueryParams().getFirst("error")).isEqualTo("server_error");
             assertThat(jdbcClient.sql("""
-                    select count(*) from oauth_consent c join oauth_client oc on oc.id = c.registered_client_id
-                     where c.principal_account_id = :accountId and oc.client_id = :clientId
-                    """).param("accountId", consentFixture.accountId())
+                            select count(*) from oauth_consent c join oauth_client oc on oc.id = c.registered_client_id
+                             where c.principal_account_id = :accountId and oc.client_id = :clientId
+                            """).param("accountId", consentFixture.accountId())
                     .param("clientId", consentFixture.clientId()).query(Long.class).single()).isZero();
         } finally {
             dropConstraint("reject_consent_event");
@@ -1151,11 +1149,11 @@ class OAuthProtocolSecurityAcceptanceTest {
         assertThat(logoutSession.isInvalid()).isTrue();
 
         Long leaked = jdbcClient.sql("""
-                select count(*) from oauth_protocol_event
-                 where correlation_id in (:sensitive, :oversized, :split, :logoutToken)
-                    or metadata::text like :sensitivePattern
-                    or metadata::text like :logoutPattern
-                """)
+                        select count(*) from oauth_protocol_event
+                         where correlation_id in (:sensitive, :oversized, :split, :logoutToken)
+                            or metadata::text like :sensitivePattern
+                            or metadata::text like :logoutPattern
+                        """)
                 .param("sensitive", sensitiveTrace)
                 .param("oversized", oversizedTrace)
                 .param("split", splitTrace)
@@ -1165,10 +1163,10 @@ class OAuthProtocolSecurityAcceptanceTest {
                 .query(Long.class).single();
         assertThat(leaked).isZero();
         assertThat(jdbcClient.sql("""
-                select count(*) from oauth_protocol_event
-                 where client_id in (:codeClient, :refreshClient, :consentClient, :logoutClient)
-                   and correlation_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-                """)
+                        select count(*) from oauth_protocol_event
+                         where client_id in (:codeClient, :refreshClient, :consentClient, :logoutClient)
+                           and correlation_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+                        """)
                 .param("codeClient", codeFixture.clientId())
                 .param("refreshClient", refreshFixture.clientId())
                 .param("consentClient", consentFixture.clientId())
@@ -1190,17 +1188,17 @@ class OAuthProtocolSecurityAcceptanceTest {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         Instant now = Instant.now();
         long companyId = jdbcClient.sql("""
-                insert into companies(code, name, email_domain, status, created_at, updated_at)
-                values (:code, :code, :domain, 'ACTIVE', :now, :now) returning id
-                """).param("code", "CORS_" + suffix.toUpperCase())
+                        insert into companies(code, name, email_domain, status, created_at, updated_at)
+                        values (:code, :code, :domain, 'ACTIVE', :now, :now) returning id
+                        """).param("code", "CORS_" + suffix.toUpperCase())
                 .param("domain", suffix + ".example")
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         long clientId = jdbcClient.sql("""
-                insert into oauth_client(company_id, client_id, display_name, status, trust,
-                                         public_client, created_at, updated_at)
-                values (:companyId, :clientId, 'Public RP', :status, 'CONSENT_REQUIRED',
-                        :publicClient, :now, :now) returning id
-                """).param("companyId", companyId).param("clientId", "cors-" + suffix)
+                        insert into oauth_client(company_id, client_id, display_name, status, trust,
+                                                 public_client, created_at, updated_at)
+                        values (:companyId, :clientId, 'Public RP', :status, 'CONSENT_REQUIRED',
+                                :publicClient, :now, :now) returning id
+                        """).param("companyId", companyId).param("clientId", "cors-" + suffix)
                 .param("status", active ? "ACTIVE" : "DISABLED")
                 .param("publicClient", publicClient)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
@@ -1222,28 +1220,28 @@ class OAuthProtocolSecurityAcceptanceTest {
         Instant now = Instant.now();
         String companyCode = "EVT_" + suffix.toUpperCase();
         long companyId = jdbcClient.sql("""
-                insert into companies(code, name, email_domain, status, created_at, updated_at)
-                values (:code, :code, :domain, 'ACTIVE', :now, :now) returning id
-                """).param("code", companyCode).param("domain", suffix + ".example")
+                        insert into companies(code, name, email_domain, status, created_at, updated_at)
+                        values (:code, :code, :domain, 'ACTIVE', :now, :now) returning id
+                        """).param("code", companyCode).param("domain", suffix + ".example")
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         long positionId = jdbcClient.sql("""
-                insert into positions(company_id, code, name, level, display_order, active, created_at, updated_at)
-                values (:companyId, 'EMPLOYEE', 'Employee', 1, 1, true, :now, :now) returning id
-                """).param("companyId", companyId).param("now", Timestamp.from(now))
+                        insert into positions(company_id, code, name, level, display_order, active, created_at, updated_at)
+                        values (:companyId, 'EMPLOYEE', 'Employee', 1, 1, true, :now, :now) returning id
+                        """).param("companyId", companyId).param("now", Timestamp.from(now))
                 .query(Long.class).single();
         long userId = jdbcClient.sql("""
-                insert into users(company_id, code, employee_number, name, phone, hired_at, workplace,
-                                  position_id, status, created_at, updated_at)
-                values (:companyId, 'USER', :employeeNumber, 'Protocol User', '010-0000-0000', :hiredAt,
-                        'Seoul', :positionId, 'ACTIVE', :now, :now) returning id
-                """).param("companyId", companyId).param("employeeNumber", "E-" + suffix)
+                        insert into users(company_id, code, employee_number, name, phone, hired_at, workplace,
+                                          position_id, status, created_at, updated_at)
+                        values (:companyId, 'USER', :employeeNumber, 'Protocol User', '010-0000-0000', :hiredAt,
+                                'Seoul', :positionId, 'ACTIVE', :now, :now) returning id
+                        """).param("companyId", companyId).param("employeeNumber", "E-" + suffix)
                 .param("hiredAt", LocalDate.of(2026, 8, 25)).param("positionId", positionId)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         long accountId = jdbcClient.sql("""
-                insert into accounts(company_id, user_id, login_email, password_hash, status,
-                                     must_change_password, created_at, updated_at)
-                values (:companyId, :userId, :email, :passwordHash, 'ACTIVE', false, :now, :now) returning id
-                """).param("companyId", companyId).param("userId", userId)
+                        insert into accounts(company_id, user_id, login_email, password_hash, status,
+                                             must_change_password, created_at, updated_at)
+                        values (:companyId, :userId, :email, :passwordHash, 'ACTIVE', false, :now, :now) returning id
+                        """).param("companyId", companyId).param("userId", userId)
                 .param("email", "user@" + suffix + ".example")
                 .param("passwordHash", passwordEncoder.encode("ProtocolPassword1234!"))
                 .param("now", Timestamp.from(now))
@@ -1255,18 +1253,18 @@ class OAuthProtocolSecurityAcceptanceTest {
                 .param("id", accountId).param("sub", subject).param("now", Timestamp.from(now)).update();
         String clientId = "event-client-" + suffix;
         long internalClientId = jdbcClient.sql("""
-                insert into oauth_client(company_id, client_id, display_name, status, trust,
-                                         public_client, created_at, updated_at)
-                values (:companyId, :clientId, 'Protocol RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
-                        :publicClient, :now, :now) returning id
-                """).param("companyId", companyId).param("clientId", clientId)
+                        insert into oauth_client(company_id, client_id, display_name, status, trust,
+                                                 public_client, created_at, updated_at)
+                        values (:companyId, :clientId, 'Protocol RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
+                                :publicClient, :now, :now) returning id
+                        """).param("companyId", companyId).param("clientId", clientId)
                 .param("publicClient", rawSecret == null)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         if (rawSecret != null) {
             jdbcClient.sql("""
-                    insert into oauth_client_secret(client_id, secret_hash, secret_hint, created_at, version)
-                    values (:clientId, :secretHash, :secretHint, :now, 0)
-                    """).param("clientId", internalClientId)
+                            insert into oauth_client_secret(client_id, secret_hash, secret_hint, created_at, version)
+                            values (:clientId, :secretHash, :secretHint, :now, 0)
+                            """).param("clientId", internalClientId)
                     .param("secretHash", new BCryptPasswordEncoder().encode(rawSecret))
                     .param("secretHint", rawSecret.substring(rawSecret.length() - 4))
                     .param("now", Timestamp.from(now)).update();
@@ -1278,9 +1276,9 @@ class OAuthProtocolSecurityAcceptanceTest {
                 values (:clientId, :redirectUri, 'AUTHORIZATION')
                 """).param("clientId", internalClientId).param("redirectUri", redirectUri).update();
         jdbcClient.sql("""
-                insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
-                values (:clientId, :redirectUri, 'POST_LOGOUT')
-                """).param("clientId", internalClientId)
+                        insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
+                        values (:clientId, :redirectUri, 'POST_LOGOUT')
+                        """).param("clientId", internalClientId)
                 .param("redirectUri", postLogoutRedirectUri).update();
         for (String scope : List.of("openid", "profile")) {
             jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, :scope)")
@@ -1317,10 +1315,10 @@ class OAuthProtocolSecurityAcceptanceTest {
         URI callback = URI.create(authorization.getResponse().getHeader("Location"));
         String code = UriComponentsBuilder.fromUri(callback).build().getQueryParams().getFirst("code");
         var tokenRequest = post("/oauth2/token")
-                        .param("grant_type", "authorization_code")
-                        .param("code", code)
-                        .param("redirect_uri", fixture.redirectUri())
-                        .param("code_verifier", verifier);
+                .param("grant_type", "authorization_code")
+                .param("code", code)
+                .param("redirect_uri", fixture.redirectUri())
+                .param("code_verifier", verifier);
         if (fixture.rawSecret() == null) tokenRequest.param("client_id", fixture.clientId());
         else tokenRequest.with(httpBasic(fixture.clientId(), fixture.rawSecret()));
         if (traceId != null) tokenRequest.header("X-Trace-Id", traceId);
@@ -1376,7 +1374,7 @@ class OAuthProtocolSecurityAcceptanceTest {
     }
 
     private String signedIdToken(String subject, String audience, Instant authTime,
-            Instant issuedAt, Instant expiresAt) {
+                                 Instant issuedAt, Instant expiresAt) {
         JwtClaimsSet claims = JwtClaimsSet.builder().issuer(ISSUER).subject(subject)
                 .audience(List.of(audience)).issuedAt(issuedAt).expiresAt(expiresAt)
                 .claim("auth_time", java.util.Date.from(authTime.truncatedTo(ChronoUnit.SECONDS))).build();
@@ -1469,11 +1467,20 @@ class OAuthProtocolSecurityAcceptanceTest {
     }
 
     private record ProtocolFixture(long companyId, long accountId, long userId, UUID subject,
-            String clientId, String redirectUri, String postLogoutRedirectUri,
-            String email, String rawSecret) { }
-    private record LogoutCase(String idTokenHint, String clientId, String postLogoutRedirectUri) { }
-    private record ConsentPage(String serverState, MvcResult response) { }
-    private record CorsCase(String path, String method) { }
+                                   String clientId, String redirectUri, String postLogoutRedirectUri,
+                                   String email, String rawSecret) {
+    }
+
+    private record LogoutCase(String idTokenHint, String clientId, String postLogoutRedirectUri) {
+    }
+
+    private record ConsentPage(String serverState, MvcResult response) {
+    }
+
+    private record CorsCase(String path, String method) {
+    }
+
     private record TokenSet(String accessToken, String refreshToken, String idToken,
-            String code, String verifier) { }
+                            String code, String verifier) {
+    }
 }

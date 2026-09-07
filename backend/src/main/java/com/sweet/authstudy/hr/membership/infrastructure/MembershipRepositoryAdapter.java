@@ -1,8 +1,5 @@
 package com.sweet.authstudy.hr.membership.infrastructure;
 
-import java.util.List;
-import java.util.Optional;
-
 import com.sweet.authstudy.hr.membership.domain.DepartmentMembership;
 import com.sweet.authstudy.hr.membership.domain.DepartmentRole;
 import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
@@ -10,6 +7,9 @@ import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class MembershipRepositoryAdapter implements MembershipRepository {
@@ -25,7 +25,7 @@ public class MembershipRepositoryAdapter implements MembershipRepository {
         MembershipJpaEntity entity = membership.id() == null
                 ? MembershipJpaEntity.from(membership)
                 : repository.findById(membership.id())
-                        .orElseThrow(() -> new IllegalStateException("Membership does not exist."));
+                .orElseThrow(() -> new IllegalStateException("Membership does not exist."));
         if (membership.id() != null) {
             entity.updateFrom(membership);
         }

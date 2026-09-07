@@ -23,7 +23,7 @@ public class AuditLogRepositoryAdapter implements AuditLogRepository {
 
     @Override
     public PageResult<AuditLog> search(long companyId, String search, String action, Boolean success,
-            int page, int size, String sort) {
+                                       int page, int size, String sort) {
         Sort requested = Sort.by(Sort.Direction.DESC, property(sort));
         Sort stable = sort.equals("id") ? requested : requested.and(Sort.by(Sort.Direction.DESC, "id"));
         var result = repository.search(companyId, search == null ? "" : search,

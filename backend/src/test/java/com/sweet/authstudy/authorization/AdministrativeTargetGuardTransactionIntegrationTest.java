@@ -1,10 +1,5 @@
 package com.sweet.authstudy.authorization;
 
-import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.time.LocalDate;
-
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.user.application.UserCommands.CreateUserCommand;
@@ -16,6 +11,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.IllegalTransactionStateException;
+
+import java.time.LocalDate;
+
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)
@@ -36,8 +36,8 @@ class AdministrativeTargetGuardTransactionIntegrationTest {
         companyService.create(SYSTEM_ADMIN,
                 new CreateCompanyCommand("GUARDTX", "Guard Tx", "guard-tx.example"));
         long userId = userService.create(SYSTEM_ADMIN, new CreateUserCommand(
-                "GUARDTX", "U001", "E-1001", "Kim", "kim@guard-tx.example",
-                "010-0000-0000", LocalDate.parse("2026-08-20"), "Seoul", null, "EMPLOYEE"))
+                        "GUARDTX", "U001", "E-1001", "Kim", "kim@guard-tx.example",
+                        "010-0000-0000", LocalDate.parse("2026-08-20"), "Seoul", null, "EMPLOYEE"))
                 .user().id();
 
         assertThatThrownBy(() -> targetGuard.requireMayMutateUser(SYSTEM_ADMIN, userId))

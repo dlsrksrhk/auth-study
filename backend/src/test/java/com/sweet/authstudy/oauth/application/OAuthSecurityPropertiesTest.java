@@ -1,11 +1,11 @@
 package com.sweet.authstudy.oauth.application;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
 
 import java.net.URI;
 import java.time.Duration;
 
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class OAuthSecurityPropertiesTest {
 

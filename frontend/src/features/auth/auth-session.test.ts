@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import {describe, expect, it} from "vitest";
 
-import { createMemoryAuthSession } from "./auth-session";
+import {createMemoryAuthSession} from "./auth-session";
 
 describe("memory auth session", () => {
   it("rejects stale token commits and clears using a monotonic generation", () => {

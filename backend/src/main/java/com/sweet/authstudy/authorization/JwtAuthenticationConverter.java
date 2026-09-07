@@ -1,10 +1,5 @@
 package com.sweet.authstudy.authorization;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
-
 import com.sweet.authstudy.identity.domain.AccountRole;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
@@ -12,6 +7,11 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
 public class JwtAuthenticationConverter implements Converter<Jwt, AbstractAuthenticationToken> {
@@ -36,14 +36,23 @@ public class JwtAuthenticationConverter implements Converter<Jwt, AbstractAuthen
     private static final class PrincipalAuthenticationToken extends AbstractAuthenticationToken {
         private final AuthenticatedAccount principal;
         private final Jwt credentials;
+
         private PrincipalAuthenticationToken(AuthenticatedAccount principal, Jwt credentials,
-                Collection<? extends GrantedAuthority> authorities) {
+                                             Collection<? extends GrantedAuthority> authorities) {
             super(authorities);
             this.principal = principal;
             this.credentials = credentials;
             setAuthenticated(true);
         }
-        @Override public Object getCredentials() { return credentials; }
-        @Override public Object getPrincipal() { return principal; }
+
+        @Override
+        public Object getCredentials() {
+            return credentials;
+        }
+
+        @Override
+        public Object getPrincipal() {
+            return principal;
+        }
     }
 }

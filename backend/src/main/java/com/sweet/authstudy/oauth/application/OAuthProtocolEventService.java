@@ -1,27 +1,33 @@
 package com.sweet.authstudy.oauth.application;
 
-import java.time.Clock;
-import java.util.UUID;
-
 import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.oauth.domain.OAuthProtocolEventRepository;
 import com.sweet.authstudy.shared.trace.TraceIdProvider;
 import org.springframework.stereotype.Service;
 
-/** Application boundary for sanitized OAuth/OIDC protocol history. */
+import java.time.Clock;
+import java.util.UUID;
+
+/**
+ * Application boundary for sanitized OAuth/OIDC protocol history.
+ */
 @Service
 public final class OAuthProtocolEventService {
 
     public static final class RequiredEventPersistenceException extends RuntimeException {
-        public RequiredEventPersistenceException(RuntimeException cause) { super(cause); }
+        public RequiredEventPersistenceException(RuntimeException cause) {
+            super(cause);
+        }
     }
 
     private static final String USERINFO_DENIED_ATTRIBUTE =
             OAuthProtocolEventService.class.getName() + ".userinfoDenied";
 
     public record Context(String clientId, UUID subject, Long accountId, Long companyId,
-            String authorizationId) {
-        public static Context empty() { return new Context(null, null, null, null, null); }
+                          String authorizationId) {
+        public static Context empty() {
+            return new Context(null, null, null, null, null);
+        }
     }
 
     private final OAuthProtocolEventRepository events;
@@ -29,7 +35,7 @@ public final class OAuthProtocolEventService {
     private final Clock clock;
 
     public OAuthProtocolEventService(OAuthProtocolEventRepository events,
-            TraceIdProvider traceIds, Clock clock) {
+                                     TraceIdProvider traceIds, Clock clock) {
         this.events = events;
         this.traceIds = traceIds;
         this.clock = clock;
@@ -44,13 +50,13 @@ public final class OAuthProtocolEventService {
     }
 
     public void success(OAuthProtocolEvent.EventType type, Context context,
-            OAuthProtocolEvent.Metadata metadata) {
+                        OAuthProtocolEvent.Metadata metadata) {
         bestEffort(() -> newEvent(
                 type, OAuthProtocolEvent.Outcome.SUCCESS, context, null, metadata));
     }
 
     public void successRequired(OAuthProtocolEvent.EventType type, Context context,
-            OAuthProtocolEvent.Metadata metadata) {
+                                OAuthProtocolEvent.Metadata metadata) {
         try {
             events.saveRequired(newEvent(
                     type, OAuthProtocolEvent.Outcome.SUCCESS, context, null, metadata));
@@ -60,13 +66,13 @@ public final class OAuthProtocolEventService {
     }
 
     public void failure(OAuthProtocolEvent.EventType type, Context context, String errorCode,
-            OAuthProtocolEvent.Metadata metadata) {
+                        OAuthProtocolEvent.Metadata metadata) {
         bestEffort(() -> newEvent(
                 type, OAuthProtocolEvent.Outcome.FAILURE, context, errorCode, metadata));
     }
 
     public void denied(OAuthProtocolEvent.EventType type, Context context, String errorCode,
-            OAuthProtocolEvent.Metadata metadata) {
+                       OAuthProtocolEvent.Metadata metadata) {
         bestEffort(() -> newEvent(
                 type, OAuthProtocolEvent.Outcome.DENIED, context, errorCode, metadata));
     }
@@ -99,8 +105,8 @@ public final class OAuthProtocolEventService {
     }
 
     private OAuthProtocolEvent newEvent(OAuthProtocolEvent.EventType type,
-            OAuthProtocolEvent.Outcome outcome, Context context, String errorCode,
-            OAuthProtocolEvent.Metadata metadata) {
+                                        OAuthProtocolEvent.Outcome outcome, Context context, String errorCode,
+                                        OAuthProtocolEvent.Metadata metadata) {
         Context safe = context == null ? Context.empty() : context;
         return OAuthProtocolEvent.create(clock.instant(), traceIds.current(), type, outcome,
                 safe.clientId(), safe.subject(), safe.accountId(), safe.companyId(),

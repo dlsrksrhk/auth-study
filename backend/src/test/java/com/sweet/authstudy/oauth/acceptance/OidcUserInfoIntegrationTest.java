@@ -1,32 +1,5 @@
 package com.sweet.authstudy.oauth.acceptance;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.function.BiConsumer;
-import java.util.stream.Stream;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jwt.SignedJWT;
@@ -47,8 +20,29 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.web.util.UriComponentsBuilder;
+
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -64,11 +58,16 @@ class OidcUserInfoIntegrationTest {
     private static final String ORGANIZATION_CLAIM = "https://auth-study.local/claims/organization";
     private static final String ROLES_CLAIM = "https://auth-study.local/claims/roles";
 
-    @Autowired private MockMvc mockMvc;
-    @Autowired private ObjectMapper objectMapper;
-    @Autowired private JdbcClient jdbcClient;
-    @Autowired private Environment environment;
-    @MockitoSpyBean private HrOAuthUserInfoClaimSource claimSource;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private JdbcClient jdbcClient;
+    @Autowired
+    private Environment environment;
+    @MockitoSpyBean
+    private HrOAuthUserInfoClaimSource claimSource;
 
     @Test
     void web_requests_do_not_share_a_persistence_context_across_security_and_userinfo_reads() {
@@ -147,16 +146,16 @@ class OidcUserInfoIntegrationTest {
                 select authorization_id from oauth_access_token where access_token_hash = :hash
                 """).param("hash", sha256(tokens.accessToken())).query(String.class).single();
         Instant authorizationExpiry = jdbcClient.sql(
-                "select expires_at from oauth_authorization where id = :id")
+                        "select expires_at from oauth_authorization where id = :id")
                 .param("id", authorizationId).query(Instant.class).single();
         Instant authorizationCreatedAt = jdbcClient.sql(
-                "select created_at from oauth_authorization where id = :id")
+                        "select created_at from oauth_authorization where id = :id")
                 .param("id", authorizationId).query(Instant.class).single();
         Instant tokenExpiry = jdbcClient.sql(
-                "select expires_at from oauth_access_token where authorization_id = :id")
+                        "select expires_at from oauth_access_token where authorization_id = :id")
                 .param("id", authorizationId).query(Instant.class).single();
         Instant tokenIssuedAt = jdbcClient.sql(
-                "select issued_at from oauth_access_token where authorization_id = :id")
+                        "select issued_at from oauth_access_token where authorization_id = :id")
                 .param("id", authorizationId).query(Instant.class).single();
 
         assertInvalidAfter(discovery, tokens, "update accounts set locked_until = :value where id = :id",
@@ -220,17 +219,17 @@ class OidcUserInfoIntegrationTest {
 
         AlternateSubject alternateSubject = alternateSubject(fixture);
         jdbcClient.sql("""
-                update oauth_authorization
-                   set subject = :subject, principal_account_id = :accountId
-                 where id = :id
-                """).param("subject", alternateSubject.subject())
+                        update oauth_authorization
+                           set subject = :subject, principal_account_id = :accountId
+                         where id = :id
+                        """).param("subject", alternateSubject.subject())
                 .param("accountId", alternateSubject.accountId()).param("id", authorizationId).update();
         assertInvalid(discovery.userInfoPath(), tokens.accessToken());
         jdbcClient.sql("""
-                update oauth_authorization
-                   set subject = :subject, principal_account_id = :accountId
-                 where id = :id
-                """).param("subject", fixture.subject()).param("accountId", fixture.accountId())
+                        update oauth_authorization
+                           set subject = :subject, principal_account_id = :accountId
+                         where id = :id
+                        """).param("subject", fixture.subject()).param("accountId", fixture.accountId())
                 .param("id", authorizationId).update();
 
         String alternateAuthorization = copyAuthorization(authorizationId, alternateSubject);
@@ -443,11 +442,11 @@ class OidcUserInfoIntegrationTest {
         Instant now = Instant.now();
         String clientId = "alternate-client-" + UUID.randomUUID();
         long id = jdbcClient.sql("""
-                insert into oauth_client(company_id, client_id, display_name, status, trust,
-                                         public_client, created_at, updated_at)
-                values (:companyId, :clientId, 'Alternate RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
-                        true, :now, :now) returning id
-                """).param("companyId", fixture.companyId()).param("clientId", clientId)
+                        insert into oauth_client(company_id, client_id, display_name, status, trust,
+                                                 public_client, created_at, updated_at)
+                        values (:companyId, :clientId, 'Alternate RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
+                                true, :now, :now) returning id
+                        """).param("companyId", fixture.companyId()).param("clientId", clientId)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         jdbcClient.sql("""
                 insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
@@ -464,19 +463,19 @@ class OidcUserInfoIntegrationTest {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         Instant now = Instant.now();
         long userId = jdbcClient.sql("""
-                insert into users(company_id, code, employee_number, name, phone, hired_at, workplace,
-                                  position_id, status, created_at, updated_at)
-                values (:companyId, :code, :employeeNumber, 'Alternate User', '010-0000-0000', :hiredAt,
-                        'Seoul', :positionId, 'ACTIVE', :now, :now) returning id
-                """).param("companyId", fixture.companyId()).param("code", "ALT-" + suffix)
+                        insert into users(company_id, code, employee_number, name, phone, hired_at, workplace,
+                                          position_id, status, created_at, updated_at)
+                        values (:companyId, :code, :employeeNumber, 'Alternate User', '010-0000-0000', :hiredAt,
+                                'Seoul', :positionId, 'ACTIVE', :now, :now) returning id
+                        """).param("companyId", fixture.companyId()).param("code", "ALT-" + suffix)
                 .param("employeeNumber", "E-ALT-" + suffix).param("hiredAt", LocalDate.of(2026, 8, 24))
                 .param("positionId", fixture.positionId()).param("now", Timestamp.from(now))
                 .query(Long.class).single();
         long accountId = jdbcClient.sql("""
-                insert into accounts(company_id, user_id, login_email, password_hash, status,
-                                     must_change_password, created_at, updated_at)
-                values (:companyId, :userId, :email, 'hash', 'ACTIVE', false, :now, :now) returning id
-                """).param("companyId", fixture.companyId()).param("userId", userId)
+                        insert into accounts(company_id, user_id, login_email, password_hash, status,
+                                             must_change_password, created_at, updated_at)
+                        values (:companyId, :userId, :email, 'hash', 'ACTIVE', false, :now, :now) returning id
+                        """).param("companyId", fixture.companyId()).param("userId", userId)
                 .param("email", "alt-" + suffix + "@example.com").param("now", Timestamp.from(now))
                 .query(Long.class).single();
         jdbcClient.sql("insert into account_roles(account_id, role) values (:id, 'USER')")
@@ -490,15 +489,15 @@ class OidcUserInfoIntegrationTest {
     private String copyAuthorization(String sourceId, AlternateSubject alternateSubject) {
         String id = "copied-" + UUID.randomUUID();
         jdbcClient.sql("""
-                insert into oauth_authorization(
-                    id, registered_client_id, subject, principal_account_id, company_id,
-                    authorization_grant_type, authorized_scopes, attributes, server_state_hash,
-                    authenticated_at, status, revocation_reason, created_at, expires_at, revoked_at)
-                select :newId, registered_client_id, :subject, :accountId, company_id,
-                       authorization_grant_type, authorized_scopes, attributes, null,
-                       authenticated_at, 'ACTIVE', null, created_at, expires_at, null
-                  from oauth_authorization where id = :sourceId
-                """).param("newId", id).param("subject", alternateSubject.subject())
+                        insert into oauth_authorization(
+                            id, registered_client_id, subject, principal_account_id, company_id,
+                            authorization_grant_type, authorized_scopes, attributes, server_state_hash,
+                            authenticated_at, status, revocation_reason, created_at, expires_at, revoked_at)
+                        select :newId, registered_client_id, :subject, :accountId, company_id,
+                               authorization_grant_type, authorized_scopes, attributes, null,
+                               authenticated_at, 'ACTIVE', null, created_at, expires_at, null
+                          from oauth_authorization where id = :sourceId
+                        """).param("newId", id).param("subject", alternateSubject.subject())
                 .param("accountId", alternateSubject.accountId()).param("sourceId", sourceId).update();
         return id;
     }
@@ -511,27 +510,27 @@ class OidcUserInfoIntegrationTest {
         String employeeNumber = "E-INTERNAL-" + suffix;
         Instant now = Instant.now();
         long companyId = jdbcClient.sql("""
-                insert into companies(code, name, email_domain, status, created_at, updated_at)
-                values (:code, 'Acme Corp', :domain, 'ACTIVE', :now, :now) returning id
-                """).param("code", companyCode).param("domain", companyCode.toLowerCase() + ".example")
+                        insert into companies(code, name, email_domain, status, created_at, updated_at)
+                        values (:code, 'Acme Corp', :domain, 'ACTIVE', :now, :now) returning id
+                        """).param("code", companyCode).param("domain", companyCode.toLowerCase() + ".example")
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         long positionId = jdbcClient.sql("""
                 insert into positions(company_id, code, name, level, display_order, active, created_at, updated_at)
                 values (:companyId, 'ENG', 'Engineer', 1, 1, true, :now, :now) returning id
                 """).param("companyId", companyId).param("now", Timestamp.from(now)).query(Long.class).single();
         long userId = jdbcClient.sql("""
-                insert into users(company_id, code, employee_number, name, phone, hired_at, workplace,
-                                  position_id, status, created_at, updated_at)
-                values (:companyId, :userCode, :employeeNumber, 'Ada Lovelace', '010-0000-0000', :hiredAt,
-                        'Seoul', :positionId, 'ACTIVE', :now, :now) returning id
-                """).param("companyId", companyId).param("userCode", userCode)
+                        insert into users(company_id, code, employee_number, name, phone, hired_at, workplace,
+                                          position_id, status, created_at, updated_at)
+                        values (:companyId, :userCode, :employeeNumber, 'Ada Lovelace', '010-0000-0000', :hiredAt,
+                                'Seoul', :positionId, 'ACTIVE', :now, :now) returning id
+                        """).param("companyId", companyId).param("userCode", userCode)
                 .param("employeeNumber", employeeNumber).param("hiredAt", LocalDate.of(2026, 8, 24))
                 .param("positionId", positionId).param("now", Timestamp.from(now)).query(Long.class).single();
         long accountId = jdbcClient.sql("""
-                insert into accounts(company_id, user_id, login_email, password_hash, status,
-                                     must_change_password, created_at, updated_at)
-                values (:companyId, :userId, :email, 'hash', 'ACTIVE', false, :now, :now) returning id
-                """).param("companyId", companyId).param("userId", userId).param("email", email)
+                        insert into accounts(company_id, user_id, login_email, password_hash, status,
+                                             must_change_password, created_at, updated_at)
+                        values (:companyId, :userId, :email, 'hash', 'ACTIVE', false, :now, :now) returning id
+                        """).param("companyId", companyId).param("userId", userId).param("email", email)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         jdbcClient.sql("insert into account_roles(account_id, role) values (:id, 'USER'), (:id, 'COMPANY_ADMIN')")
                 .param("id", accountId).update();
@@ -545,11 +544,11 @@ class OidcUserInfoIntegrationTest {
 
         String clientId = "userinfo-client-" + suffix;
         long internalClientId = jdbcClient.sql("""
-                insert into oauth_client(company_id, client_id, display_name, status, trust,
-                                         public_client, created_at, updated_at)
-                values (:companyId, :clientId, 'UserInfo RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
-                        true, :now, :now) returning id
-                """).param("companyId", companyId).param("clientId", clientId)
+                        insert into oauth_client(company_id, client_id, display_name, status, trust,
+                                                 public_client, created_at, updated_at)
+                        values (:companyId, :clientId, 'UserInfo RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
+                                true, :now, :now) returning id
+                        """).param("companyId", companyId).param("clientId", clientId)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         jdbcClient.sql("""
                 insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
@@ -565,18 +564,18 @@ class OidcUserInfoIntegrationTest {
 
     private long department(long companyId, String code, String name, Instant now) {
         return jdbcClient.sql("""
-                insert into departments(company_id, code, name, status, created_at, updated_at)
-                values (:companyId, :code, :name, 'ACTIVE', :now, :now) returning id
-                """).param("companyId", companyId).param("code", code).param("name", name)
+                        insert into departments(company_id, code, name, status, created_at, updated_at)
+                        values (:companyId, :code, :name, 'ACTIVE', :now, :now) returning id
+                        """).param("companyId", companyId).param("code", code).param("name", name)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
     }
 
     private void insertMembership(long companyId, long userId, long departmentId, boolean primary, Instant now) {
         jdbcClient.sql("""
-                insert into department_memberships(
-                    company_id, user_id, department_id, role, is_primary, started_at, created_at, updated_at)
-                values (:companyId, :userId, :departmentId, 'MEMBER', :primary, :now, :now, :now)
-                """).param("companyId", companyId).param("userId", userId)
+                        insert into department_memberships(
+                            company_id, user_id, department_id, role, is_primary, started_at, created_at, updated_at)
+                        values (:companyId, :userId, :departmentId, 'MEMBER', :primary, :now, :now, :now)
+                        """).param("companyId", companyId).param("userId", userId)
                 .param("departmentId", departmentId).param("primary", primary)
                 .param("now", Timestamp.from(now)).update();
     }
@@ -647,9 +646,15 @@ class OidcUserInfoIntegrationTest {
         return UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst(name);
     }
 
-    private record Discovery(String authorizationPath, String tokenPath, String userInfoPath) { }
-    private record Tokens(String idToken, String accessToken) { }
-    private record AlternateSubject(long accountId, UUID subject) { }
+    private record Discovery(String authorizationPath, String tokenPath, String userInfoPath) {
+    }
+
+    private record Tokens(String idToken, String accessToken) {
+    }
+
+    private record AlternateSubject(long accountId, UUID subject) {
+    }
+
     private record Fixture(
             long companyId,
             long userId,
@@ -661,5 +666,6 @@ class OidcUserInfoIntegrationTest {
             String email,
             String employeeNumber,
             UUID subject,
-            String clientId) { }
+            String clientId) {
+    }
 }

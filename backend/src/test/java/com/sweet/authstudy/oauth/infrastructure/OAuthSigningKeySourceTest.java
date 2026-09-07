@@ -1,9 +1,22 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.crypto.RSASSAVerifier;
+import com.nimbusds.jose.jwk.JWKMatcher;
+import com.nimbusds.jose.jwk.JWKSelector;
+import com.nimbusds.jose.jwk.KeyUse;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.SecurityContext;
+import com.nimbusds.jwt.SignedJWT;
+import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
+import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.JwsHeader;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
@@ -14,23 +27,10 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 
-import com.nimbusds.jose.JWSAlgorithm;
-import com.nimbusds.jose.jwk.JWKMatcher;
-import com.nimbusds.jose.jwk.JWKSelector;
-import com.nimbusds.jose.jwk.KeyUse;
-import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.jwk.source.JWKSource;
-import com.nimbusds.jose.proc.SecurityContext;
-import com.nimbusds.jose.crypto.RSASSAVerifier;
-import com.nimbusds.jwt.SignedJWT;
-import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
-import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
-import org.springframework.security.oauth2.jwt.JwtClaimsSet;
-import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
-import org.springframework.security.oauth2.jwt.JwsHeader;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class OAuthSigningKeySourceTest {
 
@@ -124,7 +124,7 @@ class OAuthSigningKeySourceTest {
                 .build();
 
         String token = encoder.encode(JwtEncoderParameters.from(
-                JwsHeader.with(SignatureAlgorithm.RS256).keyId("stale-kid").build(), claims))
+                        JwsHeader.with(SignatureAlgorithm.RS256).keyId("stale-kid").build(), claims))
                 .getTokenValue();
 
         SignedJWT signed = SignedJWT.parse(token);

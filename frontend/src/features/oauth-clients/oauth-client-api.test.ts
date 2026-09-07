@@ -1,12 +1,12 @@
-import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import {beforeEach, describe, expect, expectTypeOf, it, vi} from "vitest";
 
-import { ApiProblemError } from "@/lib/api/problem";
+import {ApiProblemError} from "@/lib/api/problem";
 import {
   oauthClientApi,
   type OAuthClientDetail,
   type OneTimeSecretResult,
 } from "./oauth-client-api";
-import { oauthScopeCatalog } from "./oauth-scope-catalog";
+import {oauthScopeCatalog} from "./oauth-scope-catalog";
 
 const detail = {
   companyCode: "ACME",
@@ -27,7 +27,7 @@ const detail = {
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: {"Content-Type": "application/json"},
   });
 }
 
@@ -40,8 +40,8 @@ describe("oauthClientApi", () => {
     await oauthClientApi.get("ACME", "client/id+value");
 
     expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/companies/ACME/oauth-clients/client%2Fid%2Bvalue"),
-      expect.anything(),
+        expect.stringContaining("/companies/ACME/oauth-clients/client%2Fid%2Bvalue"),
+        expect.anything(),
     );
   });
 
@@ -60,17 +60,17 @@ describe("oauthClientApi", () => {
       scopes: ["openid" as const],
       trust: "CONSENT_REQUIRED" as const,
     };
-    const oneTime = { client: detail, oneTimeSecret: "shown-once" };
+    const oneTime = {client: detail, oneTimeSecret: "shown-once"};
     vi.mocked(fetch)
-      .mockResolvedValueOnce(jsonResponse(oneTime, 201))
-      .mockResolvedValueOnce(jsonResponse(detail))
-      .mockResolvedValueOnce(jsonResponse(oneTime))
-      .mockResolvedValueOnce(jsonResponse(detail))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+        .mockResolvedValueOnce(jsonResponse(oneTime, 201))
+        .mockResolvedValueOnce(jsonResponse(detail))
+        .mockResolvedValueOnce(jsonResponse(oneTime))
+        .mockResolvedValueOnce(jsonResponse(detail))
+        .mockResolvedValueOnce(new Response(null, {status: 204}))
+        .mockResolvedValueOnce(new Response(null, {status: 204}));
 
     await expect(oauthClientApi.create("ACME", input)).resolves.toEqual(oneTime);
-    await expect(oauthClientApi.update("ACME", "client/id+value", { ...input, version: 3 })).resolves.toEqual(detail);
+    await expect(oauthClientApi.update("ACME", "client/id+value", {...input, version: 3})).resolves.toEqual(detail);
     await expect(oauthClientApi.rotateSecret("ACME", "client/id+value")).resolves.toEqual(oneTime);
     await expect(oauthClientApi.revokeSecret("ACME", "client/id+value")).resolves.toEqual(detail);
     await oauthClientApi.disable("ACME", "client/id+value", 3);
@@ -78,24 +78,24 @@ describe("oauthClientApi", () => {
 
     expect(vi.mocked(fetch).mock.calls.map(([url, init]) => [new URL(String(url)).pathname, init?.method, init?.body])).toEqual([
       ["/api/v1/admin/companies/ACME/oauth-clients", "POST", JSON.stringify(input)],
-      ["/api/v1/admin/companies/ACME/oauth-clients/client%2Fid%2Bvalue", "PUT", JSON.stringify({ ...input, version: 3 })],
+      ["/api/v1/admin/companies/ACME/oauth-clients/client%2Fid%2Bvalue", "PUT", JSON.stringify({...input, version: 3})],
       ["/api/v1/admin/companies/ACME/oauth-clients/client%2Fid%2Bvalue/rotate-secret", "POST", undefined],
       ["/api/v1/admin/companies/ACME/oauth-clients/client%2Fid%2Bvalue/revoke-secret", "POST", undefined],
-      ["/api/v1/admin/companies/ACME/oauth-clients/client%2Fid%2Bvalue/disable", "POST", JSON.stringify({ version: 3 })],
-      ["/api/v1/admin/companies/ACME/oauth-clients/client%2Fid%2Bvalue/enable", "POST", JSON.stringify({ version: 4 })],
+      ["/api/v1/admin/companies/ACME/oauth-clients/client%2Fid%2Bvalue/disable", "POST", JSON.stringify({version: 3})],
+      ["/api/v1/admin/companies/ACME/oauth-clients/client%2Fid%2Bvalue/enable", "POST", JSON.stringify({version: 4})],
     ]);
   });
 
   it("uses page pagination for clients and consents, but cursor pagination for events", async () => {
-    const page = { content: [], page: 1, size: 20, totalElements: 0, totalPages: 0 };
-    const cursor = { content: [], nextCursor: "opaque+cursor/=", hasNext: true };
+    const page = {content: [], page: 1, size: 20, totalElements: 0, totalPages: 0};
+    const cursor = {content: [], nextCursor: "opaque+cursor/=", hasNext: true};
     vi.mocked(fetch)
-      .mockResolvedValueOnce(jsonResponse(page))
-      .mockResolvedValueOnce(jsonResponse(page))
-      .mockResolvedValueOnce(jsonResponse(cursor));
+        .mockResolvedValueOnce(jsonResponse(page))
+        .mockResolvedValueOnce(jsonResponse(page))
+        .mockResolvedValueOnce(jsonResponse(cursor));
 
-    await expect(oauthClientApi.list("A/B", { page: 1, size: 20 })).resolves.toEqual(page);
-    await expect(oauthClientApi.listConsents("A/B", "client/id", { page: 1, size: 20 })).resolves.toEqual(page);
+    await expect(oauthClientApi.list("A/B", {page: 1, size: 20})).resolves.toEqual(page);
+    await expect(oauthClientApi.listConsents("A/B", "client/id", {page: 1, size: 20})).resolves.toEqual(page);
     await expect(oauthClientApi.listProtocolEvents("A/B", "client/id", {
       cursor: "opaque+cursor/=",
       size: 50,
@@ -112,8 +112,8 @@ describe("oauthClientApi", () => {
 
   it("encodes consent subjects and calls both revocation endpoints", async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+        .mockResolvedValueOnce(new Response(null, {status: 204}))
+        .mockResolvedValueOnce(new Response(null, {status: 204}));
 
     await oauthClientApi.revokeConsent("A/B", "client/id", "subject/value");
     await oauthClientApi.revokeAuthorizations("A/B", "client/id");
@@ -133,7 +133,7 @@ describe("oauthClientApi", () => {
       instance: "/api/v1/admin/companies/ACME/oauth-clients/client",
       code: "OPTIMISTIC_LOCK_CONFLICT",
       traceId: "oauth-trace",
-      fieldErrors: [{ field: "version", message: "최신 정보를 다시 불러오세요." }],
+      fieldErrors: [{field: "version", message: "최신 정보를 다시 불러오세요."}],
     }, 409));
 
     const error = await oauthClientApi.get("ACME", "client").catch((cause: unknown) => cause);
@@ -143,7 +143,7 @@ describe("oauthClientApi", () => {
       instance: "/api/v1/admin/companies/ACME/oauth-clients/client",
       code: "OPTIMISTIC_LOCK_CONFLICT",
       traceId: "oauth-trace",
-      fieldErrors: [{ field: "version", message: "최신 정보를 다시 불러오세요." }],
+      fieldErrors: [{field: "version", message: "최신 정보를 다시 불러오세요."}],
     });
   });
 });
@@ -151,12 +151,12 @@ describe("oauthClientApi", () => {
 describe("oauthScopeCatalog", () => {
   it("uses the fixed privacy-preserving labels", () => {
     expect(oauthScopeCatalog).toEqual({
-      openid: { label: "기본 식별자", description: "기본 식별자" },
-      profile: { label: "이름", description: "이름" },
-      email: { label: "로그인 이메일", description: "로그인 이메일" },
-      "hr.company": { label: "회사 정보", description: "회사 정보" },
-      "hr.organization": { label: "부서·직위 정보", description: "부서·직위 정보" },
-      "hr.roles": { label: "HR 역할", description: "HR 역할" },
+      openid: {label: "기본 식별자", description: "기본 식별자"},
+      profile: {label: "이름", description: "이름"},
+      email: {label: "로그인 이메일", description: "로그인 이메일"},
+      "hr.company": {label: "회사 정보", description: "회사 정보"},
+      "hr.organization": {label: "부서·직위 정보", description: "부서·직위 정보"},
+      "hr.roles": {label: "HR 역할", description: "HR 역할"},
     });
   });
 });

@@ -1,10 +1,10 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.util.Optional;
-
 import com.sweet.authstudy.oauth.domain.OAuthSubject;
 import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
 import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
 
 @Repository
 public class OAuthSubjectRepositoryAdapter implements OAuthSubjectRepository {

@@ -1,8 +1,5 @@
 package com.sweet.authstudy.hr.department.infrastructure;
 
-import java.util.List;
-import java.util.Optional;
-
 import com.sweet.authstudy.hr.department.domain.Department;
 import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
 import com.sweet.authstudy.hr.department.domain.DepartmentStatus;
@@ -10,6 +7,9 @@ import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class DepartmentRepositoryAdapter implements DepartmentRepository {
@@ -25,7 +25,7 @@ public class DepartmentRepositoryAdapter implements DepartmentRepository {
         DepartmentJpaEntity entity = department.id() == null
                 ? DepartmentJpaEntity.from(department)
                 : repository.findById(department.id())
-                        .orElseThrow(() -> new IllegalStateException("Department does not exist."));
+                .orElseThrow(() -> new IllegalStateException("Department does not exist."));
         if (department.id() != null) {
             entity.updateFrom(department);
         }

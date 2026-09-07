@@ -1,8 +1,6 @@
 package com.sweet.authstudy.shared.error;
 
-import java.sql.SQLException;
-import java.util.List;
-
+import com.sweet.authstudy.shared.trace.TraceIdProvider;
 import jakarta.servlet.http.HttpServletRequest;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -10,19 +8,21 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.HttpMediaTypeNotSupportedException;
-import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.util.StringUtils;
-import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
-import com.sweet.authstudy.shared.trace.TraceIdProvider;
+
+import java.sql.SQLException;
+import java.util.List;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -162,7 +162,8 @@ public class GlobalExceptionHandler {
             case UNSUPPORTED_MEDIA_TYPE -> "The request media type is not supported.";
             case DUPLICATE_CODE, DUPLICATE_EMAIL, DUPLICATE_EMPLOYEE_NUMBER ->
                     "A resource with the same unique value already exists.";
-            case OPTIMISTIC_LOCK_CONFLICT -> "The resource was changed by another request. Retry with the latest version.";
+            case OPTIMISTIC_LOCK_CONFLICT ->
+                    "The resource was changed by another request. Retry with the latest version.";
             case INVALID_STATE -> "The request is not valid for the current resource state.";
             case INTERNAL_ERROR -> INTERNAL_ERROR_DETAIL;
         };

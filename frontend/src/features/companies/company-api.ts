@@ -1,4 +1,4 @@
-import { apiClient } from "@/lib/api/client";
+import {apiClient} from "@/lib/api/client";
 
 export type CompanyStatus = "ACTIVE" | "INACTIVE";
 
@@ -43,23 +43,23 @@ function companyPath(params?: CompanyListParams): string {
 
 export const companyApi = {
   list: (params: CompanyListParams, signal?: AbortSignal) =>
-    apiClient.request<PageResponse<Company>>(companyPath(params), { signal }),
+      apiClient.request<PageResponse<Company>>(companyPath(params), {signal}),
   find: (companyCode: string, signal?: AbortSignal) =>
-    apiClient.request<Company>(`${companyPath()}/${companyCode.trim().toUpperCase()}`, { signal }),
+      apiClient.request<Company>(`${companyPath()}/${companyCode.trim().toUpperCase()}`, {signal}),
   create: (input: { code: string; name: string; emailDomain: string }) =>
-    apiClient.request<Company>(companyPath(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        code: input.code.trim().toUpperCase(),
-        name: input.name.trim(),
-        emailDomain: input.emailDomain.trim().toLowerCase(),
+      apiClient.request<Company>(companyPath(), {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          code: input.code.trim().toUpperCase(),
+          name: input.name.trim(),
+          emailDomain: input.emailDomain.trim().toLowerCase(),
+        }),
       }),
-    }),
   update: (companyCode: string, input: { name: string; status: CompanyStatus; version: number }) =>
-    apiClient.request<Company>(`${companyPath()}/${companyCode.trim().toUpperCase()}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: input.name.trim(), status: input.status, version: input.version }),
-    }),
+      apiClient.request<Company>(`${companyPath()}/${companyCode.trim().toUpperCase()}`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name: input.name.trim(), status: input.status, version: input.version}),
+      }),
 };

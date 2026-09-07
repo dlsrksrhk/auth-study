@@ -1,7 +1,27 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.jwk.JWKMatcher;
+import com.nimbusds.jose.jwk.JWKSelector;
+import com.nimbusds.jose.jwk.KeyUse;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.SecurityContext;
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
+import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
+import com.sweet.authstudy.shared.config.AppSecurityProperties;
+import com.sweet.authstudy.support.PostgresContainerConfiguration;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
@@ -19,28 +39,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import com.nimbusds.jose.JWSAlgorithm;
-import com.nimbusds.jose.jwk.JWKMatcher;
-import com.nimbusds.jose.jwk.JWKSelector;
-import com.nimbusds.jose.jwk.KeyUse;
-import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.jwk.source.JWKSource;
-import com.nimbusds.jose.proc.SecurityContext;
-import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
-import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
-import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
-import com.sweet.authstudy.shared.config.AppSecurityProperties;
-import com.sweet.authstudy.support.PostgresContainerConfiguration;
-import org.junit.jupiter.api.MethodOrderer;
-import org.junit.jupiter.api.Order;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestMethodOrder;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.test.context.ActiveProfiles;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)
@@ -48,12 +48,18 @@ import org.springframework.test.context.ActiveProfiles;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class OAuthSigningKeyPersistenceIntegrationTest {
 
-    @Autowired private JdbcClient jdbcClient;
-    @Autowired private OAuthSigningKeyRepository keys;
-    @Autowired private OAuthPrivateKeyCipher cipher;
-    @Autowired private JWKSource<SecurityContext> jwkSource;
-    @Autowired private OAuthSecurityProperties oauthProperties;
-    @Autowired private AppSecurityProperties appSecurityProperties;
+    @Autowired
+    private JdbcClient jdbcClient;
+    @Autowired
+    private OAuthSigningKeyRepository keys;
+    @Autowired
+    private OAuthPrivateKeyCipher cipher;
+    @Autowired
+    private JWKSource<SecurityContext> jwkSource;
+    @Autowired
+    private OAuthSecurityProperties oauthProperties;
+    @Autowired
+    private AppSecurityProperties appSecurityProperties;
 
     @Test
     @Order(1)
@@ -124,10 +130,10 @@ class OAuthSigningKeyPersistenceIntegrationTest {
     void database_rejects_a_second_active_key() {
         OAuthSigningKey active = keys.requireActive();
         assertThatThrownBy(() -> jdbcClient.sql("""
-                insert into oauth_signing_key(
-                    kid, algorithm, encrypted_private_material, public_jwk, status, activated_at)
-                values (:kid, 'RS256', :encrypted, cast(:publicJwk as jsonb), 'ACTIVE', :activatedAt)
-                """).param("kid", "duplicate-active-" + UUID.randomUUID())
+                        insert into oauth_signing_key(
+                            kid, algorithm, encrypted_private_material, public_jwk, status, activated_at)
+                        values (:kid, 'RS256', :encrypted, cast(:publicJwk as jsonb), 'ACTIVE', :activatedAt)
+                        """).param("kid", "duplicate-active-" + UUID.randomUUID())
                 .param("encrypted", active.encryptedPrivateMaterial())
                 .param("publicJwk", active.publicJwk())
                 .param("activatedAt", Timestamp.from(Instant.now())).update())
@@ -175,9 +181,9 @@ class OAuthSigningKeyPersistenceIntegrationTest {
         assertThat(activeCount()).isEqualTo(1L);
 
         jdbcClient.sql("""
-                update oauth_signing_key
-                set activated_at = :activatedAt, retired_at = :retiredAt where kid = :kid
-                """)
+                        update oauth_signing_key
+                        set activated_at = :activatedAt, retired_at = :retiredAt where kid = :kid
+                        """)
                 .param("activatedAt", Timestamp.from(rotationTime.minus(Duration.ofMinutes(10))))
                 .param("retiredAt", Timestamp.from(rotationTime.minus(Duration.ofMinutes(6))))
                 .param("kid", previous.kid()).update();
@@ -248,10 +254,10 @@ class OAuthSigningKeyPersistenceIntegrationTest {
         jdbcClient.sql("drop index uk_oauth_signing_key_single_active").update();
         try {
             jdbcClient.sql("""
-                    insert into oauth_signing_key(
-                        kid, algorithm, encrypted_private_material, public_jwk, status, activated_at)
-                    values (:kid, 'RS256', :encrypted, :publicJwk, 'ACTIVE', :activatedAt)
-                    """).param("kid", corruptKid)
+                            insert into oauth_signing_key(
+                                kid, algorithm, encrypted_private_material, public_jwk, status, activated_at)
+                            values (:kid, 'RS256', :encrypted, :publicJwk, 'ACTIVE', :activatedAt)
+                            """).param("kid", corruptKid)
                     .param("encrypted", active.encryptedPrivateMaterial())
                     .param("publicJwk", active.publicJwk())
                     .param("activatedAt", Timestamp.from(Instant.now())).update();

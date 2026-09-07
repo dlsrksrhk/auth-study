@@ -1,10 +1,10 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.util.List;
-
 import com.sweet.authstudy.oauth.domain.OAuthPublicClientRedirectRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Repository
 public class OAuthPublicClientRedirectRepositoryAdapter

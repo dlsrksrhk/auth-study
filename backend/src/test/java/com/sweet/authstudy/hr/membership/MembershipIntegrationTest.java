@@ -1,18 +1,5 @@
 package com.sweet.authstudy.hr.membership;
 
-import static com.sweet.authstudy.hr.department.application.DepartmentCommands.CreateDepartmentCommand;
-import static com.sweet.authstudy.hr.department.application.DepartmentCommands.ChangeDepartmentStatusCommand;
-import static com.sweet.authstudy.hr.membership.application.MembershipCommands.AssignMembershipCommand;
-import static com.sweet.authstudy.hr.membership.application.MembershipCommands.UpdateMembershipCommand;
-import static com.sweet.authstudy.hr.membership.domain.DepartmentRole.HEAD;
-import static com.sweet.authstudy.hr.membership.domain.DepartmentRole.MEMBER;
-import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.time.Instant;
-import java.time.LocalDate;
-
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.department.application.DepartmentService;
@@ -37,6 +24,19 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.time.LocalDate;
+
+import static com.sweet.authstudy.hr.department.application.DepartmentCommands.ChangeDepartmentStatusCommand;
+import static com.sweet.authstudy.hr.department.application.DepartmentCommands.CreateDepartmentCommand;
+import static com.sweet.authstudy.hr.membership.application.MembershipCommands.AssignMembershipCommand;
+import static com.sweet.authstudy.hr.membership.application.MembershipCommands.UpdateMembershipCommand;
+import static com.sweet.authstudy.hr.membership.domain.DepartmentRole.HEAD;
+import static com.sweet.authstudy.hr.membership.domain.DepartmentRole.MEMBER;
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)

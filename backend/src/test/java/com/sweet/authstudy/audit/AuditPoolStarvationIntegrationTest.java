@@ -1,13 +1,5 @@
 package com.sweet.authstudy.audit;
 
-import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.util.UUID;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-
 import com.sweet.authstudy.audit.application.AuditActions;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
@@ -25,6 +17,14 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
+import static org.assertj.core.api.Assertions.assertThat;
+
 @SpringBootTest(properties = {
         "spring.datasource.hikari.maximum-pool-size=2",
         "spring.datasource.hikari.minimum-idle=0",
@@ -33,9 +33,12 @@ import org.springframework.test.context.ActiveProfiles;
 @Import(PostgresContainerConfiguration.class)
 @ActiveProfiles("test")
 class AuditPoolStarvationIntegrationTest {
-    @Autowired CompanyService companyService;
-    @Autowired DepartmentService departmentService;
-    @Autowired JdbcTemplate jdbc;
+    @Autowired
+    CompanyService companyService;
+    @Autowired
+    DepartmentService departmentService;
+    @Autowired
+    JdbcTemplate jdbc;
 
     @Test
     void two_identified_failures_with_a_two_connection_pool_keep_original_errors_and_both_audits()
@@ -102,5 +105,6 @@ class AuditPoolStarvationIntegrationTest {
         jdbc.execute("DROP FUNCTION IF EXISTS task8_delayed_department_failure()");
     }
 
-    private record Fixture(String companyCode, long departmentId, long version) {}
+    private record Fixture(String companyCode, long departmentId, long version) {
+    }
 }

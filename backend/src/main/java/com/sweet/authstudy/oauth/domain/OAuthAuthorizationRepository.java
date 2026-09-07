@@ -3,11 +3,11 @@ package com.sweet.authstudy.oauth.domain;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.function.Function;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 public interface OAuthAuthorizationRepository {
-    enum RefreshRotationStatus { ROTATED, REUSED, INVALID }
+    enum RefreshRotationStatus {ROTATED, REUSED, INVALID}
 
     record LockedRefreshExchange(
             OAuthRefreshToken current,
@@ -64,7 +64,7 @@ public interface OAuthAuthorizationRepository {
         }
     }
 
-    enum CodeFinalizationResult { FINALIZED, INVALID }
+    enum CodeFinalizationResult {FINALIZED, INVALID}
 
     record IdTokenCandidate(
             String subject,
@@ -114,11 +114,19 @@ public interface OAuthAuthorizationRepository {
     }
 
     OAuthAuthorization save(OAuthAuthorization authorization);
+
     Optional<OAuthAuthorization> findById(String id);
-    default Optional<OAuthAuthorization> findByIdForUpdate(String id) { return findById(id); }
+
+    default Optional<OAuthAuthorization> findByIdForUpdate(String id) {
+        return findById(id);
+    }
+
     Optional<OAuthAuthorization> findByServerStateHash(String serverStateHash);
+
     Optional<OAuthAuthorizationCode> findByCodeHash(String codeHash);
+
     Optional<OAuthAuthorizationCode> findByCodeHashForUpdate(String codeHash);
+
     /**
      * Locks code, parent authorization, and current client in that stable order and consumes the code
      * in an independent transaction. A confirmed invalid exchange must be returned as a value from
@@ -126,6 +134,7 @@ public interface OAuthAuthorizationRepository {
      */
     <T> Optional<CodeConsumption<T>> consumeCodeAtomically(
             String codeHash, Instant consumedAt, Function<LockedCodeExchange, T> exchange);
+
     /**
      * Linearizes an authorization-code exchange at token persistence. Locks code, parent
      * authorization, current client, company, account, and user in that order, then merges only
@@ -133,6 +142,7 @@ public interface OAuthAuthorizationRepository {
      * must acquire OAuth scope locks before taking identity rows in the same application transaction.
      */
     CodeFinalizationResult finalizeAuthorizationCodeExchange(CodeFinalization finalization, Instant finalizedAt);
+
     /**
      * Locks refresh, parent authorization, client, company, account, and user in that order.
      * Reuse is returned as a value so family revocation commits before the protocol layer emits
@@ -141,30 +151,52 @@ public interface OAuthAuthorizationRepository {
     default <T> RefreshRotation<T> rotateRefreshAtomically(
             String refreshTokenHash, Instant exchangedAt,
             Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange) {
-        return rotateRefreshAtomically(refreshTokenHash, exchangedAt, exchange, ignored -> { });
+        return rotateRefreshAtomically(refreshTokenHash, exchangedAt, exchange, ignored -> {
+        });
     }
+
     <T> RefreshRotation<T> rotateRefreshAtomically(
             String refreshTokenHash, Instant exchangedAt,
             Function<LockedRefreshExchange, Optional<RefreshSuccess<T>>> exchange,
             Consumer<RefreshSuccess<T>> afterPersistence);
+
     Optional<OAuthAccessToken> findByAccessTokenHash(String accessTokenHash);
+
     Optional<OAuthRefreshToken> findByRefreshTokenHash(String refreshTokenHash);
+
     Optional<OAuthRefreshToken> findRefreshByHashForUpdate(String refreshTokenHash);
+
     OAuthAuthorizationCode saveAuthorizationCode(OAuthAuthorizationCode code);
+
     OAuthAccessToken saveAccessToken(OAuthAccessToken token);
+
     OAuthRefreshToken saveRefreshToken(OAuthRefreshToken token);
+
     void remove(String authorizationId);
-    /** Revokes one RP grant, including every access token and refresh generation it owns. */
+
+    /**
+     * Revokes one RP grant, including every access token and refresh generation it owns.
+     */
     default void revokeAuthorization(String authorizationId, Instant revokedAt) {
-        revokeAuthorization(authorizationId, revokedAt, () -> { });
+        revokeAuthorization(authorizationId, revokedAt, () -> {
+        });
     }
+
     void revokeAuthorization(String authorizationId, Instant revokedAt, Runnable afterRevocation);
+
     void revokeFamily(UUID familyId, Instant revokedAt);
+
     void lockByAccountId(long accountId);
+
     void lockByCompanyId(long companyId);
+
     void lockByClientId(long registeredClientId);
+
     void revokeByAccountId(long accountId, Instant revokedAt);
+
     void revokeByCompanyId(long companyId, Instant revokedAt);
+
     void revokeByClientId(long registeredClientId, Instant revokedAt);
+
     void revokeByAccountIdAndClientId(long accountId, long registeredClientId, Instant revokedAt);
 }

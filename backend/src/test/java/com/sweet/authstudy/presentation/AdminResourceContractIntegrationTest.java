@@ -1,24 +1,6 @@
 package com.sweet.authstudy.presentation;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.hamcrest.Matchers.endsWith;
-import static org.springframework.http.HttpHeaders.AUTHORIZATION;
-import static org.springframework.http.MediaType.APPLICATION_JSON;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import java.time.Clock;
-import java.time.LocalDate;
-import java.util.UUID;
-
 import com.jayway.jsonpath.JsonPath;
-import jakarta.persistence.EntityManagerFactory;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
@@ -42,9 +24,10 @@ import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
+import jakarta.persistence.EntityManagerFactory;
+import org.hibernate.SessionFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.hibernate.SessionFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -54,24 +37,49 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.endsWith;
+import static org.springframework.http.HttpHeaders.AUTHORIZATION;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(PostgresContainerConfiguration.class)
 @ActiveProfiles("test")
 class AdminResourceContractIntegrationTest {
-    @Autowired MockMvc mvc;
-    @Autowired AccountRepository accountRepository;
-    @Autowired UserRepository userRepository;
-    @Autowired CompanyRepository companyRepository;
-    @Autowired AccountService accountService;
-    @Autowired CompanyService companyService;
-    @Autowired PositionService positionService;
-    @Autowired DepartmentService departmentService;
-    @Autowired UserService userService;
-    @Autowired JwtTokenService jwtTokenService;
-    @Autowired PasswordEncoder passwordEncoder;
-    @Autowired Clock clock;
-    @Autowired EntityManagerFactory entityManagerFactory;
+    @Autowired
+    MockMvc mvc;
+    @Autowired
+    AccountRepository accountRepository;
+    @Autowired
+    UserRepository userRepository;
+    @Autowired
+    CompanyRepository companyRepository;
+    @Autowired
+    AccountService accountService;
+    @Autowired
+    CompanyService companyService;
+    @Autowired
+    PositionService positionService;
+    @Autowired
+    DepartmentService departmentService;
+    @Autowired
+    UserService userService;
+    @Autowired
+    JwtTokenService jwtTokenService;
+    @Autowired
+    PasswordEncoder passwordEncoder;
+    @Autowired
+    Clock clock;
+    @Autowired
+    EntityManagerFactory entityManagerFactory;
 
     private Account system;
     private AuthenticatedAccount systemActor;
@@ -231,14 +239,14 @@ class AdminResourceContractIntegrationTest {
                 companyRepository.findByCode(companyCode).orElseThrow().id(), "U001").orElseThrow().id();
         long accountId = accountRepository.findByUserId(userId).orElseThrow().id();
         mvc.perform(put("/api/v1/admin/companies/{companyCode}/users/U001/admin-role", companyCode)
-                        .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isNoContent());
+                .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isNoContent());
         assertThat(accountRepository.findById(accountId).orElseThrow().roles()).contains(AccountRole.COMPANY_ADMIN);
         mvc.perform(get("/api/v1/admin/companies/{companyCode}/users/U001", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.roles", org.hamcrest.Matchers.hasItems("USER", "COMPANY_ADMIN")));
         mvc.perform(delete("/api/v1/admin/companies/{companyCode}/users/U001/admin-role", companyCode)
-                        .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isNoContent());
+                .header(AUTHORIZATION, "Bearer " + systemToken)).andExpect(status().isNoContent());
         assertThat(accountRepository.findById(accountId).orElseThrow().roles()).doesNotContain(AccountRole.COMPANY_ADMIN);
         mvc.perform(get("/api/v1/admin/companies/{companyCode}/users/U001", companyCode)
                         .header(AUTHORIZATION, "Bearer " + systemToken))

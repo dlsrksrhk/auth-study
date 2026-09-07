@@ -1,36 +1,5 @@
 package com.sweet.authstudy.oauth.acceptance;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doCallRealMethod;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.sql.Timestamp;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.util.Base64;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
-import java.util.regex.Pattern;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sweet.authstudy.identity.domain.AccountRole;
@@ -54,6 +23,34 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.Base64;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
+import java.util.regex.Pattern;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(PostgresContainerConfiguration.class)
@@ -67,11 +64,16 @@ class AuthorizationCodePkceIntegrationTest {
     private static final String WRONG_VERIFIER =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
 
-    @Autowired private MockMvc mockMvc;
-    @Autowired private ObjectMapper objectMapper;
-    @Autowired private JdbcClient jdbcClient;
-    @Autowired private PlatformTransactionManager transactionManager;
-    @MockitoSpyBean private SpringOAuth2AuthorizationService authorizationService;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private JdbcClient jdbcClient;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+    @MockitoSpyBean
+    private SpringOAuth2AuthorizationService authorizationService;
 
     @Test
     void discovery_driven_authorization_code_exchange_succeeds_exactly_once() throws Exception {
@@ -571,7 +573,7 @@ class AuthorizationCodePkceIntegrationTest {
     }
 
     private ExchangeResult exchangeAfterBarrier(CyclicBarrier start, Endpoints endpoints,
-            Fixture fixture, IssuedCode issued) throws Exception {
+                                                Fixture fixture, IssuedCode issued) throws Exception {
         start.await(10, TimeUnit.SECONDS);
         MvcResult result = mockMvc.perform(tokenRequest(endpoints, fixture, issued.code(), VERIFIER)).andReturn();
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsByteArray());
@@ -605,8 +607,8 @@ class AuthorizationCodePkceIntegrationTest {
         String code = query(location, "code");
         assertThat(code).isNotBlank();
         String authorizationId = jdbcClient.sql("""
-                        select authorization_id from oauth_authorization_code where code_hash = :hash
-                        """).param("hash", sha256(code)).query(String.class).single();
+                select authorization_id from oauth_authorization_code where code_hash = :hash
+                """).param("hash", sha256(code)).query(String.class).single();
         return new IssuedCode(code, authorizationId);
     }
 
@@ -710,9 +712,9 @@ class AuthorizationCodePkceIntegrationTest {
                     .param("now", Timestamp.from(now)).update();
         }
         jdbcClient.sql("""
-                        insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
-                        values (:clientId, :redirectUri, 'AUTHORIZATION')
-                        """).param("clientId", internalClientId).param("redirectUri", CALLBACK.toString()).update();
+                insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
+                values (:clientId, :redirectUri, 'AUTHORIZATION')
+                """).param("clientId", internalClientId).param("redirectUri", CALLBACK.toString()).update();
         jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, 'openid')")
                 .param("clientId", internalClientId).update();
         if (consentRequired) {
@@ -765,10 +767,17 @@ class AuthorizationCodePkceIntegrationTest {
         }
     }
 
-    private record Endpoints(String authorizationPath, String tokenPath) { }
+    private record Endpoints(String authorizationPath, String tokenPath) {
+    }
+
     private record Fixture(long accountId, long companyId, long userId, UUID subject,
-            long internalClientId, String clientId, String rawSecret) { }
-    private record IssuedCode(String code, String authorizationId) { }
-    private record ExchangeResult(int status, String error) { }
+                           long internalClientId, String clientId, String rawSecret) {
+    }
+
+    private record IssuedCode(String code, String authorizationId) {
+    }
+
+    private record ExchangeResult(int status, String error) {
+    }
 
 }

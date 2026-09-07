@@ -1,39 +1,14 @@
 package com.sweet.authstudy.authorization;
 
-import java.io.IOException;
-import java.net.URI;
-import java.time.Clock;
-import java.time.Instant;
-import java.util.Arrays;
-import java.util.LinkedHashSet;
-import java.util.Set;
-
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
-import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
-import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
 import com.sweet.authstudy.oauth.application.IdpSessionStateService;
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
-import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
-import com.sweet.authstudy.oauth.domain.OAuthPublicClientRedirectRepository;
-import com.sweet.authstudy.oauth.infrastructure.OAuthClientSecretPasswordEncoder;
-import com.sweet.authstudy.oauth.infrastructure.OAuthAuthorizationMapper;
-import com.sweet.authstudy.oauth.infrastructure.OAuthRefreshTokenAuthenticationProvider;
-import com.sweet.authstudy.oauth.infrastructure.OAuthGrantRevocationAuthenticationProvider;
-import com.sweet.authstudy.oauth.infrastructure.OAuthTokenCustomizer;
-import com.sweet.authstudy.oauth.infrastructure.OidcUserInfoMapper;
-import com.sweet.authstudy.oauth.infrastructure.OidcUserInfoAuthorizationService;
-import com.sweet.authstudy.oauth.infrastructure.AtomicAuthorizationCodeClientAuthenticationProvider;
-import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
-import com.sweet.authstudy.oauth.presentation.IdpLoginController;
-import com.sweet.authstudy.oauth.presentation.IdpSessionAuthentication;
-import com.sweet.authstudy.oauth.presentation.OAuthProtocolCorsConfigurationSource;
-import com.sweet.authstudy.oauth.presentation.OAuthProtocolErrorHandler;
-import com.sweet.authstudy.oauth.presentation.OidcLogoutSuccessHandler;
+import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.domain.*;
+import com.sweet.authstudy.oauth.infrastructure.*;
+import com.sweet.authstudy.oauth.presentation.*;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -43,45 +18,48 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.ServletServerHttpResponse;
-import org.springframework.security.core.AuthenticationException;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
-import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Token;
 import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.authentication.ClientSecretAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider;
-import org.springframework.security.oauth2.server.authorization.oidc.authentication.OidcUserInfoAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
+import org.springframework.security.oauth2.server.authorization.oidc.authentication.OidcUserInfoAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
-import org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator;
-import org.springframework.security.oauth2.server.authorization.token.JwtGenerator;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2AccessTokenGenerator;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2RefreshTokenGenerator;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.context.SecurityContextHolderFilter;
+import org.springframework.security.oauth2.server.authorization.token.*;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
-import org.springframework.security.web.savedrequest.NullRequestCache;
+import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
+import org.springframework.security.web.savedrequest.NullRequestCache;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.net.URI;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Configuration(proxyBeanMethods = false)
 public class AuthorizationServerSecurityConfig {
@@ -208,10 +186,10 @@ public class AuthorizationServerSecurityConfig {
                                             oauthAuthorizations, protocolEvents));
                                 }
                                 providers.stream()
-                                            .filter(ClientSecretAuthenticationProvider.class::isInstance)
-                                            .map(ClientSecretAuthenticationProvider.class::cast)
-                                            .forEach(provider -> provider.setPasswordEncoder(
-                                                    new OAuthClientSecretPasswordEncoder()));
+                                        .filter(ClientSecretAuthenticationProvider.class::isInstance)
+                                        .map(ClientSecretAuthenticationProvider.class::cast)
+                                        .forEach(provider -> provider.setPasswordEncoder(
+                                                new OAuthClientSecretPasswordEncoder()));
                             })
                             .errorResponseHandler((request, response, exception) -> {
                                 String errorCode = protocolErrorCode(exception);
@@ -220,8 +198,8 @@ public class AuthorizationServerSecurityConfig {
                                 OAuthProtocolEvent.EventType eventType = revocation
                                         ? OAuthProtocolEvent.EventType.AUTHORIZATION_REVOKED
                                         : "refresh_token".equals(grantType)
-                                                ? OAuthProtocolEvent.EventType.REFRESH_ROTATED
-                                                : OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_EXCHANGED;
+                                          ? OAuthProtocolEvent.EventType.REFRESH_ROTATED
+                                          : OAuthProtocolEvent.EventType.AUTHORIZATION_CODE_EXCHANGED;
                                 protocolEvents.failure(eventType,
                                         OAuthProtocolEventService.Context.empty(), errorCode,
                                         OAuthProtocolEvent.Metadata.from(java.util.Map.of(
@@ -288,7 +266,7 @@ public class AuthorizationServerSecurityConfig {
     }
 
     private static void writeInvalidToken(HttpServletRequest request, HttpServletResponse response,
-            AuthenticationException exception) throws IOException {
+                                          AuthenticationException exception) throws IOException {
         OAuth2Error error = new OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN);
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Bearer error=\"invalid_token\"");
@@ -300,8 +278,8 @@ public class AuthorizationServerSecurityConfig {
         if (exception instanceof OAuth2AuthenticationException oauth) {
             return switch (oauth.getError().getErrorCode()) {
                 case OAuth2ErrorCodes.INVALID_CLIENT, OAuth2ErrorCodes.INVALID_GRANT,
-                        OAuth2ErrorCodes.INVALID_SCOPE, OAuth2ErrorCodes.INVALID_REQUEST,
-                        OAuth2ErrorCodes.UNSUPPORTED_GRANT_TYPE, OAuth2ErrorCodes.UNAUTHORIZED_CLIENT ->
+                     OAuth2ErrorCodes.INVALID_SCOPE, OAuth2ErrorCodes.INVALID_REQUEST,
+                     OAuth2ErrorCodes.UNSUPPORTED_GRANT_TYPE, OAuth2ErrorCodes.UNAUTHORIZED_CLIENT ->
                         oauth.getError().getErrorCode();
                 default -> OAuth2ErrorCodes.SERVER_ERROR;
             };
@@ -320,7 +298,7 @@ public class AuthorizationServerSecurityConfig {
     }
 
     private static void writeProtocolError(HttpServletRequest request,
-            HttpServletResponse response, String errorCode) throws IOException {
+                                           HttpServletResponse response, String errorCode) throws IOException {
         boolean challengedInvalidClient = protocolErrorStatus(request, errorCode)
                 == HttpServletResponse.SC_UNAUTHORIZED;
         response.setStatus(protocolErrorStatus(request, errorCode));
@@ -374,9 +352,9 @@ public class AuthorizationServerSecurityConfig {
         private final String issuerOrigin;
 
         private IdpBrowserRequestFilter(OAuthSecurityProperties properties,
-                OAuthClientRepository clients, IdpSessionStateService sessionStates,
-                OAuthConsentService consents, OAuthProtocolErrorHandler protocolErrors,
-                OAuthProtocolEventService protocolEvents, Clock clock) {
+                                        OAuthClientRepository clients, IdpSessionStateService sessionStates,
+                                        OAuthConsentService consents, OAuthProtocolErrorHandler protocolErrors,
+                                        OAuthProtocolEventService protocolEvents, Clock clock) {
             this.properties = properties;
             this.clients = clients;
             this.sessionStates = sessionStates;
@@ -490,14 +468,14 @@ public class AuthorizationServerSecurityConfig {
             if (!"POST".equals(request.getMethod())) return false;
             return switch (request.getRequestURI()) {
                 case "/idp/login", "/idp/password", "/idp/consent/deny",
-                        "/oauth2/authorize", "/connect/logout" -> true;
+                     "/oauth2/authorize", "/connect/logout" -> true;
                 case "/oauth2/revoke" -> request.getSession(false) != null;
                 default -> false;
             };
         }
 
         private boolean sessionIsCurrent(HttpServletRequest request, HttpServletResponse response,
-                IdpSessionAuthentication authentication) {
+                                         IdpSessionAuthentication authentication) {
             var session = request.getSession(false);
             if (session == null) return false;
             Instant now = clock.instant();
@@ -625,7 +603,7 @@ public class AuthorizationServerSecurityConfig {
             OAuthProtocolEventService.Context context = client == null
                     ? OAuthProtocolEventService.Context.empty()
                     : new OAuthProtocolEventService.Context(
-                            client.clientId(), null, null, client.companyId(), null);
+                    client.clientId(), null, null, client.companyId(), null);
             protocolEvents.failure(OAuthProtocolEvent.EventType.AUTHORIZATION_REQUEST_VALIDATED,
                     context, OAuth2ErrorCodes.INVALID_REQUEST,
                     OAuthProtocolEvent.Metadata.from(java.util.Map.of(
@@ -641,7 +619,7 @@ public class AuthorizationServerSecurityConfig {
             OAuthProtocolEventService.Context context = client == null
                     ? OAuthProtocolEventService.Context.empty()
                     : new OAuthProtocolEventService.Context(
-                            client.clientId(), null, null, client.companyId(), null);
+                    client.clientId(), null, null, client.companyId(), null);
             OAuthProtocolEvent.Metadata metadata = OAuthProtocolEvent.Metadata.from(java.util.Map.of(
                     "endpoint", OAuthProtocolEvent.Endpoint.AUTHORIZE,
                     "response_type", OAuthProtocolEvent.ResponseType.CODE,

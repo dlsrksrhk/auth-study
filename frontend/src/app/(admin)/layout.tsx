@@ -1,30 +1,30 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {Suspense, useEffect} from "react";
+import {usePathname, useRouter, useSearchParams} from "next/navigation";
 
-import { AdminHeader } from "@/components/layout/admin-header";
-import { resolveAdminCompanyCode, resolveAdminRedirect } from "@/components/layout/admin-access";
-import { AdminSidebar } from "@/components/layout/admin-sidebar";
-import { CompanySwitcher } from "@/components/layout/company-switcher";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useAuth } from "@/features/auth/auth-provider";
-import { OAuthSecretOperationProvider } from "@/features/oauth-clients/oauth-secret-operation-provider";
-import { AdminSecretOperationProvider } from "@/features/users/admin-secret-operation-provider";
+import {AdminHeader} from "@/components/layout/admin-header";
+import {resolveAdminCompanyCode, resolveAdminRedirect} from "@/components/layout/admin-access";
+import {AdminSidebar} from "@/components/layout/admin-sidebar";
+import {CompanySwitcher} from "@/components/layout/company-switcher";
+import {Skeleton} from "@/components/ui/skeleton";
+import {useAuth} from "@/features/auth/auth-provider";
+import {OAuthSecretOperationProvider} from "@/features/oauth-clients/oauth-secret-operation-provider";
+import {AdminSecretOperationProvider} from "@/features/users/admin-secret-operation-provider";
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default function AdminLayout({children}: { children: React.ReactNode }) {
   return (
-    <AdminSecretOperationProvider>
-      <OAuthSecretOperationProvider>
-        <Suspense fallback={<AdminLoading />}>
-          <AdminLayoutContent>{children}</AdminLayoutContent>
-        </Suspense>
-      </OAuthSecretOperationProvider>
-    </AdminSecretOperationProvider>
+      <AdminSecretOperationProvider>
+        <OAuthSecretOperationProvider>
+          <Suspense fallback={<AdminLoading/>}>
+            <AdminLayoutContent>{children}</AdminLayoutContent>
+          </Suspense>
+        </OAuthSecretOperationProvider>
+      </AdminSecretOperationProvider>
   );
 }
 
-function AdminLayoutContent({ children }: { children: React.ReactNode }) {
+function AdminLayoutContent({children}: { children: React.ReactNode }) {
   const auth = useAuth();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -50,35 +50,35 @@ function AdminLayoutContent({ children }: { children: React.ReactNode }) {
   }, [redirect, router]);
 
   if (auth.status === "loading" || redirect || !auth.actor) {
-    return <AdminLoading />;
+    return <AdminLoading/>;
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 md:flex">
-      <AdminSidebar companyCode={companyCode} currentPath={pathname} roles={auth.actor.roles} />
-      <div className="min-w-0 flex-1">
-        <AdminHeader
-          companyControl={
-            <CompanySwitcher
-              fixedCompanyCode={companyScope.fixed ? actorCompany : undefined}
+      <div className="min-h-screen bg-slate-100 md:flex">
+        <AdminSidebar companyCode={companyCode} currentPath={pathname} roles={auth.actor.roles}/>
+        <div className="min-w-0 flex-1">
+          <AdminHeader
+              companyControl={
+                <CompanySwitcher
+                    fixedCompanyCode={companyScope.fixed ? actorCompany : undefined}
+                    pathname={pathname}
+                    selectedCompanyCode={companyCode}
+                />
+              }
               pathname={pathname}
-              selectedCompanyCode={companyCode}
-            />
-          }
-          pathname={pathname}
-        />
-        <main className="p-4 sm:p-6 lg:p-8">{children}</main>
+          />
+          <main className="p-4 sm:p-6 lg:p-8">{children}</main>
+        </div>
       </div>
-    </div>
   );
 }
 
 function AdminLoading() {
   return (
-    <main aria-busy="true" className="min-h-screen bg-slate-100 p-8">
-      <span className="sr-only">관리자 화면을 준비하는 중입니다.</span>
-      <Skeleton className="h-16 w-full" />
-      <Skeleton className="mt-5 h-80 w-full" />
-    </main>
+      <main aria-busy="true" className="min-h-screen bg-slate-100 p-8">
+        <span className="sr-only">관리자 화면을 준비하는 중입니다.</span>
+        <Skeleton className="h-16 w-full"/>
+        <Skeleton className="mt-5 h-80 w-full"/>
+      </main>
   );
 }

@@ -8,7 +8,7 @@ public final class OAuthSigningKey {
 
     public static final String RS256 = "RS256";
 
-    public enum Status { ACTIVE, VERIFICATION_ONLY }
+    public enum Status {ACTIVE, VERIFICATION_ONLY}
 
     private final Long id;
     private final String kid;
@@ -20,7 +20,7 @@ public final class OAuthSigningKey {
     private final Instant retiredAt;
 
     private OAuthSigningKey(Long id, String kid, String algorithm, String publicJwk,
-            byte[] encryptedPrivateMaterial, Status status, Instant activatedAt, Instant retiredAt) {
+                            byte[] encryptedPrivateMaterial, Status status, Instant activatedAt, Instant retiredAt) {
         this.id = id;
         this.kid = requireText(kid, "kid");
         this.algorithm = requireText(algorithm, "algorithm");
@@ -47,13 +47,13 @@ public final class OAuthSigningKey {
     }
 
     public static OAuthSigningKey active(String kid, String publicJwk,
-            byte[] encryptedPrivateMaterial, Instant activatedAt) {
+                                         byte[] encryptedPrivateMaterial, Instant activatedAt) {
         return new OAuthSigningKey(null, kid, RS256, publicJwk, encryptedPrivateMaterial,
                 Status.ACTIVE, activatedAt, null);
     }
 
     public static OAuthSigningKey restore(Long id, String kid, String algorithm, String publicJwk,
-            byte[] encryptedPrivateMaterial, Status status, Instant activatedAt, Instant retiredAt) {
+                                          byte[] encryptedPrivateMaterial, Status status, Instant activatedAt, Instant retiredAt) {
         return new OAuthSigningKey(id, kid, algorithm, publicJwk, encryptedPrivateMaterial,
                 status, activatedAt, retiredAt);
     }
@@ -66,16 +66,37 @@ public final class OAuthSigningKey {
                 Status.VERIFICATION_ONLY, activatedAt, Objects.requireNonNull(at, "at"));
     }
 
-    public Long id() { return id; }
-    public String kid() { return kid; }
-    public String algorithm() { return algorithm; }
-    public String publicJwk() { return publicJwk; }
+    public Long id() {
+        return id;
+    }
+
+    public String kid() {
+        return kid;
+    }
+
+    public String algorithm() {
+        return algorithm;
+    }
+
+    public String publicJwk() {
+        return publicJwk;
+    }
+
     public byte[] encryptedPrivateMaterial() {
         return Arrays.copyOf(encryptedPrivateMaterial, encryptedPrivateMaterial.length);
     }
-    public Status status() { return status; }
-    public Instant activatedAt() { return activatedAt; }
-    public Instant retiredAt() { return retiredAt; }
+
+    public Status status() {
+        return status;
+    }
+
+    public Instant activatedAt() {
+        return activatedAt;
+    }
+
+    public Instant retiredAt() {
+        return retiredAt;
+    }
 
     private static String requireText(String value, String name) {
         if (value == null || value.isBlank()) {

@@ -1,10 +1,5 @@
 package com.sweet.authstudy.oauth.presentation;
 
-import java.io.IOException;
-import java.net.URI;
-import java.time.temporal.ChronoUnit;
-import java.util.Map;
-
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
@@ -28,7 +23,14 @@ import org.springframework.security.oauth2.server.authorization.oidc.authenticat
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.web.util.UriComponentsBuilder;
 
-/** Validates and completes RP-Initiated Logout against the current IdP browser session. */
+import java.io.IOException;
+import java.net.URI;
+import java.time.temporal.ChronoUnit;
+import java.util.Map;
+
+/**
+ * Validates and completes RP-Initiated Logout against the current IdP browser session.
+ */
 public final class OidcLogoutSuccessHandler implements AuthenticationProvider, AuthenticationSuccessHandler {
 
     private final JwtDecoder decoder;
@@ -37,7 +39,7 @@ public final class OidcLogoutSuccessHandler implements AuthenticationProvider, A
     private final OAuthProtocolEventService events;
 
     public OidcLogoutSuccessHandler(JwtDecoder decoder, OAuthClientRepository clients,
-            OAuthSecurityProperties properties, OAuthProtocolEventService events) {
+                                    OAuthSecurityProperties properties, OAuthProtocolEventService events) {
         this.decoder = decoder;
         this.clients = clients;
         this.properties = properties;
@@ -62,7 +64,7 @@ public final class OidcLogoutSuccessHandler implements AuthenticationProvider, A
                 || session.companyId() == null || session.companyId() != client.companyId()
                 || jwt.getClaimAsInstant("auth_time") == null
                 || !session.authenticatedAt().truncatedTo(ChronoUnit.SECONDS)
-                        .equals(jwt.getClaimAsInstant("auth_time").truncatedTo(ChronoUnit.SECONDS))
+                .equals(jwt.getClaimAsInstant("auth_time").truncatedTo(ChronoUnit.SECONDS))
                 || !validState(request.getState())
                 || !registeredRedirect(client, request.getPostLogoutRedirectUri())) {
             throw invalidRequest();
@@ -122,7 +124,7 @@ public final class OidcLogoutSuccessHandler implements AuthenticationProvider, A
 
     @Override
     public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
-            Authentication authentication) throws IOException, ServletException {
+                                        Authentication authentication) throws IOException, ServletException {
         OidcLogoutAuthenticationToken logout = (OidcLogoutAuthenticationToken) authentication;
         IdpSessionAuthentication session = (IdpSessionAuthentication) logout.getPrincipal();
         var context = new OAuthProtocolEventService.Context(logout.getClientId(), session.sub(),
@@ -139,7 +141,7 @@ public final class OidcLogoutSuccessHandler implements AuthenticationProvider, A
         String location = logout.getState() == null
                 ? redirect.toString()
                 : UriComponentsBuilder.fromUri(redirect).queryParam("state", logout.getState())
-                        .build().encode().toUriString();
+                .build().encode().toUriString();
         response.sendRedirect(location);
     }
 

@@ -1,10 +1,10 @@
 package com.sweet.authstudy.shared.error;
 
-import java.util.List;
-
 import com.sweet.authstudy.shared.trace.TraceIdProvider;
 import org.springframework.http.ProblemDetail;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 @Component
 public class ApiProblemFactory {

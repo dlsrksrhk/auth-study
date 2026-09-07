@@ -1,15 +1,16 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.time.Instant;
-import java.util.Optional;
-
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
+import java.util.Optional;
+
 interface OAuthAccessTokenJpaRepository extends JpaRepository<OAuthAccessTokenJpaEntity, Long> {
     Optional<OAuthAccessTokenJpaEntity> findByAccessTokenHash(String accessTokenHash);
+
     Optional<OAuthAccessTokenJpaEntity> findFirstByAuthorizationIdOrderByIssuedAtDescIdDesc(String authorizationId);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -49,5 +50,5 @@ interface OAuthAccessTokenJpaRepository extends JpaRepository<OAuthAccessTokenJp
                      where principal_account_id = :accountId and registered_client_id = :clientId)
             """, nativeQuery = true)
     int revokeByAccountIdAndClientId(@Param("accountId") long accountId,
-            @Param("clientId") long clientId, @Param("at") Instant at);
+                                     @Param("clientId") long clientId, @Param("at") Instant at);
 }

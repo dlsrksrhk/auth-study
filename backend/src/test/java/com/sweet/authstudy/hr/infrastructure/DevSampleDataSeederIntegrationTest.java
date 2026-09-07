@@ -1,9 +1,5 @@
 package com.sweet.authstudy.hr.infrastructure;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.time.Instant;
-
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.department.domain.DepartmentRepository;
 import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
@@ -20,19 +16,31 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
 @SpringBootTest(properties = "app.dev.sample-data.enabled=true")
 @Import(PostgresContainerConfiguration.class)
 @ActiveProfiles({"dev", "test"})
 @Transactional
 class DevSampleDataSeederIntegrationTest {
-    @Autowired private DevSampleDataSeeder seeder;
-    @Autowired private CompanyRepository companies;
-    @Autowired private DepartmentRepository departments;
-    @Autowired private PositionRepository positions;
-    @Autowired private UserRepository users;
-    @Autowired private MembershipRepository memberships;
-    @Autowired private AccountRepository accounts;
-    @Autowired private PasswordEncoder passwords;
+    @Autowired
+    private DevSampleDataSeeder seeder;
+    @Autowired
+    private CompanyRepository companies;
+    @Autowired
+    private DepartmentRepository departments;
+    @Autowired
+    private PositionRepository positions;
+    @Autowired
+    private UserRepository users;
+    @Autowired
+    private MembershipRepository memberships;
+    @Autowired
+    private AccountRepository accounts;
+    @Autowired
+    private PasswordEncoder passwords;
 
     @Test
     void startup_creates_twenty_active_users_with_accounts_positions_and_primary_departments() {

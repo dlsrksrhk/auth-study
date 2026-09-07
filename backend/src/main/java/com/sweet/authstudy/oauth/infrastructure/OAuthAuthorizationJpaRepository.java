@@ -1,14 +1,14 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.time.Instant;
-import java.util.List;
-
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+
+import java.time.Instant;
+import java.util.List;
 
 interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizationJpaEntity, String> {
     java.util.Optional<OAuthAuthorizationJpaEntity> findByServerStateHash(String serverStateHash);
@@ -17,7 +17,9 @@ interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizati
     @Query("select a from OAuthAuthorizationJpaEntity a where a.id = :id")
     java.util.Optional<OAuthAuthorizationJpaEntity> findByIdForUpdate(@Param("id") String id);
 
-    /** Common transaction-scoped sentinel acquired before any refresh/auth row lock for a grant. */
+    /**
+     * Common transaction-scoped sentinel acquired before any refresh/auth row lock for a grant.
+     */
     @Query(value = "select pg_advisory_xact_lock(hashtextextended(:authorizationId, 1181783497276652981))",
             nativeQuery = true)
     void lockGrantScope(@Param("authorizationId") String authorizationId);
@@ -51,7 +53,7 @@ interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizati
              where a.id = :authorizationId and a.revokedAt is null
             """)
     int revokeById(@Param("authorizationId") String authorizationId,
-            @Param("reason") String reason, @Param("at") Instant at);
+                   @Param("reason") String reason, @Param("at") Instant at);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -61,7 +63,7 @@ interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizati
              where a.principalAccountId = :accountId and a.revokedAt is null
             """)
     int revokeByAccountId(@Param("accountId") long accountId, @Param("reason") String reason,
-            @Param("at") Instant at);
+                          @Param("at") Instant at);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -71,7 +73,7 @@ interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizati
              where a.companyId = :companyId and a.revokedAt is null
             """)
     int revokeByCompanyId(@Param("companyId") long companyId, @Param("reason") String reason,
-            @Param("at") Instant at);
+                          @Param("at") Instant at);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -81,7 +83,7 @@ interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizati
              where a.registeredClientId = :clientId and a.revokedAt is null
             """)
     int revokeByClientId(@Param("clientId") long clientId, @Param("reason") String reason,
-            @Param("at") Instant at);
+                         @Param("at") Instant at);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -92,5 +94,5 @@ interface OAuthAuthorizationJpaRepository extends JpaRepository<OAuthAuthorizati
                and a.revokedAt is null
             """)
     int revokeByAccountIdAndClientId(@Param("accountId") long accountId,
-            @Param("clientId") long clientId, @Param("reason") String reason, @Param("at") Instant at);
+                                     @Param("clientId") long clientId, @Param("reason") String reason, @Param("at") Instant at);
 }

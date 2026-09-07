@@ -1,15 +1,9 @@
 package com.sweet.authstudy.hr.position.infrastructure;
 
-import java.time.Instant;
-
 import com.sweet.authstudy.hr.position.domain.Position;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import jakarta.persistence.Version;
+import jakarta.persistence.*;
+
+import java.time.Instant;
 
 @Entity
 @Table(name = "positions")

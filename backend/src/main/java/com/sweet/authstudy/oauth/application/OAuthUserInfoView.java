@@ -4,7 +4,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Immutable, claim-shaped application result. Protocol maps are created only at the SAS adapter boundary. */
+/**
+ * Immutable, claim-shaped application result. Protocol maps are created only at the SAS adapter boundary.
+ */
 public record OAuthUserInfoView(
         String subject,
         Optional<Profile> profile,

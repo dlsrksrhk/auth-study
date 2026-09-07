@@ -1,32 +1,13 @@
 package com.sweet.authstudy.identity.application;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.util.Optional;
-
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
-import com.sweet.authstudy.identity.domain.Account;
-import com.sweet.authstudy.identity.domain.AccountRepository;
+import com.sweet.authstudy.identity.domain.*;
 import com.sweet.authstudy.identity.domain.AccountRepository.LoginSnapshot;
-import com.sweet.authstudy.identity.domain.AccountRole;
-import com.sweet.authstudy.identity.domain.AccountStatus;
-import com.sweet.authstudy.identity.domain.RefreshTokenRepository;
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
@@ -39,6 +20,16 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 class CredentialAuthenticationServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-21T10:15:30Z");

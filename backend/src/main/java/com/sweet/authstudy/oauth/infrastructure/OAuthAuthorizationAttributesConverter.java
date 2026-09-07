@@ -1,13 +1,13 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.util.Set;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
+
+import java.util.Set;
 
 @Converter
 class OAuthAuthorizationAttributesConverter

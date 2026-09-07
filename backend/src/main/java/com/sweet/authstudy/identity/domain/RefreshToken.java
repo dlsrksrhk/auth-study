@@ -15,7 +15,7 @@ public final class RefreshToken {
     private Instant revokedAt;
 
     private RefreshToken(Long id, String tokenHash, UUID familyId, long accountId,
-            Instant issuedAt, Instant expiresAt, Instant usedAt, Instant revokedAt) {
+                         Instant issuedAt, Instant expiresAt, Instant usedAt, Instant revokedAt) {
         this.id = id;
         this.tokenHash = Objects.requireNonNull(tokenHash);
         this.familyId = Objects.requireNonNull(familyId);
@@ -27,24 +27,56 @@ public final class RefreshToken {
     }
 
     public static RefreshToken issue(String tokenHash, UUID familyId, long accountId,
-            Instant issuedAt, Instant expiresAt) {
+                                     Instant issuedAt, Instant expiresAt) {
         return new RefreshToken(null, tokenHash, familyId, accountId, issuedAt, expiresAt, null, null);
     }
 
     public static RefreshToken restore(Long id, String tokenHash, UUID familyId, long accountId,
-            Instant issuedAt, Instant expiresAt, Instant usedAt, Instant revokedAt) {
+                                       Instant issuedAt, Instant expiresAt, Instant usedAt, Instant revokedAt) {
         return new RefreshToken(id, tokenHash, familyId, accountId, issuedAt, expiresAt, usedAt, revokedAt);
     }
 
-    public void markUsed(Instant now) { this.usedAt = Objects.requireNonNull(now); }
-    public void revoke(Instant now) { this.revokedAt = Objects.requireNonNull(now); }
-    public boolean expiredAt(Instant now) { return !expiresAt.isAfter(now); }
-    public Long id() { return id; }
-    public String tokenHash() { return tokenHash; }
-    public UUID familyId() { return familyId; }
-    public long accountId() { return accountId; }
-    public Instant issuedAt() { return issuedAt; }
-    public Instant expiresAt() { return expiresAt; }
-    public Instant usedAt() { return usedAt; }
-    public Instant revokedAt() { return revokedAt; }
+    public void markUsed(Instant now) {
+        this.usedAt = Objects.requireNonNull(now);
+    }
+
+    public void revoke(Instant now) {
+        this.revokedAt = Objects.requireNonNull(now);
+    }
+
+    public boolean expiredAt(Instant now) {
+        return !expiresAt.isAfter(now);
+    }
+
+    public Long id() {
+        return id;
+    }
+
+    public String tokenHash() {
+        return tokenHash;
+    }
+
+    public UUID familyId() {
+        return familyId;
+    }
+
+    public long accountId() {
+        return accountId;
+    }
+
+    public Instant issuedAt() {
+        return issuedAt;
+    }
+
+    public Instant expiresAt() {
+        return expiresAt;
+    }
+
+    public Instant usedAt() {
+        return usedAt;
+    }
+
+    public Instant revokedAt() {
+        return revokedAt;
+    }
 }

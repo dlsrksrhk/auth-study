@@ -1,13 +1,7 @@
 package com.sweet.authstudy.oauth.domain;
 
 import java.time.Instant;
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 public final class OAuthProtocolEvent {
 
@@ -31,11 +25,16 @@ public final class OAuthProtocolEvent {
         LOGOUT_COMPLETED
     }
 
-    public enum Outcome { SUCCESS, FAILURE, DENIED }
-    public enum Endpoint { AUTHORIZE, LOGIN, PASSWORD, CONSENT, TOKEN, REVOCATION, USERINFO, LOGOUT }
-    public enum GrantType { AUTHORIZATION_CODE, REFRESH_TOKEN }
-    public enum ResponseType { CODE }
-    public enum AuthenticationMethod { NONE, CLIENT_SECRET_BASIC, CLIENT_SECRET_POST }
+    public enum Outcome {SUCCESS, FAILURE, DENIED}
+
+    public enum Endpoint {AUTHORIZE, LOGIN, PASSWORD, CONSENT, TOKEN, REVOCATION, USERINFO, LOGOUT}
+
+    public enum GrantType {AUTHORIZATION_CODE, REFRESH_TOKEN}
+
+    public enum ResponseType {CODE}
+
+    public enum AuthenticationMethod {NONE, CLIENT_SECRET_BASIC, CLIENT_SECRET_POST}
+
     public enum FailureReason {
         INVALID_REQUEST,
         INVALID_CLIENT,
@@ -181,8 +180,8 @@ public final class OAuthProtocolEvent {
     private final Metadata metadata;
 
     private OAuthProtocolEvent(Long id, Instant occurredAt, String correlationId,
-            EventType eventType, Outcome outcome, String clientId, UUID subject,
-            Long accountId, Long companyId, String authorizationId, String errorCode, Metadata metadata) {
+                               EventType eventType, Outcome outcome, String clientId, UUID subject,
+                               Long accountId, Long companyId, String authorizationId, String errorCode, Metadata metadata) {
         if (id != null && id <= 0) throw new IllegalArgumentException("id must be positive.");
         this.id = id;
         this.occurredAt = Objects.requireNonNull(occurredAt, "occurredAt");
@@ -199,15 +198,15 @@ public final class OAuthProtocolEvent {
     }
 
     public static OAuthProtocolEvent create(Instant occurredAt, String correlationId,
-            EventType eventType, Outcome outcome, String clientId, UUID subject,
-            Long accountId, Long companyId, String authorizationId, String errorCode, Metadata metadata) {
+                                            EventType eventType, Outcome outcome, String clientId, UUID subject,
+                                            Long accountId, Long companyId, String authorizationId, String errorCode, Metadata metadata) {
         return new OAuthProtocolEvent(null, occurredAt, correlationId, eventType, outcome,
                 clientId, subject, accountId, companyId, authorizationId, errorCode, metadata);
     }
 
     public static OAuthProtocolEvent restore(Long id, Instant occurredAt, String correlationId,
-            EventType eventType, Outcome outcome, String clientId, UUID subject,
-            Long accountId, Long companyId, String authorizationId, String errorCode, Metadata metadata) {
+                                             EventType eventType, Outcome outcome, String clientId, UUID subject,
+                                             Long accountId, Long companyId, String authorizationId, String errorCode, Metadata metadata) {
         return new OAuthProtocolEvent(id, occurredAt, correlationId, eventType, outcome,
                 clientId, subject, accountId, companyId, authorizationId, errorCode, metadata);
     }
@@ -250,16 +249,51 @@ public final class OAuthProtocolEvent {
         return new IllegalArgumentException("protocol event metadata contains a forbidden key or value");
     }
 
-    public Long id() { return id; }
-    public Instant occurredAt() { return occurredAt; }
-    public String correlationId() { return correlationId; }
-    public EventType eventType() { return eventType; }
-    public Outcome outcome() { return outcome; }
-    public String clientId() { return clientId; }
-    public UUID subject() { return subject; }
-    public Long accountId() { return accountId; }
-    public Long companyId() { return companyId; }
-    public String authorizationId() { return authorizationId; }
-    public String errorCode() { return errorCode; }
-    public Metadata metadata() { return metadata; }
+    public Long id() {
+        return id;
+    }
+
+    public Instant occurredAt() {
+        return occurredAt;
+    }
+
+    public String correlationId() {
+        return correlationId;
+    }
+
+    public EventType eventType() {
+        return eventType;
+    }
+
+    public Outcome outcome() {
+        return outcome;
+    }
+
+    public String clientId() {
+        return clientId;
+    }
+
+    public UUID subject() {
+        return subject;
+    }
+
+    public Long accountId() {
+        return accountId;
+    }
+
+    public Long companyId() {
+        return companyId;
+    }
+
+    public String authorizationId() {
+        return authorizationId;
+    }
+
+    public String errorCode() {
+        return errorCode;
+    }
+
+    public Metadata metadata() {
+        return metadata;
+    }
 }

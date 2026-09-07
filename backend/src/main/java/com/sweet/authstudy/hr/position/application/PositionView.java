@@ -1,8 +1,8 @@
 package com.sweet.authstudy.hr.position.application;
 
-import java.time.Instant;
-
 import com.sweet.authstudy.hr.position.domain.Position;
+
+import java.time.Instant;
 
 public record PositionView(
         long id,

@@ -1,7 +1,5 @@
 package com.sweet.authstudy.authorization;
 
-import java.io.IOException;
-
 import com.sweet.authstudy.shared.config.AppSecurityProperties;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.error.SecurityProblemWriter;
@@ -12,9 +10,12 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpMethod;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import java.io.IOException;
+
 public class SameOriginRequestGuard extends OncePerRequestFilter {
     private final AppSecurityProperties properties;
     private final SecurityProblemWriter problemWriter;
+
     public SameOriginRequestGuard(AppSecurityProperties properties, SecurityProblemWriter problemWriter) {
         this.properties = properties;
         this.problemWriter = problemWriter;

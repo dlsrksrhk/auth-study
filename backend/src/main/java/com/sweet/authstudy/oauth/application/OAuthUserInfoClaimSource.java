@@ -14,7 +14,7 @@ public interface OAuthUserInfoClaimSource {
 
     Optional<Snapshot> load(String rawAccessToken);
 
-    enum Status { ACTIVE, INACTIVE }
+    enum Status {ACTIVE, INACTIVE}
 
     record Authorization(
             String id,

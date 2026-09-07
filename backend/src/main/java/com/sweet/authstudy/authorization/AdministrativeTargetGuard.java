@@ -1,7 +1,5 @@
 package com.sweet.authstudy.authorization;
 
-import java.util.Objects;
-
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.identity.domain.AccountRole;
@@ -10,6 +8,8 @@ import com.sweet.authstudy.shared.error.ErrorCode;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Objects;
 
 @Component
 public class AdministrativeTargetGuard {

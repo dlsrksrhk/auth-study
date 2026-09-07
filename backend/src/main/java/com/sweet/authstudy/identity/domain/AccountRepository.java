@@ -1,9 +1,9 @@
 package com.sweet.authstudy.identity.domain;
 
 import java.time.Instant;
-import java.util.Optional;
-import java.util.List;
 import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 
 public interface AccountRepository {
 
@@ -29,5 +29,6 @@ public interface AccountRepository {
 
     Optional<LoginSnapshot> findSystemLoginSnapshot(String loginEmail);
 
-    record LoginSnapshot(long accountId, String passwordHash, AccountStatus status, Instant lockedUntil) {}
+    record LoginSnapshot(long accountId, String passwordHash, AccountStatus status, Instant lockedUntil) {
+    }
 }

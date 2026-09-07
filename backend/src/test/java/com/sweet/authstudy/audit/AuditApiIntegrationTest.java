@@ -1,29 +1,15 @@
 package com.sweet.authstudy.audit;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.matchesPattern;
-import static org.springframework.http.HttpHeaders.AUTHORIZATION;
-import static org.springframework.http.MediaType.APPLICATION_JSON;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import java.time.Clock;
-import java.util.UUID;
-
-import com.sweet.authstudy.authorization.AuthenticatedAccount;
-import com.sweet.authstudy.identity.application.JwtTokenService;
-import com.sweet.authstudy.identity.domain.Account;
-import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.audit.application.AuditActions;
 import com.sweet.authstudy.audit.application.AuditService;
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.department.application.DepartmentCommands.CreateDepartmentCommand;
 import com.sweet.authstudy.hr.department.application.DepartmentService;
+import com.sweet.authstudy.identity.application.JwtTokenService;
+import com.sweet.authstudy.identity.domain.Account;
+import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,19 +21,38 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Clock;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.springframework.http.HttpHeaders.AUTHORIZATION;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(PostgresContainerConfiguration.class)
 @ActiveProfiles("test")
 class AuditApiIntegrationTest {
-    @Autowired MockMvc mvc;
-    @Autowired AccountRepository accountRepository;
-    @Autowired PasswordEncoder passwordEncoder;
-    @Autowired JwtTokenService jwtTokenService;
-    @Autowired Clock clock;
-    @Autowired CompanyService companyService;
-    @Autowired DepartmentService departmentService;
-    @Autowired AuditService auditService;
+    @Autowired
+    MockMvc mvc;
+    @Autowired
+    AccountRepository accountRepository;
+    @Autowired
+    PasswordEncoder passwordEncoder;
+    @Autowired
+    JwtTokenService jwtTokenService;
+    @Autowired
+    Clock clock;
+    @Autowired
+    CompanyService companyService;
+    @Autowired
+    DepartmentService departmentService;
+    @Autowired
+    AuditService auditService;
 
     private String token;
     private AuthenticatedAccount actor;

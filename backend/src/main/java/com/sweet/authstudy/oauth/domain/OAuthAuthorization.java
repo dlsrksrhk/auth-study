@@ -8,7 +8,7 @@ import java.util.UUID;
 
 public final class OAuthAuthorization {
 
-    public enum Status { ACTIVE, REVOKED }
+    public enum Status {ACTIVE, REVOKED}
 
     public record AuthorizationRequest(
             String redirectUri,
@@ -31,13 +31,13 @@ public final class OAuthAuthorization {
     }
 
     public record Attributes(String principalName, String authorizationRequestUri,
-            AuthorizationRequest authorizationRequest, UUID sessionBinding) {
+                             AuthorizationRequest authorizationRequest, UUID sessionBinding) {
         public Attributes(String principalName, String authorizationRequestUri) {
             this(principalName, authorizationRequestUri, null, null);
         }
 
         public Attributes(String principalName, String authorizationRequestUri,
-                AuthorizationRequest authorizationRequest) {
+                          AuthorizationRequest authorizationRequest) {
             this(principalName, authorizationRequestUri, authorizationRequest, null);
         }
 
@@ -72,7 +72,7 @@ public final class OAuthAuthorization {
         }
 
         public static Ownership verified(OAuthClient client, OAuthSubject subject,
-                long principalAccountId, long accountCompanyId) {
+                                         long principalAccountId, long accountCompanyId) {
             Objects.requireNonNull(client, "client");
             Objects.requireNonNull(subject, "subject");
             if (client.id() == null || subject.id() == null) {
@@ -87,10 +87,21 @@ public final class OAuthAuthorization {
             return new Ownership(client.id(), subject.subject(), principalAccountId, accountCompanyId);
         }
 
-        public long registeredClientId() { return registeredClientId; }
-        public UUID subject() { return subject; }
-        public long principalAccountId() { return principalAccountId; }
-        public long companyId() { return companyId; }
+        public long registeredClientId() {
+            return registeredClientId;
+        }
+
+        public UUID subject() {
+            return subject;
+        }
+
+        public long principalAccountId() {
+            return principalAccountId;
+        }
+
+        public long companyId() {
+            return companyId;
+        }
     }
 
     private final String id;
@@ -114,12 +125,12 @@ public final class OAuthAuthorization {
     private OAuthRefreshToken refreshToken;
 
     private OAuthAuthorization(String id, long registeredClientId, UUID subject, long principalAccountId,
-            long companyId, String authorizationGrantType, Set<String> authorizedScopes,
-            Attributes attributes, String serverStateHash, Instant authenticatedAt, Status status,
-            String revocationReason, Instant createdAt, Instant expiresAt, Instant revokedAt,
-            IdTokenEvidence idTokenEvidence,
-            OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
-            OAuthRefreshToken refreshToken) {
+                               long companyId, String authorizationGrantType, Set<String> authorizedScopes,
+                               Attributes attributes, String serverStateHash, Instant authenticatedAt, Status status,
+                               String revocationReason, Instant createdAt, Instant expiresAt, Instant revokedAt,
+                               IdTokenEvidence idTokenEvidence,
+                               OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
+                               OAuthRefreshToken refreshToken) {
         this.id = OAuthRefreshToken.requireText(id, "id");
         this.registeredClientId = registeredClientId;
         this.subject = Objects.requireNonNull(subject, "subject");
@@ -149,8 +160,8 @@ public final class OAuthAuthorization {
     }
 
     public static OAuthAuthorization create(String id, Ownership ownership, String authorizationGrantType,
-            Set<String> authorizedScopes, Attributes attributes, String serverStateHash, Instant authenticatedAt,
-            Instant createdAt, Instant expiresAt) {
+                                            Set<String> authorizedScopes, Attributes attributes, String serverStateHash, Instant authenticatedAt,
+                                            Instant createdAt, Instant expiresAt) {
         Objects.requireNonNull(ownership, "ownership");
         return new OAuthAuthorization(id, ownership.registeredClientId(), ownership.subject(),
                 ownership.principalAccountId(), ownership.companyId(),
@@ -159,11 +170,11 @@ public final class OAuthAuthorization {
     }
 
     public static OAuthAuthorization restore(String id, long registeredClientId, UUID subject,
-            long principalAccountId, long companyId, String authorizationGrantType,
-            Set<String> authorizedScopes, Attributes attributes, String serverStateHash, Instant authenticatedAt,
-            Status status, String revocationReason, Instant createdAt, Instant expiresAt,
-            Instant revokedAt, OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
-            OAuthRefreshToken refreshToken) {
+                                             long principalAccountId, long companyId, String authorizationGrantType,
+                                             Set<String> authorizedScopes, Attributes attributes, String serverStateHash, Instant authenticatedAt,
+                                             Status status, String revocationReason, Instant createdAt, Instant expiresAt,
+                                             Instant revokedAt, OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
+                                             OAuthRefreshToken refreshToken) {
         return restore(id, registeredClientId, subject, principalAccountId, companyId,
                 authorizationGrantType, authorizedScopes, attributes, serverStateHash, authenticatedAt,
                 status, revocationReason, createdAt, expiresAt, revokedAt, null,
@@ -171,12 +182,12 @@ public final class OAuthAuthorization {
     }
 
     public static OAuthAuthorization restore(String id, long registeredClientId, UUID subject,
-            long principalAccountId, long companyId, String authorizationGrantType,
-            Set<String> authorizedScopes, Attributes attributes, String serverStateHash, Instant authenticatedAt,
-            Status status, String revocationReason, Instant createdAt, Instant expiresAt,
-            Instant revokedAt, IdTokenEvidence idTokenEvidence,
-            OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
-            OAuthRefreshToken refreshToken) {
+                                             long principalAccountId, long companyId, String authorizationGrantType,
+                                             Set<String> authorizedScopes, Attributes attributes, String serverStateHash, Instant authenticatedAt,
+                                             Status status, String revocationReason, Instant createdAt, Instant expiresAt,
+                                             Instant revokedAt, IdTokenEvidence idTokenEvidence,
+                                             OAuthAuthorizationCode authorizationCode, OAuthAccessToken accessToken,
+                                             OAuthRefreshToken refreshToken) {
         return new OAuthAuthorization(id, registeredClientId, subject, principalAccountId, companyId,
                 authorizationGrantType, authorizedScopes, attributes, serverStateHash, authenticatedAt, status,
                 revocationReason, createdAt, expiresAt, revokedAt, idTokenEvidence,
@@ -210,8 +221,13 @@ public final class OAuthAuthorization {
         }
     }
 
-    public boolean expiredAt(Instant now) { return !expiresAt.isAfter(Objects.requireNonNull(now)); }
-    public boolean activeAt(Instant now) { return status == Status.ACTIVE && revokedAt == null && !expiredAt(now); }
+    public boolean expiredAt(Instant now) {
+        return !expiresAt.isAfter(Objects.requireNonNull(now));
+    }
+
+    public boolean activeAt(Instant now) {
+        return status == Status.ACTIVE && revokedAt == null && !expiredAt(now);
+    }
 
     private void requireSameAuthorization(String authorizationId) {
         if (!id.equals(authorizationId)) {
@@ -219,23 +235,79 @@ public final class OAuthAuthorization {
         }
     }
 
-    public String id() { return id; }
-    public long registeredClientId() { return registeredClientId; }
-    public UUID subject() { return subject; }
-    public long principalAccountId() { return principalAccountId; }
-    public long companyId() { return companyId; }
-    public String authorizationGrantType() { return authorizationGrantType; }
-    public Set<String> authorizedScopes() { return authorizedScopes; }
-    public Attributes attributes() { return attributes; }
-    public String serverStateHash() { return serverStateHash; }
-    public Instant authenticatedAt() { return authenticatedAt; }
-    public Status status() { return status; }
-    public String revocationReason() { return revocationReason; }
-    public Instant createdAt() { return createdAt; }
-    public Instant expiresAt() { return expiresAt; }
-    public Instant revokedAt() { return revokedAt; }
-    public Optional<IdTokenEvidence> idTokenEvidence() { return Optional.ofNullable(idTokenEvidence); }
-    public Optional<OAuthAuthorizationCode> authorizationCode() { return Optional.ofNullable(authorizationCode); }
-    public Optional<OAuthAccessToken> accessToken() { return Optional.ofNullable(accessToken); }
-    public Optional<OAuthRefreshToken> refreshToken() { return Optional.ofNullable(refreshToken); }
+    public String id() {
+        return id;
+    }
+
+    public long registeredClientId() {
+        return registeredClientId;
+    }
+
+    public UUID subject() {
+        return subject;
+    }
+
+    public long principalAccountId() {
+        return principalAccountId;
+    }
+
+    public long companyId() {
+        return companyId;
+    }
+
+    public String authorizationGrantType() {
+        return authorizationGrantType;
+    }
+
+    public Set<String> authorizedScopes() {
+        return authorizedScopes;
+    }
+
+    public Attributes attributes() {
+        return attributes;
+    }
+
+    public String serverStateHash() {
+        return serverStateHash;
+    }
+
+    public Instant authenticatedAt() {
+        return authenticatedAt;
+    }
+
+    public Status status() {
+        return status;
+    }
+
+    public String revocationReason() {
+        return revocationReason;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
+    public Instant expiresAt() {
+        return expiresAt;
+    }
+
+    public Instant revokedAt() {
+        return revokedAt;
+    }
+
+    public Optional<IdTokenEvidence> idTokenEvidence() {
+        return Optional.ofNullable(idTokenEvidence);
+    }
+
+    public Optional<OAuthAuthorizationCode> authorizationCode() {
+        return Optional.ofNullable(authorizationCode);
+    }
+
+    public Optional<OAuthAccessToken> accessToken() {
+        return Optional.ofNullable(accessToken);
+    }
+
+    public Optional<OAuthRefreshToken> refreshToken() {
+        return Optional.ofNullable(refreshToken);
+    }
 }

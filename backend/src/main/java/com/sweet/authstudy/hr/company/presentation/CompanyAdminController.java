@@ -1,32 +1,25 @@
 package com.sweet.authstudy.hr.company.presentation;
 
-import static com.sweet.authstudy.hr.company.presentation.CompanyRequests.CreateCompanyRequest;
-import static com.sweet.authstudy.hr.company.presentation.CompanyRequests.UpdateCompanyRequest;
-
-import java.util.Set;
-
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.company.application.CompanyView;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.shared.presentation.Locations;
 import com.sweet.authstudy.shared.presentation.PageResponse;
 import com.sweet.authstudy.shared.presentation.PageRules;
-import com.sweet.authstudy.shared.presentation.Locations;
 import com.sweet.authstudy.shared.security.ActorContext;
 import com.sweet.authstudy.shared.security.TenantGuard;
 import com.sweet.authstudy.shared.validation.ValidCode;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Set;
+
+import static com.sweet.authstudy.hr.company.presentation.CompanyRequests.CreateCompanyRequest;
+import static com.sweet.authstudy.hr.company.presentation.CompanyRequests.UpdateCompanyRequest;
 
 @RestController
 @RequestMapping("/api/v1/admin/companies")

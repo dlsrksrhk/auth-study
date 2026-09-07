@@ -1,8 +1,8 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
-import org.springframework.context.annotation.Primary;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Primary;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.stereotype.Service;
@@ -21,7 +21,7 @@ public final class SpringOAuth2AuthorizationConsentService implements OAuth2Auth
 
     @Autowired
     SpringOAuth2AuthorizationConsentService(OAuthConsentService consents,
-            OAuthConsentDecisionContext decisions) {
+                                            OAuthConsentDecisionContext decisions) {
         this.consents = consents;
         this.decisions = decisions;
     }

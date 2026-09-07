@@ -1,9 +1,9 @@
 package com.sweet.authstudy.identity.infrastructure;
 
-import java.security.SecureRandom;
-
 import com.sweet.authstudy.identity.application.PasswordGenerator;
 import org.springframework.stereotype.Component;
+
+import java.security.SecureRandom;
 
 @Component
 public class SecureRandomPasswordGenerator implements PasswordGenerator {

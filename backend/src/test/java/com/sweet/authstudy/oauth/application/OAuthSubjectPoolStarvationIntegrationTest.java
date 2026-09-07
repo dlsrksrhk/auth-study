@@ -1,21 +1,5 @@
 package com.sweet.authstudy.oauth.application;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-
 import com.sweet.authstudy.oauth.domain.OAuthSubject;
 import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
 import com.sweet.authstudy.oauth.infrastructure.OAuthSubjectRepositoryAdapter;
@@ -31,6 +15,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.*;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(properties = {
         "spring.datasource.hikari.maximum-pool-size=4",

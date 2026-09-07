@@ -1,13 +1,5 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import java.time.Clock;
-
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import org.junit.jupiter.api.Test;
@@ -22,10 +14,18 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 
+import java.time.Clock;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
+
 @ExtendWith(MockitoExtension.class)
 class OAuthGrantRevocationAuthenticationProviderTest {
-    @Mock OAuthAuthorizationRepository authorizations;
-    @Mock OAuthProtocolEventService events;
+    @Mock
+    OAuthAuthorizationRepository authorizations;
+    @Mock
+    OAuthProtocolEventService events;
 
     @Test
     void token_lookup_failure_becomes_server_error_without_partial_revocation() {

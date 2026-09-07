@@ -1,25 +1,13 @@
 package com.sweet.authstudy.oauth.application;
 
-import java.time.Clock;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
-
-import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
-import com.sweet.authstudy.oauth.domain.OAuthConsent;
-import com.sweet.authstudy.oauth.domain.OAuthConsentRepository;
+import com.sweet.authstudy.oauth.domain.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Clock;
+import java.util.*;
 
 @Service
 public class OAuthConsentService {
@@ -31,9 +19,9 @@ public class OAuthConsentService {
     private final Clock clock;
 
     public OAuthConsentService(OAuthConsentRepository consents,
-            OAuthClientRepository clients,
-            OAuthAuthorizationRepository authorizations,
-            Clock clock) {
+                               OAuthClientRepository clients,
+                               OAuthAuthorizationRepository authorizations,
+                               Clock clock) {
         this.consents = consents;
         this.clients = clients;
         this.authorizations = authorizations;
@@ -71,7 +59,7 @@ public class OAuthConsentService {
 
     @Transactional(readOnly = true)
     public ConsentReview reviewPending(long accountId, long companyId, UUID sub,
-            String authorizationId, String publicClientId, Set<String> requestedScopes) {
+                                       String authorizationId, String publicClientId, Set<String> requestedScopes) {
         OAuthAuthorization authorization = authorizations.findById(authorizationId)
                 .filter(candidate -> candidate.activeAt(clock.instant()))
                 .orElseThrow(OAuthConsentService::invalidPending);
@@ -99,7 +87,7 @@ public class OAuthConsentService {
 
     @Transactional(readOnly = true)
     public ApprovalDecision validateApproval(String rawServerState, String publicClientId,
-            Set<String> submittedScopes, long accountId, long companyId, long userId, UUID sub) {
+                                             Set<String> submittedScopes, long accountId, long companyId, long userId, UUID sub) {
         if (rawServerState == null || rawServerState.isBlank()
                 || publicClientId == null || publicClientId.isBlank()) throw invalidPending();
         OAuthAuthorization authorization = authorizations.findByServerStateHash(sha256(rawServerState))
@@ -126,7 +114,7 @@ public class OAuthConsentService {
 
     @Transactional(readOnly = true)
     public void validateSasApproval(ApprovalDecision decision, long accountId,
-            long registeredClientId, Set<String> cumulativeScopes) {
+                                    long registeredClientId, Set<String> cumulativeScopes) {
         Set<String> snapshot = Set.copyOf(cumulativeScopes);
         OAuthClient client = activeClient(registeredClientId);
         if (decision.accountId() != accountId
@@ -184,10 +172,11 @@ public class OAuthConsentService {
         }
     }
 
-    public record ScopeView(String scope, String description, boolean newlyRequested) { }
+    public record ScopeView(String scope, String description, boolean newlyRequested) {
+    }
 
     public record ConsentReview(long registeredClientId, String clientId, String clientDisplayName,
-            List<ScopeView> requestedScopes, List<ScopeView> newlyRequestedScopes) {
+                                List<ScopeView> requestedScopes, List<ScopeView> newlyRequestedScopes) {
         public ConsentReview {
             requestedScopes = List.copyOf(requestedScopes);
             newlyRequestedScopes = List.copyOf(newlyRequestedScopes);
@@ -195,8 +184,8 @@ public class OAuthConsentService {
     }
 
     public record ApprovalDecision(String authorizationId, String serverStateHash,
-            long accountId, long companyId, long userId, UUID sub,
-            long registeredClientId, String clientId, Set<String> requestedScopes) {
+                                   long accountId, long companyId, long userId, UUID sub,
+                                   long registeredClientId, String clientId, Set<String> requestedScopes) {
         public ApprovalDecision {
             requestedScopes = Set.copyOf(requestedScopes);
         }

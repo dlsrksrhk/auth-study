@@ -1,7 +1,7 @@
 package com.sweet.authstudy.oauth.application;
 
-import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.audit.application.AuditActions;
+import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
@@ -9,15 +9,16 @@ import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.shared.application.PageResult;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class OAuthAdminService {
@@ -31,8 +32,8 @@ public class OAuthAdminService {
     private final Clock clock;
 
     public OAuthAdminService(OAuthClientService clientService, OAuthClientRepository clients,
-            OAuthConsentAdminQuery consents, OAuthConsentService consentService, OAuthProtocolEventQuery events,
-            OAuthGrantRevocationService grants, AuditService audit, Clock clock) {
+                             OAuthConsentAdminQuery consents, OAuthConsentService consentService, OAuthProtocolEventQuery events,
+                             OAuthGrantRevocationService grants, AuditService audit, Clock clock) {
         this.clientService = clientService;
         this.clients = clients;
         this.consents = consents;
@@ -45,7 +46,7 @@ public class OAuthAdminService {
 
     @Transactional(readOnly = true)
     public PageResult<OAuthConsentAdminQuery.Entry> consents(AuthenticatedAccount actor,
-            String companyCode, String clientId, int page, int size) {
+                                                             String companyCode, String clientId, int page, int size) {
         OAuthClient client = client(actor, companyCode, clientId);
         return consents.findPage(client.companyId(), client.id(), page, size);
     }
@@ -70,7 +71,7 @@ public class OAuthAdminService {
 
     @Transactional(readOnly = true)
     public EventPage events(AuthenticatedAccount actor, String companyCode, String clientId,
-            OAuthProtocolEvent.EventType type, OAuthProtocolEvent.Outcome outcome, String cursor, int size) {
+                            OAuthProtocolEvent.EventType type, OAuthProtocolEvent.Outcome outcome, String cursor, int size) {
         OAuthClient client = client(actor, companyCode, clientId);
         Cursor before = decode(cursor);
         var found = events.find(client.companyId(), client.clientId(), type, outcome,
@@ -106,6 +107,9 @@ public class OAuthAdminService {
         }
     }
 
-    private record Cursor(Instant time, long id) {}
-    public record EventPage(List<OAuthProtocolEvent> content, String nextCursor, boolean hasNext) {}
+    private record Cursor(Instant time, long id) {
+    }
+
+    public record EventPage(List<OAuthProtocolEvent> content, String nextCursor, boolean hasNext) {
+    }
 }

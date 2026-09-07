@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import {describe, expect, it} from "vitest";
 
-import { resolveAdminCompanyCode, resolveAdminRedirect } from "./admin-access";
+import {resolveAdminCompanyCode, resolveAdminRedirect} from "./admin-access";
 
 describe("resolveAdminRedirect", () => {
   it.each([
@@ -13,7 +13,7 @@ describe("resolveAdminRedirect", () => {
     ["authenticated", ["USER"], "ACME", "/companies/ACME/oauth-clients/id/protocol-events", "/account"],
     ["authenticated", ["COMPANY_ADMIN"], "ACME", "/companies/OTHER/oauth-clients/id", "/companies/ACME/oauth-clients/id"],
   ] as const)("redirects %s from %s", (status, roles, companyCode, pathname, expected) => {
-    expect(resolveAdminRedirect({ status, roles: [...roles], companyCode, pathname })).toBe(expected);
+    expect(resolveAdminRedirect({status, roles: [...roles], companyCode, pathname})).toBe(expected);
   });
 
   it("allows a company administrator to reach only their own company route", () => {
@@ -52,11 +52,11 @@ describe("resolveAdminRedirect", () => {
       roles: ["USER", "COMPANY_ADMIN", "SYSTEM_ADMIN"],
       actorCompanyCode: "ACTOR",
       urlCompanyCode: "URLCO",
-    })).toEqual({ companyCode: "URLCO", fixed: false });
+    })).toEqual({companyCode: "URLCO", fixed: false});
     expect(resolveAdminCompanyCode({
       roles: ["USER", "COMPANY_ADMIN"],
       actorCompanyCode: "ACTOR",
       urlCompanyCode: "URLCO",
-    })).toEqual({ companyCode: "ACTOR", fixed: true });
+    })).toEqual({companyCode: "ACTOR", fixed: true});
   });
 });

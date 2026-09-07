@@ -1,13 +1,12 @@
 package com.sweet.authstudy.identity.infrastructure;
 
-import java.util.Optional;
-import java.util.List;
-import java.util.Collection;
-
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
-import com.sweet.authstudy.identity.domain.AccountRepository.LoginSnapshot;
 import org.springframework.stereotype.Repository;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class AccountRepositoryAdapter implements AccountRepository {
@@ -23,7 +22,7 @@ public class AccountRepositoryAdapter implements AccountRepository {
         AccountJpaEntity entity = account.id() == null
                 ? AccountJpaEntity.from(account)
                 : repository.findById(account.id())
-                        .orElseThrow(() -> new IllegalStateException("Account does not exist."));
+                .orElseThrow(() -> new IllegalStateException("Account does not exist."));
         if (account.id() != null) {
             entity.updateFrom(account);
         }

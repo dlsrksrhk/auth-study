@@ -1,35 +1,13 @@
 package com.sweet.authstudy.oauth.application;
 
-import static com.sweet.authstudy.oauth.application.OAuthClientCommands.CreateClient;
-import static com.sweet.authstudy.oauth.application.OAuthClientCommands.UpdateClient;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.verify;
-
-import java.net.URI;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Queue;
-import java.util.Set;
-
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
-import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.identity.application.OAuthGrantRevocationPort;
+import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
 import com.sweet.authstudy.oauth.infrastructure.SecureOAuthClientSecretGenerator;
@@ -40,6 +18,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+
+import java.net.URI;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.*;
+
+import static com.sweet.authstudy.oauth.application.OAuthClientCommands.CreateClient;
+import static com.sweet.authstudy.oauth.application.OAuthClientCommands.UpdateClient;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
 
 class OAuthClientServiceTest {
 

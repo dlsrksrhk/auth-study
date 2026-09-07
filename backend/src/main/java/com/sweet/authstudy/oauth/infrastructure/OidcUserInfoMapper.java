@@ -1,13 +1,5 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.function.Function;
-
 import com.sweet.authstudy.oauth.application.OAuthUserInfoService;
 import com.sweet.authstudy.oauth.application.OAuthUserInfoView;
 import org.springframework.security.core.Authentication;
@@ -23,7 +15,12 @@ import org.springframework.security.oauth2.server.authorization.oidc.authenticat
 import org.springframework.security.oauth2.server.resource.authentication.AbstractOAuth2TokenAuthenticationToken;
 import org.springframework.stereotype.Component;
 
-/** Adapts the typed application view to the OIDC protocol boundary. */
+import java.util.*;
+import java.util.function.Function;
+
+/**
+ * Adapts the typed application view to the OIDC protocol boundary.
+ */
 @Component
 public final class OidcUserInfoMapper
         implements Function<OidcUserInfoAuthenticationContext, OidcUserInfo> {
@@ -69,7 +66,7 @@ public final class OidcUserInfoMapper
     private Map<String, Object> bearerClaims(Authentication authentication) {
         if (!(authentication instanceof OidcUserInfoAuthenticationToken userInfo)
                 || !(userInfo.getPrincipal()
-                        instanceof AbstractOAuth2TokenAuthenticationToken<?> bearer)) {
+                instanceof AbstractOAuth2TokenAuthenticationToken<?> bearer)) {
             throw new IllegalArgumentException("Bearer authentication is required.");
         }
         return bearer.getTokenAttributes();

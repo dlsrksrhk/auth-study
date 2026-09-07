@@ -1,15 +1,7 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.util.Comparator;
-
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
-import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
+import com.sweet.authstudy.oauth.domain.*;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
@@ -17,6 +9,10 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
 import org.springframework.stereotype.Repository;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Comparator;
 
 @Repository
 public class SpringRegisteredClientRepository implements RegisteredClientRepository {
@@ -26,7 +22,7 @@ public class SpringRegisteredClientRepository implements RegisteredClientReposit
     private final OAuthSecurityProperties properties;
 
     public SpringRegisteredClientRepository(OAuthClientRepository clients, Clock clock,
-            OAuthSecurityProperties properties) {
+                                            OAuthSecurityProperties properties) {
         this.clients = clients;
         this.clock = clock;
         this.properties = properties;

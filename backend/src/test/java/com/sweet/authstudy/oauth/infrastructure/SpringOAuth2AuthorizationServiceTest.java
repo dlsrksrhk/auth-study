@@ -1,12 +1,32 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
+import com.sweet.authstudy.identity.domain.Account;
+import com.sweet.authstudy.identity.domain.AccountRepository;
+import com.sweet.authstudy.identity.domain.AccountRole;
+import com.sweet.authstudy.identity.domain.AccountStatus;
+import com.sweet.authstudy.oauth.application.OAuthConsentService;
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.domain.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.OAuth2AccessToken;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+import org.springframework.security.oauth2.core.oidc.OidcIdToken;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
+import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.net.URI;
 import java.security.MessageDigest;
@@ -15,54 +35,12 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.Base64;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
-import com.sweet.authstudy.identity.domain.Account;
-import com.sweet.authstudy.identity.domain.AccountRepository;
-import com.sweet.authstudy.identity.domain.AccountRole;
-import com.sweet.authstudy.identity.domain.AccountStatus;
-import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
-import com.sweet.authstudy.oauth.application.OAuthConsentService;
-import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
-import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
-import com.sweet.authstudy.oauth.domain.OAuthConsent;
-import com.sweet.authstudy.oauth.domain.OAuthConsentRepository;
-import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
-import com.sweet.authstudy.oauth.domain.OAuthSubject;
-import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.oauth2.core.AuthorizationGrantType;
-import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
-import org.springframework.security.oauth2.core.OAuth2AccessToken;
-import org.springframework.security.oauth2.core.OAuth2RefreshToken;
-import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
-import org.springframework.security.oauth2.core.oidc.OidcIdToken;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
-import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
-import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
-import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class SpringOAuth2AuthorizationServiceTest {
@@ -77,11 +55,16 @@ class SpringOAuth2AuthorizationServiceTest {
     private static final URI CALLBACK = URI.create("https://rp.example/callback?exact=true");
     private static final UUID SUBJECT = UUID.fromString("efb84d88-1b98-4c80-8ab7-45c86ee4ef51");
 
-    @Mock private OAuthAuthorizationRepository authorizations;
-    @Mock private OAuthConsentRepository consents;
-    @Mock private OAuthClientRepository clients;
-    @Mock private OAuthSubjectRepository subjects;
-    @Mock private AccountRepository accounts;
+    @Mock
+    private OAuthAuthorizationRepository authorizations;
+    @Mock
+    private OAuthConsentRepository consents;
+    @Mock
+    private OAuthClientRepository clients;
+    @Mock
+    private OAuthSubjectRepository subjects;
+    @Mock
+    private AccountRepository accounts;
 
     private OAuthAuthorizationMapper mapper;
     private SpringOAuth2AuthorizationService service;
@@ -690,7 +673,7 @@ class SpringOAuth2AuthorizationServiceTest {
     }
 
     private org.springframework.security.oauth2.server.authorization.OAuth2Authorization
-            springAuthorizationWithoutIssuedTokens() {
+    springAuthorizationWithoutIssuedTokens() {
         Instant codeIssued = NOW.minusSeconds(30);
         return org.springframework.security.oauth2.server.authorization.OAuth2Authorization
                 .withRegisteredClient(registeredClient())

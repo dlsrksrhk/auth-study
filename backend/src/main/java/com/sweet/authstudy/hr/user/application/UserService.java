@@ -1,36 +1,23 @@
 package com.sweet.authstudy.hr.user.application;
 
-import static com.sweet.authstudy.hr.user.application.UserCommands.CreateUserCommand;
-import static com.sweet.authstudy.hr.user.application.UserCommands.UpdateUserCommand;
-import static com.sweet.authstudy.hr.user.application.UserViews.CreatedUserView;
-import static com.sweet.authstudy.hr.user.application.UserViews.UserView;
-import static com.sweet.authstudy.hr.user.application.UserViews.UserPage;
-
-import java.time.Clock;
-import java.util.Locale;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
-import com.sweet.authstudy.authorization.AuthenticatedAccount;
-import com.sweet.authstudy.authorization.AdministrativeTargetGuard;
 import com.sweet.authstudy.audit.application.AuditActions;
-import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.audit.application.AuditFailurePlan;
+import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.audit.application.AuditedTransactionExecutor;
+import com.sweet.authstudy.authorization.AdministrativeTargetGuard;
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
 import com.sweet.authstudy.hr.position.domain.Position;
 import com.sweet.authstudy.hr.position.domain.PositionRepository;
-import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
-import com.sweet.authstudy.identity.application.PasswordGenerator;
 import com.sweet.authstudy.identity.application.AccountService;
 import com.sweet.authstudy.identity.application.OAuthGrantRevocationPort;
+import com.sweet.authstudy.identity.application.PasswordGenerator;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.shared.error.ApiException;
@@ -40,6 +27,16 @@ import com.sweet.authstudy.shared.validation.BusinessCode;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import static com.sweet.authstudy.hr.user.application.UserCommands.CreateUserCommand;
+import static com.sweet.authstudy.hr.user.application.UserCommands.UpdateUserCommand;
+import static com.sweet.authstudy.hr.user.application.UserViews.*;
 
 @Service
 public class UserService {
@@ -226,12 +223,12 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public UserPage list(AuthenticatedAccount actor, String companyCode, String search,
-            UserStatus status, int page, int size, String sort) {
+                         UserStatus status, int page, int size, String sort) {
         Company company = findCompany(companyCode);
         tenantGuard.requireCompanyAccess(actor, company.id());
         var result = userRepository.search(company.id(), search, status, page, size, sort);
         var accounts = accountRepository.findAllByUserIds(
-                result.content().stream().map(HrUser::id).toList()).stream()
+                        result.content().stream().map(HrUser::id).toList()).stream()
                 .collect(Collectors.toMap(Account::userId, Function.identity()));
         var content = result.content().stream().map(user -> UserView.from(user,
                 java.util.Optional.ofNullable(accounts.get(user.id()))

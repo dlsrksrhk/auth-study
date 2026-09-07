@@ -197,18 +197,59 @@ public final class OAuthClient {
         updatedAt = Objects.requireNonNull(now);
     }
 
-    public Long id() { return id; }
-    public long companyId() { return companyId; }
-    public String clientId() { return clientId; }
-    public String displayName() { return displayName; }
-    public OAuthClientStatus status() { return status; }
-    public OAuthClientTrust trust() { return trust; }
-    public boolean publicClient() { return publicClient; }
-    public long version() { return version; }
-    public Set<URI> redirectUris() { return redirectUris; }
-    public Set<URI> postLogoutRedirectUris() { return postLogoutRedirectUris; }
-    public Set<String> scopes() { return scopes; }
-    public Set<OAuthClientSecret> secrets() { return secrets; }
-    public Instant createdAt() { return createdAt; }
-    public Instant updatedAt() { return updatedAt; }
+    public Long id() {
+        return id;
+    }
+
+    public long companyId() {
+        return companyId;
+    }
+
+    public String clientId() {
+        return clientId;
+    }
+
+    public String displayName() {
+        return displayName;
+    }
+
+    public OAuthClientStatus status() {
+        return status;
+    }
+
+    public OAuthClientTrust trust() {
+        return trust;
+    }
+
+    public boolean publicClient() {
+        return publicClient;
+    }
+
+    public long version() {
+        return version;
+    }
+
+    public Set<URI> redirectUris() {
+        return redirectUris;
+    }
+
+    public Set<URI> postLogoutRedirectUris() {
+        return postLogoutRedirectUris;
+    }
+
+    public Set<String> scopes() {
+        return scopes;
+    }
+
+    public Set<OAuthClientSecret> secrets() {
+        return secrets;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
+    public Instant updatedAt() {
+        return updatedAt;
+    }
 }

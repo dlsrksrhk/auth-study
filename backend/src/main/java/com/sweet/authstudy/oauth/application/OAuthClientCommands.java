@@ -1,10 +1,10 @@
 package com.sweet.authstudy.oauth.application;
 
-import java.net.URI;
-import java.util.Set;
-
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
+
+import java.net.URI;
+import java.util.Set;
 
 public final class OAuthClientCommands {
 

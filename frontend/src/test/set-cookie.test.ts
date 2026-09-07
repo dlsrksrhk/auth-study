@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import {describe, expect, it} from "vitest";
 
 import {
   findSetCookiesByName,
@@ -25,14 +25,14 @@ function refreshCookie(maxAge: string, value = "refresh-token"): ParsedSetCookie
 describe("findSetCookiesByName", () => {
   it("parses every Set-Cookie header and returns only exact-name matches", () => {
     const cookies = findSetCookiesByName(
-      [
-        { name: "Content-Type", value: "application/json" },
-        { name: "Set-Cookie", value: "OTHER=value; Path=/" },
-        { name: "set-cookie", value: `${refreshName}=first; HttpOnly; Path=/api/v1/auth` },
-        { name: "SET-COOKIE", value: `auth_study_refresh=wrong-case; HttpOnly` },
-        { name: "Set-Cookie", value: `${refreshName}=second; HttpOnly; Path=/api/v1/auth` },
-      ],
-      refreshName,
+        [
+          {name: "Content-Type", value: "application/json"},
+          {name: "Set-Cookie", value: "OTHER=value; Path=/"},
+          {name: "set-cookie", value: `${refreshName}=first; HttpOnly; Path=/api/v1/auth`},
+          {name: "SET-COOKIE", value: `auth_study_refresh=wrong-case; HttpOnly`},
+          {name: "Set-Cookie", value: `${refreshName}=second; HttpOnly; Path=/api/v1/auth`},
+        ],
+        refreshName,
     );
 
     expect(cookies.map((cookie) => cookie.value)).toEqual(["first", "second"]);
@@ -42,7 +42,7 @@ describe("findSetCookiesByName", () => {
 describe("requireSingleRefreshCookie", () => {
   it("rejects duplicate exact-name cookies", () => {
     expect(() => requireSingleRefreshCookie([refreshCookie("60"), refreshCookie("60")], "issued"))
-      .toThrow(/exactly one/i);
+        .toThrow(/exactly one/i);
   });
 
   it("rejects a missing cookie", () => {
@@ -52,10 +52,10 @@ describe("requireSingleRefreshCookie", () => {
 
 describe("validateRefreshCookie Max-Age grammar", () => {
   it.each(["", "+0", "0", "0e9", "1e3", "0x10", "01"])(
-    "rejects non-canonical issued Max-Age %j",
-    (maxAge) => {
-      expect(() => validateRefreshCookie(refreshCookie(maxAge), "issued")).toThrow(/Max-Age/);
-    },
+      "rejects non-canonical issued Max-Age %j",
+      (maxAge) => {
+        expect(() => validateRefreshCookie(refreshCookie(maxAge), "issued")).toThrow(/Max-Age/);
+      },
   );
 
   it("accepts a canonical positive issued Max-Age", () => {
@@ -63,10 +63,10 @@ describe("validateRefreshCookie Max-Age grammar", () => {
   });
 
   it.each(["", "+0", "0e9", "1e3", "0x10", "01", "1"])(
-    "rejects non-canonical deleted Max-Age %j",
-    (maxAge) => {
-      expect(() => validateRefreshCookie(refreshCookie(maxAge, ""), "deleted")).toThrow(/Max-Age/);
-    },
+      "rejects non-canonical deleted Max-Age %j",
+      (maxAge) => {
+        expect(() => validateRefreshCookie(refreshCookie(maxAge, ""), "deleted")).toThrow(/Max-Age/);
+      },
   );
 
   it("accepts exactly zero for a deleted Max-Age", () => {

@@ -1,10 +1,5 @@
 package com.sweet.authstudy.audit.application;
 
-import java.time.Clock;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Set;
-
 import com.sweet.authstudy.audit.domain.AuditLog;
 import com.sweet.authstudy.audit.domain.AuditLogRepository;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
@@ -15,6 +10,11 @@ import com.sweet.authstudy.shared.trace.TraceIdProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
 
 @Service
 public class AuditService {
@@ -29,7 +29,7 @@ public class AuditService {
     private final TraceIdProvider traceIdProvider;
 
     public AuditService(AuditLogRepository repository, TenantGuard tenantGuard,
-            Clock clock, TraceIdProvider traceIdProvider) {
+                        Clock clock, TraceIdProvider traceIdProvider) {
         this.repository = repository;
         this.tenantGuard = tenantGuard;
         this.clock = clock;
@@ -43,7 +43,7 @@ public class AuditService {
 
     @Transactional
     public AuditView record(AuthenticatedAccount actor, String action, String targetType,
-            long targetId, Long companyId, Map<String, Object> safeDetails) {
+                            long targetId, Long companyId, Map<String, Object> safeDetails) {
         return save(new AuditCommand(actor.accountId(), action, targetType, targetId,
                 companyId, true, traceIdProvider.current(), safeDetails));
     }
@@ -56,7 +56,7 @@ public class AuditService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public AuditView recordFailure(AuthenticatedAccount actor, String action, String targetType,
-            long targetId, Long companyId, Map<String, Object> safeDetails, ApiException failure) {
+                                   long targetId, Long companyId, Map<String, Object> safeDetails, ApiException failure) {
         Map<String, Object> details = new LinkedHashMap<>();
         if (safeDetails != null) details.putAll(safeDetails);
         details.put("errorCode", failure.errorCode().name());
@@ -66,13 +66,13 @@ public class AuditService {
 
     @Transactional(readOnly = true)
     public PageResult<AuditView> list(AuthenticatedAccount actor, String companyCode,
-            String action, Boolean success, int page, int size, String sort) {
+                                      String action, Boolean success, int page, int size, String sort) {
         return list(actor, companyCode, "", action, success, page, size, sort);
     }
 
     @Transactional(readOnly = true)
     public PageResult<AuditView> list(AuthenticatedAccount actor, String companyCode, String search,
-            String action, Boolean success, int page, int size, String sort) {
+                                      String action, Boolean success, int page, int size, String sort) {
         long companyId = tenantGuard.requireCompanyAccess(actor, companyCode);
         var result = repository.search(companyId, search, action, success, page, size, sort);
         return new PageResult<>(result.content().stream().map(AuditView::from).toList(),

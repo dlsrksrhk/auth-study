@@ -1,16 +1,16 @@
 package com.sweet.authstudy.shared.error;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.List;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sweet.authstudy.shared.trace.TraceIdProvider;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import com.sweet.authstudy.shared.trace.TraceIdProvider;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 @Component
 public class SecurityProblemWriter {
@@ -19,14 +19,14 @@ public class SecurityProblemWriter {
     private final TraceIdProvider traceIdProvider;
 
     public SecurityProblemWriter(ApiProblemFactory problemFactory, ObjectMapper objectMapper,
-            TraceIdProvider traceIdProvider) {
+                                 TraceIdProvider traceIdProvider) {
         this.problemFactory = problemFactory;
         this.objectMapper = objectMapper;
         this.traceIdProvider = traceIdProvider;
     }
 
     public void write(HttpServletRequest request, HttpServletResponse response,
-            ErrorCode errorCode, String detail) throws IOException {
+                      ErrorCode errorCode, String detail) throws IOException {
         response.setStatus(errorCode.status().value());
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);

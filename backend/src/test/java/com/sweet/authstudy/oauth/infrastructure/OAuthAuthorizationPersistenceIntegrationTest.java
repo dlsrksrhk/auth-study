@@ -1,35 +1,6 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.net.URI;
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Stream;
-
-import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
-import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
-import com.sweet.authstudy.oauth.domain.OAuthConsent;
-import com.sweet.authstudy.oauth.domain.OAuthConsentRepository;
-import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
-import com.sweet.authstudy.oauth.domain.OAuthSubject;
+import com.sweet.authstudy.oauth.domain.*;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -52,6 +23,20 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.net.URI;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.*;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)
 @ActiveProfiles("test")
@@ -65,11 +50,16 @@ class OAuthAuthorizationPersistenceIntegrationTest {
     private static final UUID SUBJECT = UUID.fromString("db4a5a2f-493a-4fe0-b7b5-c6248f693bc5");
     private static final UUID FAMILY_ID = UUID.fromString("ca7fec29-933b-40f0-944d-60f66b1a42b6");
 
-    @Autowired JdbcClient jdbcClient;
-    @Autowired OAuthAuthorizationRepository authorizationRepository;
-    @Autowired OAuthConsentRepository consentRepository;
-    @Autowired SpringOAuth2AuthorizationService springAuthorizationService;
-    @Autowired PlatformTransactionManager transactionManager;
+    @Autowired
+    JdbcClient jdbcClient;
+    @Autowired
+    OAuthAuthorizationRepository authorizationRepository;
+    @Autowired
+    OAuthConsentRepository consentRepository;
+    @Autowired
+    SpringOAuth2AuthorizationService springAuthorizationService;
+    @Autowired
+    PlatformTransactionManager transactionManager;
     private final List<Fixture> fixtures = new ArrayList<>();
 
     @AfterEach
@@ -686,7 +676,7 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 .consumeCodeAtomically(OAuthAuthorizationMapper.sha256(rawCode),
                         AUTHENTICATED_AT.plusSeconds(1), exchange -> new ConsumedSnapshot(
                                 exchange.authorization(), OAuthAuthorizationCodeExchangeBinding.captureLocked(
-                                        exchange.code(), exchange.authorization(), exchange.client())))
+                                exchange.code(), exchange.authorization(), exchange.client())))
                 .orElseThrow();
         ConsumedSnapshot consumed = consumption.exchangeResult().orElseThrow();
         String attributesBefore = jdbcClient.sql(
@@ -697,7 +687,7 @@ class OAuthAuthorizationPersistenceIntegrationTest {
         try {
             org.springframework.security.oauth2.server.authorization.OAuth2Authorization reconstructed =
                     springAuthorizationService
-                    .reconstructConsumedAuthorization(rawCode, consumed.authorization());
+                            .reconstructConsumedAuthorization(rawCode, consumed.authorization());
             springAuthorizationService.cacheConsumedAuthorization(
                     reconstructed, null, consumed.binding());
             OAuth2AccessToken accessToken = new OAuth2AccessToken(
@@ -705,12 +695,12 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                     AUTHENTICATED_AT.plusSeconds(2), TOKEN_EXPIRES_AT, Set.of("openid"));
             org.springframework.security.oauth2.server.authorization.OAuth2Authorization mismatched =
                     org.springframework.security.oauth2.server.authorization.OAuth2Authorization.from(reconstructed)
-                    .principalName("different-principal")
-                    .token(accessToken, metadata -> metadata.put(
-                            org.springframework.security.oauth2.server.authorization.OAuth2Authorization.Token
-                                    .CLAIMS_METADATA_NAME,
-                            Map.of("jti", "jti-service-mismatch", "aud", List.of("auth-study-userinfo"))))
-                    .build();
+                            .principalName("different-principal")
+                            .token(accessToken, metadata -> metadata.put(
+                                    org.springframework.security.oauth2.server.authorization.OAuth2Authorization.Token
+                                            .CLAIMS_METADATA_NAME,
+                                    Map.of("jti", "jti-service-mismatch", "aud", List.of("auth-study-userinfo"))))
+                            .build();
 
             assertThatThrownBy(() -> springAuthorizationService.save(mismatched))
                     .isInstanceOfSatisfying(OAuth2AuthenticationException.class, exception ->
@@ -741,7 +731,7 @@ class OAuthAuthorizationPersistenceIntegrationTest {
 
         callerTransaction.executeWithoutResult(status -> {
             authorizationRepository.consumeCodeAtomically(
-                    hash('7'), AUTHENTICATED_AT.plusSeconds(1), code -> "INVALID_PKCE")
+                            hash('7'), AUTHENTICATED_AT.plusSeconds(1), code -> "INVALID_PKCE")
                     .orElseThrow();
             status.setRollbackOnly();
         });
@@ -921,7 +911,7 @@ class OAuthAuthorizationPersistenceIntegrationTest {
     }
 
     private RefreshOutcome rotateOrDetectReuse(CyclicBarrier start, AtomicInteger successorSequence,
-            UUID expectedFamilyId) throws Exception {
+                                               UUID expectedFamilyId) throws Exception {
         start.await(10, TimeUnit.SECONDS);
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         return transaction.execute(status -> {
@@ -1077,9 +1067,9 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                 .param("code", code).param("now", Timestamp.from(CREATED_AT))
                 .query(Long.class).single();
         jdbcClient.sql("""
-                        insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
-                        values (:clientId, 'https://rp.example/callback', 'AUTHORIZATION')
-                        """).param("clientId", clientId).update();
+                insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
+                values (:clientId, 'https://rp.example/callback', 'AUTHORIZATION')
+                """).param("clientId", clientId).update();
         jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, 'openid')")
                 .param("clientId", clientId).update();
         Fixture fixture = new Fixture(companyId, positionId, userId, accountId, clientId, subject);
@@ -1130,10 +1120,11 @@ class OAuthAuthorizationPersistenceIntegrationTest {
             case AUTHORIZED_SCOPES -> copyBinding(binding.codeHash(), binding.codeIssuedAt(),
                     binding.codeExpiresAt(), binding.authorizationId(), binding.registeredClientId(),
                     binding.principalName(), binding.authorizationGrantType(), Set.of("profile"), request);
-            case AUTHORIZATION_URI -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
-                    "https://another-idp.example/oauth2/authorize", request.clientId(), request.redirectUri(),
-                    request.requestedScopes(), request.rpState(), request.nonce(), request.codeChallenge(),
-                    request.codeChallengeMethod()));
+            case AUTHORIZATION_URI ->
+                    withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                            "https://another-idp.example/oauth2/authorize", request.clientId(), request.redirectUri(),
+                            request.requestedScopes(), request.rpState(), request.nonce(), request.codeChallenge(),
+                            request.codeChallengeMethod()));
             case CLIENT_ID -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
                     request.authorizationUri(), "different-client", request.redirectUri(), request.requestedScopes(),
                     request.rpState(), request.nonce(), request.codeChallenge(), request.codeChallengeMethod()));
@@ -1141,9 +1132,10 @@ class OAuthAuthorizationPersistenceIntegrationTest {
                     request.authorizationUri(), request.clientId(), "https://rp.example/another-callback",
                     request.requestedScopes(), request.rpState(), request.nonce(), request.codeChallenge(),
                     request.codeChallengeMethod()));
-            case REQUESTED_SCOPES -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
-                    request.authorizationUri(), request.clientId(), request.redirectUri(), Set.of("profile"),
-                    request.rpState(), request.nonce(), request.codeChallenge(), request.codeChallengeMethod()));
+            case REQUESTED_SCOPES ->
+                    withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
+                            request.authorizationUri(), request.clientId(), request.redirectUri(), Set.of("profile"),
+                            request.rpState(), request.nonce(), request.codeChallenge(), request.codeChallengeMethod()));
             case RP_STATE -> withRequest(binding, new OAuthAuthorizationCodeExchangeBinding.AuthorizationRequest(
                     request.authorizationUri(), request.clientId(), request.redirectUri(), request.requestedScopes(),
                     "different-state", request.nonce(), request.codeChallenge(), request.codeChallengeMethod()));
@@ -1183,7 +1175,7 @@ class OAuthAuthorizationPersistenceIntegrationTest {
         return String.valueOf(value).repeat(64);
     }
 
-    private enum RefreshOutcome { ROTATED, REUSED }
+    private enum RefreshOutcome {ROTATED, REUSED}
 
     private enum BindingMutation {
         CODE_HASH,
@@ -1205,8 +1197,10 @@ class OAuthAuthorizationPersistenceIntegrationTest {
     }
 
     private record ConsumedSnapshot(
-            OAuthAuthorization authorization, OAuthAuthorizationCodeExchangeBinding binding) { }
+            OAuthAuthorization authorization, OAuthAuthorizationCodeExchangeBinding binding) {
+    }
 
     private record Fixture(long companyId, long positionId, long userId, long accountId,
-                           long clientId, UUID subject) { }
+                           long clientId, UUID subject) {
+    }
 }

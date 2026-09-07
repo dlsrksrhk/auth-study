@@ -1,8 +1,8 @@
 package com.sweet.authstudy.audit.application;
 
-import java.util.Map;
-
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
+
+import java.util.Map;
 
 public final class AuditFailurePlan {
     private AuthenticatedAccount actor;
@@ -13,7 +13,7 @@ public final class AuditFailurePlan {
     private Map<String, Object> safeDetails = Map.of();
 
     public void identify(AuthenticatedAccount actor, String action, String targetType,
-            long targetId, Long companyId, Map<String, Object> safeDetails) {
+                         long targetId, Long companyId, Map<String, Object> safeDetails) {
         this.actor = actor;
         this.action = action;
         this.targetType = targetType;
@@ -26,10 +26,27 @@ public final class AuditFailurePlan {
         return actor != null;
     }
 
-    AuthenticatedAccount actor() { return actor; }
-    String action() { return action; }
-    String targetType() { return targetType; }
-    long targetId() { return targetId; }
-    Long companyId() { return companyId; }
-    Map<String, Object> safeDetails() { return safeDetails; }
+    AuthenticatedAccount actor() {
+        return actor;
+    }
+
+    String action() {
+        return action;
+    }
+
+    String targetType() {
+        return targetType;
+    }
+
+    long targetId() {
+        return targetId;
+    }
+
+    Long companyId() {
+        return companyId;
+    }
+
+    Map<String, Object> safeDetails() {
+        return safeDetails;
+    }
 }

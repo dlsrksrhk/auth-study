@@ -1,35 +1,29 @@
 package com.sweet.authstudy.oauth.application;
 
-import static com.sweet.authstudy.oauth.application.OAuthClientCommands.ClientSecretResult;
-import static com.sweet.authstudy.oauth.application.OAuthClientCommands.CreateClient;
-import static com.sweet.authstudy.oauth.application.OAuthClientCommands.UpdateClient;
+import com.sweet.authstudy.audit.application.AuditActions;
+import com.sweet.authstudy.audit.application.AuditService;
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
+import com.sweet.authstudy.hr.company.domain.Company;
+import com.sweet.authstudy.hr.company.domain.CompanyRepository;
+import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.identity.application.OAuthGrantRevocationPort;
+import com.sweet.authstudy.identity.domain.AccountRole;
+import com.sweet.authstudy.oauth.domain.*;
+import com.sweet.authstudy.shared.application.PageResult;
+import com.sweet.authstudy.shared.error.ApiException;
+import com.sweet.authstudy.shared.error.ErrorCode;
+import com.sweet.authstudy.shared.security.TenantGuard;
+import com.sweet.authstudy.shared.validation.BusinessCode;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
-import com.sweet.authstudy.audit.application.AuditService;
-import com.sweet.authstudy.audit.application.AuditActions;
 
-import com.sweet.authstudy.authorization.AuthenticatedAccount;
-import com.sweet.authstudy.hr.company.domain.Company;
-import com.sweet.authstudy.hr.company.domain.CompanyRepository;
-import com.sweet.authstudy.hr.company.domain.CompanyStatus;
-import com.sweet.authstudy.identity.domain.AccountRole;
-import com.sweet.authstudy.identity.application.OAuthGrantRevocationPort;
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
-import com.sweet.authstudy.oauth.domain.OAuthClientTrust;
-import com.sweet.authstudy.shared.error.ApiException;
-import com.sweet.authstudy.shared.error.ErrorCode;
-import com.sweet.authstudy.shared.security.TenantGuard;
-import com.sweet.authstudy.shared.validation.BusinessCode;
-import com.sweet.authstudy.shared.application.PageResult;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import static com.sweet.authstudy.oauth.application.OAuthClientCommands.*;
 
 @Service
 public class OAuthClientService {
@@ -216,7 +210,7 @@ public class OAuthClientService {
     }
 
     private OAuthClientView changeStatus(AuthenticatedAccount actor, String clientId,
-            OAuthClientStatus status, long version) {
+                                         OAuthClientStatus status, long version) {
         ClientContext context = requireClientAccess(actor, clientId);
         OAuthClient client = context.client();
         if (client.version() != version) {

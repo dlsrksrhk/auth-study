@@ -1,13 +1,5 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.stream.Collectors;
-
 import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.application.OAuthSubjectService;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
@@ -22,6 +14,14 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
 @Component
 public class OAuthTokenCustomizer implements OAuth2TokenCustomizer<JwtEncodingContext> {
 
@@ -34,7 +34,7 @@ public class OAuthTokenCustomizer implements OAuth2TokenCustomizer<JwtEncodingCo
     private final Clock clock;
 
     public OAuthTokenCustomizer(OAuthAuthorizationRepository authorizations, OAuthSubjectService subjects,
-            OAuthSecurityProperties properties, Clock clock) {
+                                OAuthSecurityProperties properties, Clock clock) {
         this.authorizations = authorizations;
         this.subjects = subjects;
         this.properties = properties;

@@ -1,9 +1,9 @@
 package com.sweet.authstudy.hr.company.application;
 
-import java.time.Instant;
-
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+
+import java.time.Instant;
 
 public record CompanyView(
         long id,

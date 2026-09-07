@@ -1,9 +1,20 @@
 package com.sweet.authstudy.identity.application;
 
-import static com.sweet.authstudy.identity.application.AuthCommands.ChangePasswordCommand;
-import static com.sweet.authstudy.identity.application.AuthCommands.LoginCommand;
-import static com.sweet.authstudy.identity.application.AuthTokens.LoginResult;
-import static com.sweet.authstudy.identity.application.AuthTokens.RefreshResult;
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
+import com.sweet.authstudy.hr.company.domain.Company;
+import com.sweet.authstudy.hr.company.domain.CompanyRepository;
+import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.hr.user.domain.HrUser;
+import com.sweet.authstudy.hr.user.domain.UserRepository;
+import com.sweet.authstudy.hr.user.domain.UserStatus;
+import com.sweet.authstudy.identity.domain.*;
+import com.sweet.authstudy.shared.config.AppSecurityProperties;
+import com.sweet.authstudy.shared.error.ApiException;
+import com.sweet.authstudy.shared.error.ErrorCode;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -15,25 +26,10 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.UUID;
 
-import com.sweet.authstudy.authorization.AuthenticatedAccount;
-import com.sweet.authstudy.hr.company.domain.Company;
-import com.sweet.authstudy.hr.company.domain.CompanyRepository;
-import com.sweet.authstudy.hr.company.domain.CompanyStatus;
-import com.sweet.authstudy.hr.user.domain.HrUser;
-import com.sweet.authstudy.hr.user.domain.UserRepository;
-import com.sweet.authstudy.hr.user.domain.UserStatus;
-import com.sweet.authstudy.identity.domain.Account;
-import com.sweet.authstudy.identity.domain.AccountRepository;
-import com.sweet.authstudy.identity.domain.AccountStatus;
-import com.sweet.authstudy.identity.domain.RefreshToken;
-import com.sweet.authstudy.identity.domain.RefreshTokenRepository;
-import com.sweet.authstudy.shared.config.AppSecurityProperties;
-import com.sweet.authstudy.shared.error.ApiException;
-import com.sweet.authstudy.shared.error.ErrorCode;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
+import static com.sweet.authstudy.identity.application.AuthCommands.ChangePasswordCommand;
+import static com.sweet.authstudy.identity.application.AuthCommands.LoginCommand;
+import static com.sweet.authstudy.identity.application.AuthTokens.LoginResult;
+import static com.sweet.authstudy.identity.application.AuthTokens.RefreshResult;
 
 @Service
 public class AuthenticationService {
@@ -51,11 +47,11 @@ public class AuthenticationService {
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthenticationService(AccountRepository accountRepository, CompanyRepository companyRepository,
-            UserRepository userRepository, RefreshTokenRepository refreshTokenRepository,
-            PasswordEncoder passwordEncoder, JwtTokenService jwtTokenService,
-            CredentialAuthenticationService credentialAuthenticationService,
-            AppSecurityProperties properties, Clock clock, PlatformTransactionManager transactionManager,
-            OAuthGrantRevocationPort oauthGrants) {
+                                 UserRepository userRepository, RefreshTokenRepository refreshTokenRepository,
+                                 PasswordEncoder passwordEncoder, JwtTokenService jwtTokenService,
+                                 CredentialAuthenticationService credentialAuthenticationService,
+                                 AppSecurityProperties properties, Clock clock, PlatformTransactionManager transactionManager,
+                                 OAuthGrantRevocationPort oauthGrants) {
         this.accountRepository = accountRepository;
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
@@ -228,10 +224,18 @@ public class AuthenticationService {
         return new ApiException(ErrorCode.UNAUTHENTICATED, "Authentication failed.");
     }
 
-    public record MeResult(long accountId, String email, java.util.Set<com.sweet.authstudy.identity.domain.AccountRole> roles,
-            String userCode, String userName, String companyCode) {}
+    public record MeResult(long accountId, String email,
+                           java.util.Set<com.sweet.authstudy.identity.domain.AccountRole> roles,
+                           String userCode, String userName, String companyCode) {
+    }
+
     private record RefreshOutcome(RefreshResult result) {
-        static RefreshOutcome success(RefreshResult result) { return new RefreshOutcome(result); }
-        static RefreshOutcome failure() { return new RefreshOutcome(null); }
+        static RefreshOutcome success(RefreshResult result) {
+            return new RefreshOutcome(result);
+        }
+
+        static RefreshOutcome failure() {
+            return new RefreshOutcome(null);
+        }
     }
 }

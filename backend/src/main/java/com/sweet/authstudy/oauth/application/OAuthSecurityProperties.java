@@ -1,10 +1,10 @@
 package com.sweet.authstudy.oauth.application;
 
-import java.net.URI;
-import java.time.Duration;
-
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
+
+import java.net.URI;
+import java.time.Duration;
 
 @ConfigurationProperties("app.oauth")
 public record OAuthSecurityProperties(

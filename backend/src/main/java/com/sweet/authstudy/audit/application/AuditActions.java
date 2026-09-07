@@ -29,5 +29,6 @@ public final class AuditActions {
     public static final String COMPANY_ADMIN_GRANT = "COMPANY_ADMIN_GRANT";
     public static final String COMPANY_ADMIN_REVOKE = "COMPANY_ADMIN_REVOKE";
 
-    private AuditActions() {}
+    private AuditActions() {
+    }
 }

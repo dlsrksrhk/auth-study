@@ -1,51 +1,18 @@
 package com.sweet.authstudy.oauth.acceptance;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.clearInvocations;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.ZoneId;
-import java.time.temporal.ChronoUnit;
-import java.util.Base64;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
-import com.sweet.authstudy.identity.application.AccountService;
-import com.sweet.authstudy.identity.application.AuthenticationService;
-import com.sweet.authstudy.identity.application.CredentialAuthenticationService;
-import com.sweet.authstudy.identity.application.AuthCommands.ChangePasswordCommand;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
-import com.sweet.authstudy.identity.domain.AccountRole;
-import com.sweet.authstudy.hr.user.application.UserService;
-import com.sweet.authstudy.hr.user.domain.UserStatus;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.hr.user.application.UserService;
+import com.sweet.authstudy.hr.user.domain.UserStatus;
+import com.sweet.authstudy.identity.application.AccountService;
+import com.sweet.authstudy.identity.application.AuthCommands.ChangePasswordCommand;
+import com.sweet.authstudy.identity.application.AuthenticationService;
+import com.sweet.authstudy.identity.application.CredentialAuthenticationService;
+import com.sweet.authstudy.identity.domain.AccountRole;
 import com.sweet.authstudy.oauth.application.OAuthClientCommands.UpdateClient;
 import com.sweet.authstudy.oauth.application.OAuthClientService;
 import com.sweet.authstudy.oauth.application.OAuthConsentService;
@@ -53,6 +20,7 @@ import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
 import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
 import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
+import com.sweet.authstudy.oauth.infrastructure.SpringOAuth2AuthorizationService;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -72,9 +40,35 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
+
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.*;
+import java.time.temporal.ChronoUnit;
+import java.util.Base64;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -88,22 +82,38 @@ class OAuthRefreshAndRevocationIntegrationTest {
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
     private static final String PASSWORD = "RefreshPassword1234!";
 
-    @Autowired private MockMvc mockMvc;
-    @Autowired private ObjectMapper objectMapper;
-    @Autowired private JdbcClient jdbcClient;
-    @Autowired private MutableClock clock;
-    @Autowired private AccountService accountService;
-    @Autowired private AuthenticationService authenticationService;
-    @Autowired private CredentialAuthenticationService credentialAuthenticationService;
-    @Autowired private UserService userService;
-    @Autowired private CompanyService companyService;
-    @Autowired private OAuthClientService oauthClientService;
-    @Autowired private OAuthConsentService oauthConsentService;
-    @Autowired private OAuth2AuthorizationConsentService springConsentService;
-    @Autowired private OAuthAuthorizationRepository oauthAuthorizations;
-    @Autowired private PlatformTransactionManager transactionManager;
-    @Autowired private PasswordEncoder passwordEncoder;
-    @MockitoSpyBean private SpringOAuth2AuthorizationService springAuthorizationService;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private JdbcClient jdbcClient;
+    @Autowired
+    private MutableClock clock;
+    @Autowired
+    private AccountService accountService;
+    @Autowired
+    private AuthenticationService authenticationService;
+    @Autowired
+    private CredentialAuthenticationService credentialAuthenticationService;
+    @Autowired
+    private UserService userService;
+    @Autowired
+    private CompanyService companyService;
+    @Autowired
+    private OAuthClientService oauthClientService;
+    @Autowired
+    private OAuthConsentService oauthConsentService;
+    @Autowired
+    private OAuth2AuthorizationConsentService springConsentService;
+    @Autowired
+    private OAuthAuthorizationRepository oauthAuthorizations;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+    @MockitoSpyBean
+    private SpringOAuth2AuthorizationService springAuthorizationService;
 
     @AfterEach
     void useSystemTime() {
@@ -139,11 +149,11 @@ class OAuthRefreshAndRevocationIntegrationTest {
                         """).param("hash", sha256(initial.refreshToken()))
                 .query(Boolean.class).single()).isTrue();
         assertThat(jdbcClient.sql("""
-                        select refresh_token_hash from oauth_refresh_token
-                         where family_id = (
-                               select family_id from oauth_refresh_token where refresh_token_hash = :hash)
-                         order by id
-                        """).param("hash", sha256(initial.refreshToken())).query(String.class).list())
+                select refresh_token_hash from oauth_refresh_token
+                 where family_id = (
+                       select family_id from oauth_refresh_token where refresh_token_hash = :hash)
+                 order by id
+                """).param("hash", sha256(initial.refreshToken())).query(String.class).list())
                 .containsExactly(sha256(initial.refreshToken()), sha256(rotated.refreshToken()))
                 .doesNotContain(initial.refreshToken(), rotated.refreshToken());
     }
@@ -676,9 +686,9 @@ class OAuthRefreshAndRevocationIntegrationTest {
                 .param("hint", rawSecret.substring(rawSecret.length() - 4))
                 .param("now", Timestamp.from(now)).update();
         jdbcClient.sql("""
-                        insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
-                        values (:clientId, :redirectUri, 'AUTHORIZATION')
-                        """).param("clientId", internalClientId).param("redirectUri", CALLBACK.toString()).update();
+                insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
+                values (:clientId, :redirectUri, 'AUTHORIZATION')
+                """).param("clientId", internalClientId).param("redirectUri", CALLBACK.toString()).update();
         jdbcClient.sql("insert into oauth_client_scope(client_id, scope) values (:clientId, 'openid')")
                 .param("clientId", internalClientId).update();
         return new Fixture(accountId, companyId, userId, internalClientId,
@@ -716,8 +726,8 @@ class OAuthRefreshAndRevocationIntegrationTest {
 
     private String authorizationId(String rawRefreshToken) {
         return jdbcClient.sql("""
-                        select authorization_id from oauth_refresh_token where refresh_token_hash = :hash
-                        """).param("hash", sha256(rawRefreshToken)).query(String.class).single();
+                select authorization_id from oauth_refresh_token where refresh_token_hash = :hash
+                """).param("hash", sha256(rawRefreshToken)).query(String.class).single();
     }
 
     private OAuthAuthorizationRepository.RefreshSuccess<String> generatedSuccess(
@@ -737,11 +747,11 @@ class OAuthRefreshAndRevocationIntegrationTest {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime() < deadline) {
             long blocked = jdbcClient.sql("""
-                            select count(*) from pg_stat_activity
-                             where pid <> pg_backend_pid()
-                               and wait_event_type = 'Lock'
-                               and query ilike '%pg_advisory_xact_lock%'
-                            """).query(Long.class).single();
+                    select count(*) from pg_stat_activity
+                     where pid <> pg_backend_pid()
+                       and wait_event_type = 'Lock'
+                       and query ilike '%pg_advisory_xact_lock%'
+                    """).query(Long.class).single();
             if (blocked > 0) return;
             Thread.sleep(25);
         }
@@ -787,9 +797,14 @@ class OAuthRefreshAndRevocationIntegrationTest {
     }
 
     private record Fixture(long accountId, long companyId, long userId, long internalClientId, String companyCode,
-            String clientId, String rawSecret, String email) { }
-    private record TokenPair(String accessToken, String refreshToken, Set<String> scopes) { }
-    private record RefreshResponse(int status, String refreshToken, String error) { }
+                           String clientId, String rawSecret, String email) {
+    }
+
+    private record TokenPair(String accessToken, String refreshToken, Set<String> scopes) {
+    }
+
+    private record RefreshResponse(int status, String refreshToken, String error) {
+    }
 
     @TestConfiguration(proxyBeanMethods = false)
     static class MutableClockConfiguration {

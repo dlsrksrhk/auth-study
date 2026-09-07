@@ -7,8 +7,8 @@ import {
   type AuthSessionValue,
   type MemoryAuthSession,
 } from "@/features/auth/auth-session";
-import { createSingleFlight } from "@/features/auth/single-flight-refresh";
-import { ApiProblemError, type ApiProblem } from "./problem";
+import {createSingleFlight} from "@/features/auth/single-flight-refresh";
+import {ApiProblemError, type ApiProblem} from "./problem";
 
 export type TokenResponse = {
   accessToken: string;
@@ -104,10 +104,10 @@ export function createApiClient(options: ApiClientOptions = {}) {
   const runRefresh = createSingleFlight<RefreshCommit>();
 
   const send = (
-    path: string,
-    init: RequestInit,
-    accessToken: string | null,
-    authenticate: boolean,
+      path: string,
+      init: RequestInit,
+      accessToken: string | null,
+      authenticate: boolean,
   ) => {
     const headers = new Headers(init.headers);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
@@ -121,16 +121,16 @@ export function createApiClient(options: ApiClientOptions = {}) {
 
   async function rawLogout(accessToken: string | null): Promise<void> {
     const response = await send(
-      "/api/v1/auth/logout",
-      { method: "POST" },
-      accessToken,
-      true,
+        "/api/v1/auth/logout",
+        {method: "POST"},
+        accessToken,
+        true,
     );
     return valueFrom<void>(response);
   }
 
   async function refreshAccessToken(
-    expectedSession: AuthSessionValue = session.get(),
+      expectedSession: AuthSessionValue = session.get(),
   ): Promise<RefreshCommit> {
     return runRefresh(async () => {
       if (!session.isCurrent(expectedSession.generation)) throw new StaleAuthOperationError();
@@ -138,18 +138,18 @@ export function createApiClient(options: ApiClientOptions = {}) {
         return await lock.runExclusive(async () => {
           if (!session.isCurrent(expectedSession.generation)) throw new StaleAuthOperationError();
           const response = await send(
-            "/api/v1/auth/refresh",
-            { method: "POST" },
-            null,
-            false,
+              "/api/v1/auth/refresh",
+              {method: "POST"},
+              null,
+              false,
           );
           if (!response.ok) throw await problemFrom(response);
           const token = await valueFrom<TokenResponse>(response);
           const committed = session.compareAndSet(
-            expectedSession.generation,
-            token.accessToken,
-            "authenticated",
-            "refresh",
+              expectedSession.generation,
+              token.accessToken,
+              "authenticated",
+              "refresh",
           );
           if (!committed) {
             if (session.get().mode === "anonymous") {
@@ -161,7 +161,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
             }
             throw new StaleAuthOperationError();
           }
-          return { token, session: committed };
+          return {token, session: committed};
         });
       } catch (error) {
         session.clearIfCurrent(expectedSession.generation);
@@ -171,9 +171,9 @@ export function createApiClient(options: ApiClientOptions = {}) {
   }
 
   async function request<T>(
-    path: string,
-    init: RequestInit = {},
-    requestOptions: ApiRequestOptions = {},
+      path: string,
+      init: RequestInit = {},
+      requestOptions: ApiRequestOptions = {},
   ): Promise<T> {
     ensureReplayable(init.body);
     const authenticate = requestOptions.authenticate ?? true;
@@ -181,16 +181,16 @@ export function createApiClient(options: ApiClientOptions = {}) {
     const initialSession = session.get();
 
     if (
-      authenticate &&
-      initialSession.mode === "passwordChangeRequired" &&
-      !requestOptions.allowPasswordChangeToken &&
-      new URL(absoluteUrl(path)).pathname !== passwordEndpoint
+        authenticate &&
+        initialSession.mode === "passwordChangeRequired" &&
+        !requestOptions.allowPasswordChangeToken &&
+        new URL(absoluteUrl(path)).pathname !== passwordEndpoint
     ) {
       throw localProblem(
-        403,
-        "PASSWORD_CHANGE_REQUIRED",
-        "Password change required",
-        "Change your password before using other APIs.",
+          403,
+          "PASSWORD_CHANGE_REQUIRED",
+          "Password change required",
+          "Change your password before using other APIs.",
       );
     }
 
@@ -216,18 +216,18 @@ export function createApiClient(options: ApiClientOptions = {}) {
   }
 
   async function requestWithAccessToken<T>(
-    path: string,
-    accessToken: string,
-    init: RequestInit = {},
+      path: string,
+      accessToken: string,
+      init: RequestInit = {},
   ): Promise<T> {
     ensureReplayable(init.body);
     return valueFrom<T>(await send(path, init, accessToken, true));
   }
 
   async function runLoginTransaction<T>(
-    init: RequestInit,
-    isCurrent: () => boolean,
-    complete: (token: TokenResponse) => Promise<T>,
+      init: RequestInit,
+      isCurrent: () => boolean,
+      complete: (token: TokenResponse) => Promise<T>,
   ): Promise<T> {
     if (!isCurrent()) throw new StaleAuthOperationError();
     return lock.runExclusive(async () => {
@@ -235,9 +235,9 @@ export function createApiClient(options: ApiClientOptions = {}) {
       let provisionalToken: TokenResponse | null = null;
       try {
         provisionalToken = await request<TokenResponse>(
-          "/api/v1/auth/login",
-          init,
-          { authenticate: false, refreshOnUnauthorized: false },
+            "/api/v1/auth/login",
+            init,
+            {authenticate: false, refreshOnUnauthorized: false},
         );
         if (!isCurrent()) throw new StaleAuthOperationError();
         return await complete(provisionalToken);
@@ -258,7 +258,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
     return lock.runExclusive(() => rawLogout(accessToken));
   }
 
-  return { request, requestWithAccessToken, runLoginTransaction, refreshAccessToken, logout };
+  return {request, requestWithAccessToken, runLoginTransaction, refreshAccessToken, logout};
 }
 
 export const apiClient = createApiClient();

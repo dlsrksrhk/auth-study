@@ -1,9 +1,5 @@
 package com.sweet.authstudy.hr.infrastructure;
 
-import java.time.Clock;
-import java.time.LocalDate;
-import java.util.Locale;
-
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
 import com.sweet.authstudy.hr.company.application.CompanyService;
@@ -28,6 +24,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.Locale;
+
 @Component
 @Profile("dev")
 @ConditionalOnProperty(prefix = "app.dev.sample-data", name = "enabled", havingValue = "true")
@@ -46,9 +46,9 @@ public class DevSampleDataSeeder implements CommandLineRunner {
     private final Clock clock;
 
     public DevSampleDataSeeder(CompanyRepository companies, CompanyService companyService,
-            DepartmentService departmentService, UserService userService, MembershipService membershipService,
-            AccountRepository accounts, PasswordEncoder passwords, AppSecurityProperties securityProperties,
-            Clock clock) {
+                               DepartmentService departmentService, UserService userService, MembershipService membershipService,
+                               AccountRepository accounts, PasswordEncoder passwords, AppSecurityProperties securityProperties,
+                               Clock clock) {
         this.companies = companies;
         this.companyService = companyService;
         this.departmentService = departmentService;

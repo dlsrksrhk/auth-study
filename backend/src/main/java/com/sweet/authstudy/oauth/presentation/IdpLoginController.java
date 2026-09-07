@@ -1,25 +1,16 @@
 package com.sweet.authstudy.oauth.presentation;
 
-import static com.sweet.authstudy.identity.application.AuthCommands.ChangePasswordCommand;
-
-import java.security.SecureRandom;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Base64;
-import java.util.Set;
-
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.identity.application.AuthenticationService;
 import com.sweet.authstudy.identity.application.CredentialAuthenticationResult;
 import com.sweet.authstudy.identity.application.CredentialAuthenticationService;
-import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.application.OAuthSubjectService;
-import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,6 +27,15 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.Set;
+
+import static com.sweet.authstudy.identity.application.AuthCommands.ChangePasswordCommand;
 
 @Controller
 public class IdpLoginController {
@@ -61,12 +61,12 @@ public class IdpLoginController {
     private final SecureRandom random = new SecureRandom();
 
     public IdpLoginController(OAuthSecurityProperties properties,
-            CredentialAuthenticationService credentials,
-            AuthenticationService authenticationService,
-            OAuthSubjectService subjects,
-            OAuthClientRepository clients,
-            Clock clock,
-            OAuthProtocolEventService protocolEvents) {
+                              CredentialAuthenticationService credentials,
+                              AuthenticationService authenticationService,
+                              OAuthSubjectService subjects,
+                              OAuthClientRepository clients,
+                              Clock clock,
+                              OAuthProtocolEventService protocolEvents) {
         this.properties = properties;
         this.credentials = credentials;
         this.authenticationService = authenticationService;
@@ -90,11 +90,11 @@ public class IdpLoginController {
 
     @PostMapping("/idp/login")
     String login(@RequestParam String flowId,
-            @RequestParam String email,
-            @RequestParam String password,
-            HttpServletRequest request,
-            HttpServletResponse response,
-            Model model) {
+                 @RequestParam String email,
+                 @RequestParam String password,
+                 HttpServletRequest request,
+                 HttpServletResponse response,
+                 Model model) {
         HttpSession session = request.getSession(false);
         if (session == null || !consumeLoginFlow(session, flowId)) {
             response.setStatus(HttpServletResponse.SC_CONFLICT);
@@ -148,11 +148,11 @@ public class IdpLoginController {
 
     @PostMapping("/idp/password")
     String password(@RequestParam String flowId,
-            @RequestParam String currentPassword,
-            @RequestParam String newPassword,
-            HttpServletRequest request,
-            HttpServletResponse response,
-            Model model) {
+                    @RequestParam String currentPassword,
+                    @RequestParam String newPassword,
+                    HttpServletRequest request,
+                    HttpServletResponse response,
+                    Model model) {
         HttpSession session = request.getSession(false);
         Authentication current = currentAuthentication();
         if (!(current instanceof IdpSessionAuthentication idp)
@@ -242,7 +242,7 @@ public class IdpLoginController {
     }
 
     private void establishAuthentication(HttpSession session, IdpSessionAuthentication authentication,
-            boolean passwordChangeRequired, Instant now) {
+                                         boolean passwordChangeRequired, Instant now) {
         SecurityContext context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(authentication);
         SecurityContextHolder.setContext(context);
@@ -315,7 +315,7 @@ public class IdpLoginController {
     }
 
     public static void addSessionCookie(HttpServletResponse response,
-            OAuthSecurityProperties properties, String sessionId) {
+                                        OAuthSecurityProperties properties, String sessionId) {
         ResponseCookie cookie = ResponseCookie.from(properties.sessionCookieName(), sessionId)
                 .httpOnly(true).secure(properties.sessionCookieSecure()).path("/").sameSite("Lax").build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
@@ -365,5 +365,6 @@ public class IdpLoginController {
     }
 
     private record LoginFlow(String flowId, PendingAuthorizationRequest pending)
-            implements java.io.Serializable { }
+            implements java.io.Serializable {
+    }
 }

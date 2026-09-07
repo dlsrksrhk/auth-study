@@ -1,24 +1,5 @@
 package com.sweet.authstudy.identity;
 
-import static com.sweet.authstudy.identity.application.AuthCommands.LoginCommand;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.clearInvocations;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.verify;
-import static org.springframework.http.MediaType.APPLICATION_JSON;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-
-import java.time.Clock;
-import java.time.Duration;
-import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-
 import com.sweet.authstudy.identity.application.AuthenticationService;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
@@ -35,16 +16,38 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import static com.sweet.authstudy.identity.application.AuthCommands.LoginCommand;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(PostgresContainerConfiguration.class)
 @ActiveProfiles("test")
 class AuthenticationTimingIntegrationTest {
-    @Autowired AuthenticationService authenticationService;
-    @Autowired AccountRepository accountRepository;
-    @Autowired Clock clock;
-    @Autowired MockMvc mvc;
-    @MockitoSpyBean PasswordEncoder passwordEncoder;
+    @Autowired
+    AuthenticationService authenticationService;
+    @Autowired
+    AccountRepository accountRepository;
+    @Autowired
+    Clock clock;
+    @Autowired
+    MockMvc mvc;
+    @MockitoSpyBean
+    PasswordEncoder passwordEncoder;
 
     @Test
     void missing_account_still_performs_a_bcrypt_comparison() {

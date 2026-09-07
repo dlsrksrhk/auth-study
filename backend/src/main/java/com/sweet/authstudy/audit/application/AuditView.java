@@ -1,9 +1,9 @@
 package com.sweet.authstudy.audit.application;
 
+import com.sweet.authstudy.audit.domain.AuditLog;
+
 import java.time.Instant;
 import java.util.Map;
-
-import com.sweet.authstudy.audit.domain.AuditLog;
 
 public record AuditView(
         long id,

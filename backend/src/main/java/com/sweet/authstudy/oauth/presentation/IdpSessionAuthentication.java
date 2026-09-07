@@ -1,15 +1,15 @@
 package com.sweet.authstudy.oauth.presentation;
 
+import com.sweet.authstudy.identity.domain.AccountRole;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+
 import java.io.Serial;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.Set;
 import java.util.UUID;
-
-import com.sweet.authstudy.identity.domain.AccountRole;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 /**
  * Minimal IdP browser principal. Its {@link #getName()} deliberately adapts the session identity
@@ -28,12 +28,12 @@ public final class IdpSessionAuthentication implements Authentication {
     private final UUID sessionBinding;
 
     public IdpSessionAuthentication(long accountId, Long companyId, Long userId,
-            Set<AccountRole> roles, UUID sub, Instant authenticatedAt) {
+                                    Set<AccountRole> roles, UUID sub, Instant authenticatedAt) {
         this(accountId, companyId, userId, roles, sub, authenticatedAt, UUID.randomUUID());
     }
 
     public IdpSessionAuthentication(long accountId, Long companyId, Long userId,
-            Set<AccountRole> roles, UUID sub, Instant authenticatedAt, UUID sessionBinding) {
+                                    Set<AccountRole> roles, UUID sub, Instant authenticatedAt, UUID sessionBinding) {
         if (accountId <= 0) throw new IllegalArgumentException("accountId must be positive.");
         this.accountId = accountId;
         this.companyId = companyId;
@@ -44,13 +44,33 @@ public final class IdpSessionAuthentication implements Authentication {
         this.sessionBinding = java.util.Objects.requireNonNull(sessionBinding, "sessionBinding");
     }
 
-    public long accountId() { return accountId; }
-    public Long companyId() { return companyId; }
-    public Long userId() { return userId; }
-    public Set<AccountRole> roles() { return roles; }
-    public UUID sub() { return sub; }
-    public Instant authenticatedAt() { return authenticatedAt; }
-    public UUID sessionBinding() { return sessionBinding; }
+    public long accountId() {
+        return accountId;
+    }
+
+    public Long companyId() {
+        return companyId;
+    }
+
+    public Long userId() {
+        return userId;
+    }
+
+    public Set<AccountRole> roles() {
+        return roles;
+    }
+
+    public UUID sub() {
+        return sub;
+    }
+
+    public Instant authenticatedAt() {
+        return authenticatedAt;
+    }
+
+    public UUID sessionBinding() {
+        return sessionBinding;
+    }
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {

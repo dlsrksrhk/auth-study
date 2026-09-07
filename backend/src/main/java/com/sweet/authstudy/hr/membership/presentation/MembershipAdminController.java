@@ -1,32 +1,24 @@
 package com.sweet.authstudy.hr.membership.presentation;
 
-import static com.sweet.authstudy.hr.membership.presentation.MembershipRequests.AssignMembershipRequest;
-import static com.sweet.authstudy.hr.membership.presentation.MembershipRequests.UpdateMembershipRequest;
-
-import java.util.Set;
-
 import com.sweet.authstudy.hr.membership.application.MembershipCommands.AssignMembershipCommand;
 import com.sweet.authstudy.hr.membership.application.MembershipCommands.UpdateMembershipCommand;
 import com.sweet.authstudy.hr.membership.application.MembershipService;
 import com.sweet.authstudy.hr.membership.application.MembershipView;
+import com.sweet.authstudy.shared.presentation.Locations;
 import com.sweet.authstudy.shared.presentation.PageResponse;
 import com.sweet.authstudy.shared.presentation.PageRules;
-import com.sweet.authstudy.shared.presentation.Locations;
 import com.sweet.authstudy.shared.security.ActorContext;
 import com.sweet.authstudy.shared.security.TenantGuard;
 import com.sweet.authstudy.shared.validation.BusinessCode;
 import com.sweet.authstudy.shared.validation.ValidCode;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Set;
+
+import static com.sweet.authstudy.hr.membership.presentation.MembershipRequests.AssignMembershipRequest;
+import static com.sweet.authstudy.hr.membership.presentation.MembershipRequests.UpdateMembershipRequest;
 
 @RestController
 @RequestMapping("/api/v1/admin/companies/{companyCode}/users/{userCode}/memberships")
@@ -77,8 +69,8 @@ public class MembershipAdminController {
 
     @PutMapping("/{membershipId}")
     public MembershipView update(@PathVariable @ValidCode String companyCode,
-            @PathVariable @ValidCode String userCode,
-            @PathVariable long membershipId, @Valid @RequestBody UpdateMembershipRequest request) {
+                                 @PathVariable @ValidCode String userCode,
+                                 @PathVariable long membershipId, @Valid @RequestBody UpdateMembershipRequest request) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
         return membershipService.update(actor, new UpdateMembershipCommand(
@@ -87,12 +79,12 @@ public class MembershipAdminController {
 
     @DeleteMapping("/{membershipId}")
     public MembershipView end(@PathVariable @ValidCode String companyCode,
-            @PathVariable @ValidCode String userCode,
-            @PathVariable long membershipId, @RequestParam Long version) {
+                              @PathVariable @ValidCode String userCode,
+                              @PathVariable long membershipId, @RequestParam Long version) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
         return membershipService.end(actor, companyCode, userCode, membershipId, version);
     }
 
-    public enum MembershipStatus { ACTIVE, ENDED }
+    public enum MembershipStatus {ACTIVE, ENDED}
 }

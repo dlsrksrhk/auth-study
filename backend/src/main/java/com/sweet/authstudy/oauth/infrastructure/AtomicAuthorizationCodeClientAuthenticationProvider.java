@@ -1,23 +1,7 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.time.Clock;
-import java.time.Instant;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-
-import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
-import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationCodeExchangeBinding;
-import com.sweet.authstudy.oauth.domain.OAuthClient;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
+import com.sweet.authstudy.oauth.domain.*;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.InternalAuthenticationServiceException;
@@ -33,6 +17,17 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.web.authentication.AuthenticationConverter;
 import org.springframework.util.StringUtils;
+
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * Handles authorization-code client authentication before Spring's built-in PKCE authenticator.
@@ -97,7 +92,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
         }
         if (client == null
                 || !client.getClientAuthenticationMethods().contains(
-                        clientAuthentication.getClientAuthenticationMethod())) {
+                clientAuthentication.getClientAuthenticationMethod())) {
             throwInvalidClient("authentication_method");
         }
         if (ClientAuthenticationMethod.NONE.equals(clientAuthentication.getClientAuthenticationMethod())
@@ -165,7 +160,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
         var consumption = consumed.orElse(null);
         if (consumption == null
                 || consumption.consumption()
-                        != com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode.Consumption.CONSUMED
+                != com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode.Consumption.CONSUMED
                 || consumption.exchangeResult().isEmpty()
                 || !consumption.exchangeResult().orElseThrow().valid()) {
             recordCodeFailure(consumption, eventSnapshot);
@@ -174,7 +169,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
 
         org.springframework.security.oauth2.server.authorization.OAuth2Authorization authorization =
                 authorizations.reconstructConsumedAuthorization(
-                rawCode, consumption.exchangeResult().orElseThrow().authorization());
+                        rawCode, consumption.exchangeResult().orElseThrow().authorization());
         if (authorization == null) throwInvalidGrant("code");
         authorizations.cacheConsumedAuthorization(
                 authorization, consumption.exchangeResult().orElseThrow().authenticatedSecretHash(),
@@ -205,7 +200,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
     }
 
     private void authenticateSecret(OAuth2ClientAuthenticationToken authentication,
-            RegisteredClient client) {
+                                    RegisteredClient client) {
         ClientAuthenticationMethod method = authentication.getClientAuthenticationMethod();
         if (ClientAuthenticationMethod.NONE.equals(method)) return;
         if (!ClientAuthenticationMethod.CLIENT_SECRET_BASIC.equals(method)
@@ -291,7 +286,7 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
         values.put("grant_type", "AUTHORIZATION_CODE");
         if (!snapshot.scopes().isEmpty()) values.put("scopes", snapshot.scopes());
         boolean replay = consumption != null && consumption.consumption()
-                        == com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode.Consumption.ALREADY_USED;
+                == com.sweet.authstudy.oauth.domain.OAuthAuthorizationCode.Consumption.ALREADY_USED;
         values.put("reason", replay ? "CODE_REPLAY" : "INVALID_GRANT");
         OAuthProtocolEvent.Metadata metadata = OAuthProtocolEvent.Metadata.from(values);
         if (replay) {
@@ -305,10 +300,11 @@ public final class AtomicAuthorizationCodeClientAuthenticationProvider implement
 
     private record ExchangeValidation(
             boolean valid, OAuthAuthorization authorization, String authenticatedSecretHash,
-            OAuthAuthorizationCodeExchangeBinding binding) { }
+            OAuthAuthorizationCodeExchangeBinding binding) {
+    }
 
     private record EventSnapshot(OAuthProtocolEventService.Context context,
-            java.util.Set<String> scopes) {
+                                 java.util.Set<String> scopes) {
         private static EventSnapshot empty() {
             return new EventSnapshot(OAuthProtocolEventService.Context.empty(), java.util.Set.of());
         }

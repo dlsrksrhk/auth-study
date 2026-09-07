@@ -1,21 +1,9 @@
 package com.sweet.authstudy.identity;
 
-import static com.sweet.authstudy.identity.application.AuthCommands.ChangePasswordCommand;
-import static com.sweet.authstudy.identity.application.AuthCommands.LoginCommand;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.time.Clock;
-import java.util.UUID;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
-import com.sweet.authstudy.identity.application.AuthenticationService;
 import com.sweet.authstudy.identity.application.AuthTokens.LoginResult;
 import com.sweet.authstudy.identity.application.AuthTokens.RefreshResult;
+import com.sweet.authstudy.identity.application.AuthenticationService;
 import com.sweet.authstudy.identity.domain.Account;
 import com.sweet.authstudy.identity.domain.AccountRepository;
 import com.sweet.authstudy.shared.error.ApiException;
@@ -29,17 +17,35 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.time.Clock;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import static com.sweet.authstudy.identity.application.AuthCommands.ChangePasswordCommand;
+import static com.sweet.authstudy.identity.application.AuthCommands.LoginCommand;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)
 @ActiveProfiles("test")
 class RefreshTokenRotationIntegrationTest {
 
-    @Autowired AuthenticationService authenticationService;
-    @Autowired AccountRepository accountRepository;
-    @Autowired PasswordEncoder passwordEncoder;
-    @Autowired Clock clock;
-    @Autowired JdbcTemplate jdbc;
-    @Autowired JwtDecoder jwtDecoder;
+    @Autowired
+    AuthenticationService authenticationService;
+    @Autowired
+    AccountRepository accountRepository;
+    @Autowired
+    PasswordEncoder passwordEncoder;
+    @Autowired
+    Clock clock;
+    @Autowired
+    JdbcTemplate jdbc;
+    @Autowired
+    JwtDecoder jwtDecoder;
 
     @Test
     void refresh_rotates_token_and_reuse_revokes_family() {

@@ -15,9 +15,9 @@ function browserLockManager(): WebLockManagerLike | null {
   return {
     async request<T>(name: string, callback: () => Promise<T>): Promise<T> {
       return await navigator.locks.request(
-        name,
-        { mode: "exclusive" },
-        async () => await callback(),
+          name,
+          {mode: "exclusive"},
+          async () => await callback(),
       );
     },
   };
@@ -41,13 +41,13 @@ async function runFallback<T>(name: string, operation: () => Promise<T>): Promis
 }
 
 export function createAuthOperationLock(
-  lockManager: WebLockManagerLike | null = browserLockManager(),
+    lockManager: WebLockManagerLike | null = browserLockManager(),
 ): AuthOperationLock {
   return {
     runExclusive: (operation) =>
-      lockManager
-        ? lockManager.request(AUTH_OPERATION_LOCK_NAME, operation)
-        : runFallback(AUTH_OPERATION_LOCK_NAME, operation),
+        lockManager
+            ? lockManager.request(AUTH_OPERATION_LOCK_NAME, operation)
+            : runFallback(AUTH_OPERATION_LOCK_NAME, operation),
   };
 }
 

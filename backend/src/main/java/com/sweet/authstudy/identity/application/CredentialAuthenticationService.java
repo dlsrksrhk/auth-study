@@ -1,9 +1,5 @@
 package com.sweet.authstudy.identity.application;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.util.Locale;
-
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
@@ -23,6 +19,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Locale;
+
 @Service
 public class CredentialAuthenticationService {
     private static final String DUMMY_PASSWORD_HASH =
@@ -39,9 +39,9 @@ public class CredentialAuthenticationService {
     private final OAuthGrantRevocationPort oauthGrants;
 
     public CredentialAuthenticationService(AccountRepository accountRepository, CompanyRepository companyRepository,
-            UserRepository userRepository, PasswordEncoder passwordEncoder, AppSecurityProperties properties,
-            Clock clock, PlatformTransactionManager transactionManager, RefreshTokenRepository refreshTokenRepository,
-            OAuthGrantRevocationPort oauthGrants) {
+                                           UserRepository userRepository, PasswordEncoder passwordEncoder, AppSecurityProperties properties,
+                                           Clock clock, PlatformTransactionManager transactionManager, RefreshTokenRepository refreshTokenRepository,
+                                           OAuthGrantRevocationPort oauthGrants) {
         this.accountRepository = accountRepository;
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;

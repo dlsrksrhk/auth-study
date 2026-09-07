@@ -25,8 +25,8 @@ function strictInteger(value: string | null): number | null {
 }
 
 export function parseListQuery<TSort extends string, TEnum extends string = never>(
-  input: URLSearchParams,
-  config: QueryConfig<TSort, TEnum>,
+    input: URLSearchParams,
+    config: QueryConfig<TSort, TEnum>,
 ): ParsedListQuery<TSort, TEnum> {
   const rawPage = input.get("page");
   const rawSize = input.get("size");
@@ -36,12 +36,12 @@ export function parseListQuery<TSort extends string, TEnum extends string = neve
 
   const candidateSize = strictInteger(rawSize);
   const size = candidateSize !== null && PAGE_SIZES.includes(candidateSize as (typeof PAGE_SIZES)[number])
-    ? candidateSize
-    : 20;
+      ? candidateSize
+      : 20;
   const candidatePage = strictInteger(rawPage);
   const page = candidatePage !== null && candidatePage * size + size <= MAX_BACKEND_OFFSET
-    ? candidatePage
-    : 0;
+      ? candidatePage
+      : 0;
   const sort = config.sorts.includes(rawSort as TSort) ? rawSort as TSort : config.defaultSort;
   const search = rawSearch?.trim() ?? "";
   const enumValue = config.enumValues?.includes(rawEnum as TEnum) ? rawEnum as TEnum : undefined;
@@ -55,7 +55,7 @@ export function parseListQuery<TSort extends string, TEnum extends string = neve
   const inputEntries = [...input.entries()];
   const canonicalEntries = [...canonical.entries()];
   const needsReplace = inputEntries.length !== canonicalEntries.length
-    || canonicalEntries.some(([key, value]) => input.getAll(key).length !== 1 || input.get(key) !== value);
+      || canonicalEntries.some(([key, value]) => input.getAll(key).length !== 1 || input.get(key) !== value);
 
   return {
     page,

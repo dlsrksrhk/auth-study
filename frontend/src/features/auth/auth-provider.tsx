@@ -11,15 +11,15 @@ import {
   type ReactNode,
 } from "react";
 
-import { StaleAuthOperationError } from "@/lib/api/client";
-import { authApi, type Actor } from "./auth-api";
-import { authSession } from "./auth-session";
+import {StaleAuthOperationError} from "@/lib/api/client";
+import {authApi, type Actor} from "./auth-api";
+import {authSession} from "./auth-session";
 
 export type AuthStatus =
-  | "loading"
-  | "authenticated"
-  | "passwordChangeRequired"
-  | "anonymous";
+    | "loading"
+    | "authenticated"
+    | "passwordChangeRequired"
+    | "anonymous";
 
 type LoginResult = { mustChangePassword: boolean };
 
@@ -32,8 +32,8 @@ type AuthContextValue = {
 };
 
 type RestoredAuth =
-  | { status: "authenticated"; actor: Actor; generation: number }
-  | { status: "anonymous"; actor: null; generation: number };
+    | { status: "authenticated"; actor: Actor; generation: number }
+    | { status: "anonymous"; actor: null; generation: number };
 
 type CachedActor = { actor: Actor; generation: number };
 
@@ -49,8 +49,8 @@ authSession.subscribe((session) => {
 function restoreOnce(): Promise<RestoredAuth> {
   const current = authSession.get();
   if (
-    current.mode === "authenticated" &&
-    restoredActor?.generation === current.generation
+      current.mode === "authenticated" &&
+      restoredActor?.generation === current.generation
   ) {
     return Promise.resolve({
       status: "authenticated",
@@ -75,28 +75,28 @@ function restoreOnce(): Promise<RestoredAuth> {
         }
       } catch {
         const anonymous = authSession.get();
-        return { status: "anonymous" as const, actor: null, generation: anonymous.generation };
+        return {status: "anonymous" as const, actor: null, generation: anonymous.generation};
       }
     })();
   }
   return restoration;
 }
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({children}: { children: ReactNode }) {
   const initialSession = authSession.get();
   const initialMode = useRef(initialSession.mode);
   const operationEpoch = useRef(0);
   const initialActor =
-    initialSession.mode === "authenticated" &&
-    restoredActor?.generation === initialSession.generation
-      ? restoredActor.actor
-      : null;
+      initialSession.mode === "authenticated" &&
+      restoredActor?.generation === initialSession.generation
+          ? restoredActor.actor
+          : null;
   const [status, setStatus] = useState<AuthStatus>(() =>
-    initialSession.mode === "passwordChangeRequired"
-      ? "passwordChangeRequired"
-      : initialActor
-        ? "authenticated"
-        : "loading",
+      initialSession.mode === "passwordChangeRequired"
+          ? "passwordChangeRequired"
+          : initialActor
+              ? "authenticated"
+              : "loading",
   );
   const [actor, setActor] = useState<Actor | null>(initialActor);
 
@@ -112,12 +112,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (initialMode.current !== "passwordChangeRequired") {
       void restoreOnce().then((restored) => {
         if (
-          !active ||
-          operationEpoch.current !== operation ||
-          !authSession.isCurrent(restored.generation)
+            !active ||
+            operationEpoch.current !== operation ||
+            !authSession.isCurrent(restored.generation)
         ) return;
         if (restored.status === "authenticated") {
-          restoredActor = { actor: restored.actor, generation: restored.generation };
+          restoredActor = {actor: restored.actor, generation: restored.generation};
         }
         setActor(restored.actor);
         setStatus(restored.status);
@@ -139,38 +139,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus("loading");
     try {
       return await authApi.login(
-        email,
-        password,
-        () => operationEpoch.current === operation,
-        async (token) => {
-          assertCurrent(operationEpoch.current, operation);
+          email,
+          password,
+          () => operationEpoch.current === operation,
+          async (token) => {
+            assertCurrent(operationEpoch.current, operation);
 
-          if (token.mustChangePassword) {
+            if (token.mustChangePassword) {
+              const committed = authSession.compareAndSet(
+                  safeAnonymous.generation,
+                  token.accessToken,
+                  "passwordChangeRequired",
+                  "interactive",
+              );
+              if (!committed) throw new StaleAuthOperationError();
+              setStatus("passwordChangeRequired");
+              return {mustChangePassword: true};
+            }
+
+            const currentActor = await authApi.me(token.accessToken);
+            assertCurrent(operationEpoch.current, operation);
             const committed = authSession.compareAndSet(
-              safeAnonymous.generation,
-              token.accessToken,
-              "passwordChangeRequired",
-              "interactive",
+                safeAnonymous.generation,
+                token.accessToken,
+                "authenticated",
+                "interactive",
             );
             if (!committed) throw new StaleAuthOperationError();
-            setStatus("passwordChangeRequired");
-            return { mustChangePassword: true };
-          }
-
-          const currentActor = await authApi.me(token.accessToken);
-          assertCurrent(operationEpoch.current, operation);
-          const committed = authSession.compareAndSet(
-            safeAnonymous.generation,
-            token.accessToken,
-            "authenticated",
-            "interactive",
-          );
-          if (!committed) throw new StaleAuthOperationError();
-          restoredActor = { actor: currentActor, generation: committed.generation };
-          setActor(currentActor);
-          setStatus("authenticated");
-          return { mustChangePassword: false };
-        },
+            restoredActor = {actor: currentActor, generation: committed.generation};
+            setActor(currentActor);
+            setStatus("authenticated");
+            return {mustChangePassword: false};
+          },
       );
     } catch (error) {
       if (operationEpoch.current === operation) {
@@ -216,8 +216,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, actor, login, logout, changePassword }),
-    [actor, changePassword, login, logout, status],
+      () => ({status, actor, login, logout, changePassword}),
+      [actor, changePassword, login, logout, status],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -40,17 +40,17 @@ public class OAuthProtocolEventRepositoryAdapter implements OAuthProtocolEventRe
     @Override
     @Transactional(readOnly = true)
     public java.util.List<OAuthProtocolEvent> find(long companyId, String clientId,
-            OAuthProtocolEvent.EventType type, OAuthProtocolEvent.Outcome outcome,
-            java.time.Instant beforeTime, Long beforeId, int limit) {
+                                                   OAuthProtocolEvent.EventType type, OAuthProtocolEvent.Outcome outcome,
+                                                   java.time.Instant beforeTime, Long beforeId, int limit) {
         String jpql = "select e from OAuthProtocolEventJpaEntity e where e.companyId=:company and e.clientId=:client";
         if (type != null) jpql += " and e.eventType=:type";
         if (outcome != null) jpql += " and e.outcome=:outcome";
         if (beforeTime != null) jpql += " and (e.occurredAt<:time or (e.occurredAt=:time and e.id<:id))";
-        var query=entityManager.createQuery(jpql+" order by e.occurredAt desc,e.id desc",OAuthProtocolEventJpaEntity.class)
-                .setParameter("company",companyId).setParameter("client",clientId).setMaxResults(limit);
-        if (type != null) query.setParameter("type",type);
-        if (outcome != null) query.setParameter("outcome",outcome);
-        if (beforeTime != null) query.setParameter("time",beforeTime).setParameter("id",beforeId);
+        var query = entityManager.createQuery(jpql + " order by e.occurredAt desc,e.id desc", OAuthProtocolEventJpaEntity.class)
+                .setParameter("company", companyId).setParameter("client", clientId).setMaxResults(limit);
+        if (type != null) query.setParameter("type", type);
+        if (outcome != null) query.setParameter("outcome", outcome);
+        if (beforeTime != null) query.setParameter("time", beforeTime).setParameter("id", beforeId);
         return query.getResultList().stream().map(OAuthProtocolEventJpaEntity::toDomain).toList();
     }
 }

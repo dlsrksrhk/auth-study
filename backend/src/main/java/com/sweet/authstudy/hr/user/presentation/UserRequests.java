@@ -1,17 +1,18 @@
 package com.sweet.authstudy.hr.user.presentation;
 
-import java.time.LocalDate;
-
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
+import com.sweet.authstudy.shared.validation.ValidCode;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-import com.sweet.authstudy.shared.validation.ValidCode;
+
+import java.time.LocalDate;
 
 public final class UserRequests {
-    private UserRequests() {}
+    private UserRequests() {
+    }
 
     public record CreateUserRequest(
             @ValidCode String code,
@@ -22,7 +23,8 @@ public final class UserRequests {
             @NotNull @JsonFormat(pattern = "yyyy-MM-dd") LocalDate hiredAt,
             @NotBlank @Size(max = 100) String workplace,
             @Size(max = 2048) String profileImageUrl,
-            @ValidCode String positionCode) {}
+            @ValidCode String positionCode) {
+    }
 
     public record UpdateUserRequest(
             @NotBlank @Size(max = 100) String name,
@@ -31,11 +33,14 @@ public final class UserRequests {
             @NotBlank @Size(max = 100) String workplace,
             @Size(max = 2048) String profileImageUrl,
             @ValidCode String positionCode,
-            @NotNull Long version) {}
+            @NotNull Long version) {
+    }
 
     public record ChangeUserStatusRequest(
             @NotNull UserStatus status,
-            @NotNull Long version) {}
+            @NotNull Long version) {
+    }
 
-    public record TemporaryPasswordResponse(String temporaryPassword) {}
+    public record TemporaryPasswordResponse(String temporaryPassword) {
+    }
 }

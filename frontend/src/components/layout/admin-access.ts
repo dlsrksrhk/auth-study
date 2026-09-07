@@ -1,5 +1,5 @@
-import type { AuthStatus } from "@/features/auth/auth-provider";
-import type { Role } from "@/features/auth/auth-api";
+import type {AuthStatus} from "@/features/auth/auth-provider";
+import type {Role} from "@/features/auth/auth-api";
 
 type AdminAccess = {
   status: AuthStatus;
@@ -8,7 +8,7 @@ type AdminAccess = {
   pathname: string;
 };
 
-export function resolveAdminRedirect({ status, roles, companyCode, pathname }: AdminAccess): string | null {
+export function resolveAdminRedirect({status, roles, companyCode, pathname}: AdminAccess): string | null {
   if (status === "loading") return null;
   if (status === "anonymous") return "/login";
   if (status === "passwordChangeRequired") return "/change-password";
@@ -26,19 +26,19 @@ export function resolveAdminRedirect({ status, roles, companyCode, pathname }: A
 }
 
 export function resolveAdminCompanyCode({
-  roles,
-  actorCompanyCode,
-  urlCompanyCode,
-}: {
+                                          roles,
+                                          actorCompanyCode,
+                                          urlCompanyCode,
+                                        }: {
   roles: Role[];
   actorCompanyCode: string | null;
   urlCompanyCode: string | null;
 }): { companyCode: string | null; fixed: boolean } {
   if (roles.includes("SYSTEM_ADMIN")) {
-    return { companyCode: urlCompanyCode?.trim().toUpperCase() || null, fixed: false };
+    return {companyCode: urlCompanyCode?.trim().toUpperCase() || null, fixed: false};
   }
   if (roles.includes("COMPANY_ADMIN")) {
-    return { companyCode: actorCompanyCode?.trim().toUpperCase() || null, fixed: true };
+    return {companyCode: actorCompanyCode?.trim().toUpperCase() || null, fixed: true};
   }
-  return { companyCode: null, fixed: false };
+  return {companyCode: null, fixed: false};
 }

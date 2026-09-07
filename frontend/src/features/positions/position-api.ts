@@ -1,5 +1,5 @@
-import { apiClient } from "@/lib/api/client";
-import type { PageResponse } from "@/features/companies/company-api";
+import {apiClient} from "@/lib/api/client";
+import type {PageResponse} from "@/features/companies/company-api";
 
 export type Position = {
   id: number;
@@ -37,28 +37,44 @@ function collectionPath(companyCode: string, params?: PositionListParams) {
 
 export const positionApi = {
   list: (companyCode: string, params: PositionListParams, signal?: AbortSignal) =>
-    apiClient.request<PageResponse<Position>>(collectionPath(companyCode, params), { signal }),
+      apiClient.request<PageResponse<Position>>(collectionPath(companyCode, params), {signal}),
   create: (companyCode: string, input: { code: string; name: string; level: number; displayOrder: number }) =>
-    apiClient.request<Position>(collectionPath(companyCode), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        code: input.code.trim().toUpperCase(),
-        name: input.name.trim(),
-        level: input.level,
-        displayOrder: input.displayOrder,
+      apiClient.request<Position>(collectionPath(companyCode), {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          code: input.code.trim().toUpperCase(),
+          name: input.name.trim(),
+          level: input.level,
+          displayOrder: input.displayOrder,
+        }),
       }),
-    }),
-  update: (companyCode: string, positionCode: string, input: { name: string; level: number; displayOrder: number; active: boolean; version: number }) =>
-    apiClient.request<Position>(`${collectionPath(companyCode)}/${positionCode.trim().toUpperCase()}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...input, name: input.name.trim() }),
-    }),
+  update: (companyCode: string, positionCode: string, input: {
+    name: string;
+    level: number;
+    displayOrder: number;
+    active: boolean;
+    version: number
+  }) =>
+      apiClient.request<Position>(`${collectionPath(companyCode)}/${positionCode.trim().toUpperCase()}`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({...input, name: input.name.trim()}),
+      }),
   listAll: async (companyCode: string, active?: boolean, signal?: AbortSignal) => {
-    const first = await apiClient.request<PageResponse<Position>>(collectionPath(companyCode, { page: 0, size: 100, sort: "displayOrder", active }), { signal });
-    const rest = await Promise.all(Array.from({ length: Math.max(0, first.totalPages - 1) }, (_, index) =>
-      apiClient.request<PageResponse<Position>>(collectionPath(companyCode, { page: index + 1, size: 100, sort: "displayOrder", active }), { signal })));
+    const first = await apiClient.request<PageResponse<Position>>(collectionPath(companyCode, {
+      page: 0,
+      size: 100,
+      sort: "displayOrder",
+      active
+    }), {signal});
+    const rest = await Promise.all(Array.from({length: Math.max(0, first.totalPages - 1)}, (_, index) =>
+        apiClient.request<PageResponse<Position>>(collectionPath(companyCode, {
+          page: index + 1,
+          size: 100,
+          sort: "displayOrder",
+          active
+        }), {signal})));
     return [first, ...rest].flatMap((page) => page.content);
   },
 };

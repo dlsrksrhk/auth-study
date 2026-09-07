@@ -1,18 +1,13 @@
 package com.sweet.authstudy.audit.infrastructure;
 
+import com.sweet.authstudy.audit.domain.AuditLog;
+import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
-
-import com.sweet.authstudy.audit.domain.AuditLog;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "audit_logs")
@@ -40,7 +35,8 @@ class AuditLogJpaEntity {
     @Column(nullable = false, columnDefinition = "jsonb", updatable = false)
     private Map<String, Object> details = new LinkedHashMap<>();
 
-    protected AuditLogJpaEntity() {}
+    protected AuditLogJpaEntity() {
+    }
 
     static AuditLogJpaEntity from(AuditLog log) {
         AuditLogJpaEntity entity = new AuditLogJpaEntity();

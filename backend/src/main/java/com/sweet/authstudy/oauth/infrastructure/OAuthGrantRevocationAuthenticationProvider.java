@@ -1,5 +1,18 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
+import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
+import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
+import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
+import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationToken;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -8,20 +21,9 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Optional;
 
-import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorization;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
-import org.springframework.security.authentication.AuthenticationProvider;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.oauth2.core.OAuth2RefreshToken;
-import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
-import org.springframework.security.oauth2.core.OAuth2Error;
-import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
-import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
-import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationToken;
-
-/** RFC 7009 provider that revokes the selected authorization grant without touching the IdP session. */
+/**
+ * RFC 7009 provider that revokes the selected authorization grant without touching the IdP session.
+ */
 public final class OAuthGrantRevocationAuthenticationProvider implements AuthenticationProvider {
 
     private final OAuthAuthorizationRepository authorizations;
@@ -29,7 +31,7 @@ public final class OAuthGrantRevocationAuthenticationProvider implements Authent
     private final Clock clock;
 
     public OAuthGrantRevocationAuthenticationProvider(OAuthAuthorizationRepository authorizations,
-            OAuthProtocolEventService events, Clock clock) {
+                                                      OAuthProtocolEventService events, Clock clock) {
         this.authorizations = authorizations;
         this.events = events;
         this.clock = clock;
@@ -80,12 +82,12 @@ public final class OAuthGrantRevocationAuthenticationProvider implements Authent
         try {
             authorizations.revokeAuthorization(authorization.id(), now, () ->
                     events.successRequired(OAuthProtocolEvent.EventType.AUTHORIZATION_REVOKED,
-                        new OAuthProtocolEventService.Context(client.getRegisteredClient().getClientId(),
-                                authorization.subject(), authorization.principalAccountId(),
-                                authorization.companyId(), authorization.id()),
-                        OAuthProtocolEvent.Metadata.from(java.util.Map.of(
-                                "endpoint", OAuthProtocolEvent.Endpoint.REVOCATION,
-                                "authentication_method", authenticationMethod(client)))));
+                            new OAuthProtocolEventService.Context(client.getRegisteredClient().getClientId(),
+                                    authorization.subject(), authorization.principalAccountId(),
+                                    authorization.companyId(), authorization.id()),
+                            OAuthProtocolEvent.Metadata.from(java.util.Map.of(
+                                    "endpoint", OAuthProtocolEvent.Endpoint.REVOCATION,
+                                    "authentication_method", authenticationMethod(client)))));
         } catch (OAuthProtocolEventService.RequiredEventPersistenceException exception) {
             throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.SERVER_ERROR));
         }

@@ -1,35 +1,7 @@
 package com.sweet.authstudy.oauth.presentation;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.sql.Timestamp;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.util.Base64;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.regex.Pattern;
-
-import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -47,10 +19,34 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.util.UriComponentsBuilder;
+
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.*;
+import java.util.Base64;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -66,14 +62,21 @@ class IdpBrowserFlowIntegrationTest {
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
     private static final Instant BASE_TIME = Instant.parse("2026-08-24T00:00:00Z");
 
-    @Autowired private MockMvc mockMvc;
-    @Autowired private JdbcClient jdbcClient;
-    @Autowired private PasswordEncoder passwordEncoder;
-    @Autowired private ObjectMapper objectMapper;
-    @Autowired private MutableClock clock;
-    @MockitoSpyBean private com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private JdbcClient jdbcClient;
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private MutableClock clock;
+    @MockitoSpyBean
+    private com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository
             authorizationRepository;
-    @MockitoSpyBean private com.sweet.authstudy.oauth.application.OAuthConsentService consentService;
+    @MockitoSpyBean
+    private com.sweet.authstudy.oauth.application.OAuthConsentService consentService;
 
     @AfterEach
     void resetClock() {
@@ -938,22 +941,22 @@ class IdpBrowserFlowIntegrationTest {
     }
 
     private DecisionResult concurrentApprove(MockHttpSession session, Fixture fixture,
-            String state, CyclicBarrier barrier, String... scopes) throws Exception {
+                                             String state, CyclicBarrier barrier, String... scopes) throws Exception {
         barrier.await(10, TimeUnit.SECONDS);
         MvcResult result = mockMvc.perform(post("/oauth2/authorize").session(session).with(csrf())
-                        .header("Origin", ISSUER)
-                        .param("client_id", fixture.clientId()).param("state", state)
-                        .param("scope", scopes)).andReturn();
+                .header("Origin", ISSUER)
+                .param("client_id", fixture.clientId()).param("state", state)
+                .param("scope", scopes)).andReturn();
         String location = result.getResponse().getHeader("Location");
         return new DecisionResult(result.getResponse().getStatus(), location);
     }
 
     private DecisionResult concurrentDeny(MockHttpSession session, Fixture fixture,
-            String state, CyclicBarrier barrier) throws Exception {
+                                          String state, CyclicBarrier barrier) throws Exception {
         barrier.await(10, TimeUnit.SECONDS);
         MvcResult result = mockMvc.perform(post("/idp/consent/deny").session(session).with(csrf())
-                        .header("Origin", ISSUER)
-                        .param("client_id", fixture.clientId()).param("state", state)).andReturn();
+                .header("Origin", ISSUER)
+                .param("client_id", fixture.clientId()).param("state", state)).andReturn();
         return new DecisionResult(result.getResponse().getStatus(),
                 result.getResponse().getHeader("Location"));
     }
@@ -992,7 +995,7 @@ class IdpBrowserFlowIntegrationTest {
     }
 
     private String beginAuthorization(Fixture fixture, MockHttpSession session, Set<String> scopes,
-            String state, String nonce) throws Exception {
+                                      String state, String nonce) throws Exception {
         MvcResult result = performAuthorization(fixture, session, scopes, state, nonce)
                 .andExpect(status().is3xxRedirection()).andReturn();
         return result.getResponse().getHeader("Location");
@@ -1013,7 +1016,7 @@ class IdpBrowserFlowIntegrationTest {
     }
 
     private ConsentPage authorizeAuthenticated(Fixture fixture, MockHttpSession session,
-            Set<String> scopes, String state, String nonce) throws Exception {
+                                               Set<String> scopes, String state, String nonce) throws Exception {
         MvcResult result = performAuthorization(fixture, session, scopes, state, nonce)
                 .andExpect(status().is3xxRedirection()).andReturn();
         return consentPage(session, result.getResponse().getHeader("Location"));
@@ -1162,9 +1165,9 @@ class IdpBrowserFlowIntegrationTest {
                 .param("displayName", displayName).param("trust", trust)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         jdbcClient.sql("""
-                        insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
-                        values (:clientId, :redirectUri, 'AUTHORIZATION')
-                        """).param("clientId", internalClientId).param("redirectUri", CALLBACK.toString()).update();
+                insert into oauth_client_redirect_uri(client_id, redirect_uri, purpose)
+                values (:clientId, :redirectUri, 'AUTHORIZATION')
+                """).param("clientId", internalClientId).param("redirectUri", CALLBACK.toString()).update();
         scopes.forEach(scope -> jdbcClient.sql(
                         "insert into oauth_client_scope(client_id, scope) values (:clientId, :scope)")
                 .param("clientId", internalClientId).param("scope", scope).update());
@@ -1216,9 +1219,15 @@ class IdpBrowserFlowIntegrationTest {
     }
 
     private record Fixture(long companyId, long accountId, long internalClientId,
-            String clientId, String clientDisplayName, String email) { }
-    private record LoginPage(String flowId, String html) { }
-    private record ConsentPage(String serverState, String html) { }
+                           String clientId, String clientDisplayName, String email) {
+    }
+
+    private record LoginPage(String flowId, String html) {
+    }
+
+    private record ConsentPage(String serverState, String html) {
+    }
+
     private record DecisionResult(int status, String location) {
         boolean issuedCode() {
             return status == 302 && location != null && queryValue(location, "code") != null;

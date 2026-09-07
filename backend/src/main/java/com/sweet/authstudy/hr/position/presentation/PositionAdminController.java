@@ -1,31 +1,24 @@
 package com.sweet.authstudy.hr.position.presentation;
 
-import static com.sweet.authstudy.hr.position.presentation.PositionRequests.CreatePositionRequest;
-import static com.sweet.authstudy.hr.position.presentation.PositionRequests.UpdatePositionRequest;
-
-import java.util.Set;
-
 import com.sweet.authstudy.hr.position.application.PositionCommands.CreatePositionCommand;
 import com.sweet.authstudy.hr.position.application.PositionCommands.UpdatePositionCommand;
 import com.sweet.authstudy.hr.position.application.PositionService;
 import com.sweet.authstudy.hr.position.application.PositionView;
+import com.sweet.authstudy.shared.presentation.Locations;
 import com.sweet.authstudy.shared.presentation.PageResponse;
 import com.sweet.authstudy.shared.presentation.PageRules;
-import com.sweet.authstudy.shared.presentation.Locations;
 import com.sweet.authstudy.shared.security.ActorContext;
 import com.sweet.authstudy.shared.security.TenantGuard;
 import com.sweet.authstudy.shared.validation.BusinessCode;
 import com.sweet.authstudy.shared.validation.ValidCode;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Set;
+
+import static com.sweet.authstudy.hr.position.presentation.PositionRequests.CreatePositionRequest;
+import static com.sweet.authstudy.hr.position.presentation.PositionRequests.UpdatePositionRequest;
 
 @RestController
 @RequestMapping("/api/v1/admin/companies/{companyCode}/positions")
@@ -72,8 +65,8 @@ public class PositionAdminController {
 
     @PutMapping("/{positionCode}")
     public PositionView update(@PathVariable @ValidCode String companyCode,
-            @PathVariable @ValidCode String positionCode,
-            @Valid @RequestBody UpdatePositionRequest request) {
+                               @PathVariable @ValidCode String positionCode,
+                               @Valid @RequestBody UpdatePositionRequest request) {
         var actor = actorContext.current();
         tenantGuard.requireCompanyAccess(actor, companyCode);
         return positionService.update(actor, companyCode, positionCode,

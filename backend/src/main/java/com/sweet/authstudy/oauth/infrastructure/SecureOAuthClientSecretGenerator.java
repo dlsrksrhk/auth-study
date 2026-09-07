@@ -1,10 +1,10 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.security.SecureRandom;
-import java.util.Base64;
-
 import com.sweet.authstudy.oauth.application.OAuthClientSecretGenerator;
 import org.springframework.stereotype.Component;
+
+import java.security.SecureRandom;
+import java.util.Base64;
 
 @Component
 public class SecureOAuthClientSecretGenerator implements OAuthClientSecretGenerator {

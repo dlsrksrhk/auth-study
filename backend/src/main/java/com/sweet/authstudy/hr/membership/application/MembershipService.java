@@ -1,18 +1,11 @@
 package com.sweet.authstudy.hr.membership.application;
 
-import static com.sweet.authstudy.hr.membership.application.MembershipCommands.AssignMembershipCommand;
-import static com.sweet.authstudy.hr.membership.application.MembershipCommands.UpdateMembershipCommand;
-
-import java.time.Clock;
-import java.util.List;
-import java.util.Map;
-
 import com.sweet.authstudy.audit.application.AuditActions;
-import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.audit.application.AuditFailurePlan;
+import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.audit.application.AuditedTransactionExecutor;
-import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.authorization.AdministrativeTargetGuard;
+import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
@@ -25,15 +18,22 @@ import com.sweet.authstudy.hr.membership.domain.MembershipRepository;
 import com.sweet.authstudy.hr.user.domain.HrUser;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
 import com.sweet.authstudy.hr.user.domain.UserStatus;
+import com.sweet.authstudy.shared.application.PageResult;
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
 import com.sweet.authstudy.shared.validation.BusinessCode;
-import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.util.List;
+import java.util.Map;
+
+import static com.sweet.authstudy.hr.membership.application.MembershipCommands.AssignMembershipCommand;
+import static com.sweet.authstudy.hr.membership.application.MembershipCommands.UpdateMembershipCommand;
 
 @Service
 public class MembershipService {
@@ -205,7 +205,7 @@ public class MembershipService {
         }
         if (role == DepartmentRole.HEAD
                 && membershipRepository.existsActiveHeadByDepartmentIdExcluding(
-                        membership.departmentId(), membership.id())) {
+                membership.departmentId(), membership.id())) {
             throw new ApiException(ErrorCode.INVALID_STATE, "Department already has an active head.");
         }
     }

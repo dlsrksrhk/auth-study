@@ -1,8 +1,8 @@
 package com.sweet.authstudy.authorization;
 
-import java.util.Set;
-
 import com.sweet.authstudy.identity.domain.AccountRole;
+
+import java.util.Set;
 
 public record AuthenticatedAccount(
         long accountId, Long companyId, Long userId, Set<AccountRole> roles,

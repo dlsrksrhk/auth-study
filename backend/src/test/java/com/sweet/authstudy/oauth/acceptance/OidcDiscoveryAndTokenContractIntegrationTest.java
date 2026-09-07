@@ -1,13 +1,37 @@
 package com.sweet.authstudy.oauth.acceptance;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doCallRealMethod;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.RSASSASigner;
+import com.nimbusds.jose.crypto.RSASSAVerifier;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.KeyUse;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
+import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
+import com.sweet.authstudy.oauth.infrastructure.OAuthPrivateKeyCipher;
+import com.sweet.authstudy.support.PostgresContainerConfiguration;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.*;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -29,43 +53,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nimbusds.jose.JWSAlgorithm;
-import com.nimbusds.jose.JWSHeader;
-import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.KeyUse;
-import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.crypto.RSASSASigner;
-import com.nimbusds.jose.crypto.RSASSAVerifier;
-import com.nimbusds.jwt.JWTClaimsSet;
-import com.nimbusds.jwt.SignedJWT;
-import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
-import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
-import com.sweet.authstudy.oauth.infrastructure.OAuthPrivateKeyCipher;
-import com.sweet.authstudy.support.PostgresContainerConfiguration;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.mock.web.MockHttpSession;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
-import org.springframework.security.oauth2.jwt.JwtClaimsSet;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.JwtEncoder;
-import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
-import org.springframework.security.oauth2.jwt.JwtException;
-import org.springframework.security.oauth2.jwt.JwsHeader;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.springframework.web.util.UriComponentsBuilder;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -78,13 +73,22 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
     private static final String VERIFIER =
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
 
-    @Autowired private MockMvc mockMvc;
-    @Autowired private ObjectMapper objectMapper;
-    @Autowired private JdbcClient jdbcClient;
-    @MockitoSpyBean private OAuthSigningKeyRepository signingKeys;
-    @Autowired private OAuthPrivateKeyCipher cipher;
-    @Autowired @Qualifier("oauthJwtDecoder") private JwtDecoder jwtDecoder;
-    @Autowired @Qualifier("oauthJwtEncoder") private JwtEncoder jwtEncoder;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private JdbcClient jdbcClient;
+    @MockitoSpyBean
+    private OAuthSigningKeyRepository signingKeys;
+    @Autowired
+    private OAuthPrivateKeyCipher cipher;
+    @Autowired
+    @Qualifier("oauthJwtDecoder")
+    private JwtDecoder jwtDecoder;
+    @Autowired
+    @Qualifier("oauthJwtEncoder")
+    private JwtEncoder jwtEncoder;
 
     @Test
     void discovery_jwks_and_real_code_exchange_publish_the_rs256_allowlist_contract() throws Exception {
@@ -269,15 +273,15 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
     private String authorize(String authorizationPath, Fixture fixture, String nonce, String scopes) throws Exception {
         String state = "state-" + UUID.randomUUID();
         MockHttpServletRequestBuilder request = get(authorizationPath)
-                        .session(new MockHttpSession())
-                        .with(user(Long.toString(fixture.accountId())))
-                        .queryParam("response_type", "code")
-                        .queryParam("client_id", fixture.clientId())
-                        .queryParam("redirect_uri", CALLBACK.toString())
-                        .queryParam("scope", scopes)
-                        .queryParam("state", state)
-                        .queryParam("code_challenge", challenge(VERIFIER))
-                        .queryParam("code_challenge_method", "S256");
+                .session(new MockHttpSession())
+                .with(user(Long.toString(fixture.accountId())))
+                .queryParam("response_type", "code")
+                .queryParam("client_id", fixture.clientId())
+                .queryParam("redirect_uri", CALLBACK.toString())
+                .queryParam("scope", scopes)
+                .queryParam("state", state)
+                .queryParam("code_challenge", challenge(VERIFIER))
+                .queryParam("code_challenge_method", "S256");
         if (nonce != null) request.queryParam("nonce", nonce);
         MvcResult result = mockMvc.perform(request)
                 .andExpect(status().is3xxRedirection())
@@ -293,11 +297,11 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
 
     private JsonNode exchange(String tokenPath, Fixture fixture, String code, boolean expectIdToken) throws Exception {
         MockHttpServletRequestBuilder request = post(tokenPath)
-                        .header("Origin", ISSUER)
-                        .param("grant_type", "authorization_code")
-                        .param("code", code)
-                        .param("redirect_uri", CALLBACK.toString())
-                        .param("code_verifier", VERIFIER);
+                .header("Origin", ISSUER)
+                .param("grant_type", "authorization_code")
+                .param("code", code)
+                .param("redirect_uri", CALLBACK.toString())
+                .param("code_verifier", VERIFIER);
         if (fixture.rawSecret() == null) {
             request.param("client_id", fixture.clientId());
         } else {
@@ -373,27 +377,27 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
         String code = "OIDC_" + suffix.toUpperCase();
         Instant now = Instant.now();
         long companyId = jdbcClient.sql("""
-                insert into companies(code, name, email_domain, status, created_at, updated_at)
-                values (:code, :code, :domain, 'ACTIVE', :now, :now) returning id
-                """).param("code", code).param("domain", code.toLowerCase() + ".example")
+                        insert into companies(code, name, email_domain, status, created_at, updated_at)
+                        values (:code, :code, :domain, 'ACTIVE', :now, :now) returning id
+                        """).param("code", code).param("domain", code.toLowerCase() + ".example")
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         long positionId = jdbcClient.sql("""
                 insert into positions(company_id, code, name, level, display_order, active, created_at, updated_at)
                 values (:companyId, 'EMPLOYEE', 'Employee', 1, 1, true, :now, :now) returning id
                 """).param("companyId", companyId).param("now", Timestamp.from(now)).query(Long.class).single();
         long userId = jdbcClient.sql("""
-                insert into users(company_id, code, employee_number, name, phone, hired_at, workplace,
-                                  position_id, status, created_at, updated_at)
-                values (:companyId, 'USER', :employeeNumber, 'OIDC User', '010-0000-0000', :hiredAt,
-                        'Seoul', :positionId, 'ACTIVE', :now, :now) returning id
-                """).param("companyId", companyId).param("employeeNumber", "E-" + suffix)
+                        insert into users(company_id, code, employee_number, name, phone, hired_at, workplace,
+                                          position_id, status, created_at, updated_at)
+                        values (:companyId, 'USER', :employeeNumber, 'OIDC User', '010-0000-0000', :hiredAt,
+                                'Seoul', :positionId, 'ACTIVE', :now, :now) returning id
+                        """).param("companyId", companyId).param("employeeNumber", "E-" + suffix)
                 .param("hiredAt", LocalDate.of(2026, 8, 24)).param("positionId", positionId)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         long accountId = jdbcClient.sql("""
-                insert into accounts(company_id, user_id, login_email, password_hash, status,
-                                     must_change_password, created_at, updated_at)
-                values (:companyId, :userId, :email, 'hash', 'ACTIVE', false, :now, :now) returning id
-                """).param("companyId", companyId).param("userId", userId)
+                        insert into accounts(company_id, user_id, login_email, password_hash, status,
+                                             must_change_password, created_at, updated_at)
+                        values (:companyId, :userId, :email, 'hash', 'ACTIVE', false, :now, :now) returning id
+                        """).param("companyId", companyId).param("userId", userId)
                 .param("email", suffix + "@example.com").param("now", Timestamp.from(now))
                 .query(Long.class).single();
         jdbcClient.sql("insert into account_roles(account_id, role) values (:accountId, 'USER')")
@@ -403,18 +407,18 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
                 .param("accountId", accountId).param("subject", subject).param("now", Timestamp.from(now)).update();
         String clientId = "oidc-client-" + suffix;
         long internalClientId = jdbcClient.sql("""
-                insert into oauth_client(company_id, client_id, display_name, status, trust,
-                                         public_client, created_at, updated_at)
-                values (:companyId, :clientId, 'OIDC RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
-                        :publicClient, :now, :now) returning id
-                """).param("companyId", companyId).param("clientId", clientId)
+                        insert into oauth_client(company_id, client_id, display_name, status, trust,
+                                                 public_client, created_at, updated_at)
+                        values (:companyId, :clientId, 'OIDC RP', 'ACTIVE', 'TRUSTED_FIRST_PARTY',
+                                :publicClient, :now, :now) returning id
+                        """).param("companyId", companyId).param("clientId", clientId)
                 .param("publicClient", rawSecret == null)
                 .param("now", Timestamp.from(now)).query(Long.class).single();
         if (rawSecret != null) {
             jdbcClient.sql("""
-                    insert into oauth_client_secret(client_id, secret_hash, secret_hint, created_at, version)
-                    values (:clientId, :hash, :hint, :now, 0)
-                    """).param("clientId", internalClientId)
+                            insert into oauth_client_secret(client_id, secret_hash, secret_hint, created_at, version)
+                            values (:clientId, :hash, :hint, :now, 0)
+                            """).param("clientId", internalClientId)
                     .param("hash", new BCryptPasswordEncoder().encode(rawSecret))
                     .param("hint", rawSecret.substring(rawSecret.length() - 4))
                     .param("now", Timestamp.from(now)).update();
@@ -483,6 +487,9 @@ class OidcDiscoveryAndTokenContractIntegrationTest {
         return UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst(name);
     }
 
-    private record Discovery(String authorizationPath, String tokenPath, String jwksPath) { }
-    private record Fixture(long accountId, String clientId, String rawSecret) { }
+    private record Discovery(String authorizationPath, String tokenPath, String jwksPath) {
+    }
+
+    private record Fixture(long accountId, String clientId, String rawSecret) {
+    }
 }

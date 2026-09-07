@@ -1,22 +1,13 @@
 package com.sweet.authstudy.audit;
 
-import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.time.LocalDate;
-import java.util.Set;
-import java.util.UUID;
-import java.time.Instant;
-
 import com.sweet.authstudy.audit.application.AuditActions;
 import com.sweet.authstudy.audit.application.AuditService;
 import com.sweet.authstudy.authorization.AuthenticatedAccount;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.CreateCompanyCommand;
-import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.company.application.CompanyCommands.UpdateCompanyCommand;
-import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
+import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.hr.department.application.DepartmentCommands.ChangeDepartmentStatusCommand;
 import com.sweet.authstudy.hr.department.application.DepartmentCommands.CreateDepartmentCommand;
 import com.sweet.authstudy.hr.department.application.DepartmentService;
@@ -43,20 +34,38 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.Set;
+import java.util.UUID;
+
+import static com.sweet.authstudy.support.TestActors.SYSTEM_ADMIN;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)
 @ActiveProfiles("test")
 class AuditIntegrationTest {
 
-    @Autowired CompanyService companyService;
-    @Autowired DepartmentService departmentService;
-    @Autowired UserService userService;
-    @Autowired PositionService positionService;
-    @Autowired MembershipService membershipService;
-    @Autowired AuditService auditService;
-    @Autowired CompanyRepository companyRepository;
-    @Autowired JdbcTemplate jdbc;
-    @Autowired PlatformTransactionManager transactionManager;
+    @Autowired
+    CompanyService companyService;
+    @Autowired
+    DepartmentService departmentService;
+    @Autowired
+    UserService userService;
+    @Autowired
+    PositionService positionService;
+    @Autowired
+    MembershipService membershipService;
+    @Autowired
+    AuditService auditService;
+    @Autowired
+    CompanyRepository companyRepository;
+    @Autowired
+    JdbcTemplate jdbc;
+    @Autowired
+    PlatformTransactionManager transactionManager;
 
     @Test
     void records_actor_target_company_result_and_trace_without_secrets() {
@@ -215,7 +224,7 @@ class AuditIntegrationTest {
                 new UpdateCompanyCommand(company.name(), CompanyStatus.INACTIVE, company.version()));
 
         var actions = auditService.list(SYSTEM_ADMIN, fixture.code(),
-                null, null, 0, 100, "occurredAt").content().stream()
+                        null, null, 0, 100, "occurredAt").content().stream()
                 .map(log -> log.action()).collect(java.util.stream.Collectors.toSet());
         assertThat(actions).contains(
                 AuditActions.COMPANY_CREATE, AuditActions.COMPANY_UPDATE,
@@ -238,5 +247,6 @@ class AuditIntegrationTest {
         return new Fixture(code, domain, id);
     }
 
-    private record Fixture(String code, String domain, long id) {}
+    private record Fixture(String code, String domain, long id) {
+    }
 }

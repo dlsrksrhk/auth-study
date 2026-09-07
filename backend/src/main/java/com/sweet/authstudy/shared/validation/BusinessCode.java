@@ -1,16 +1,17 @@
 package com.sweet.authstudy.shared.validation;
 
-import java.util.Locale;
-import java.util.regex.Pattern;
-
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
+
+import java.util.Locale;
+import java.util.regex.Pattern;
 
 public final class BusinessCode {
     public static final String REGEXP = "[A-Za-z0-9][A-Za-z0-9_-]*";
     private static final Pattern PATTERN = Pattern.compile(REGEXP);
 
-    private BusinessCode() {}
+    private BusinessCode() {
+    }
 
     public static boolean isValid(String value) {
         if (value == null) {

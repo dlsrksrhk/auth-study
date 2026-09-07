@@ -1,10 +1,5 @@
 package com.sweet.authstudy.hr.infrastructure;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-
-import java.time.Clock;
-
 import com.sweet.authstudy.hr.company.application.CompanyService;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.department.application.DepartmentService;
@@ -15,6 +10,11 @@ import com.sweet.authstudy.shared.config.AppSecurityProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
+
+import java.time.Clock;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 class DevSampleDataSeederConditionTest {
     private final ApplicationContextRunner context = new ApplicationContextRunner()

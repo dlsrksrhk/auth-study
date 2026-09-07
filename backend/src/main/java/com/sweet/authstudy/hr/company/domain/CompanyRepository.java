@@ -1,8 +1,9 @@
 package com.sweet.authstudy.hr.company.domain;
 
-import java.util.Optional;
-import java.util.List;
 import com.sweet.authstudy.shared.application.PageResult;
+
+import java.util.List;
+import java.util.Optional;
 
 public interface CompanyRepository {
 

@@ -1,14 +1,14 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.util.List;
-import java.util.Optional;
-
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import org.springframework.stereotype.Repository;
+import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
-import com.sweet.authstudy.shared.application.PageResult;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class OAuthClientRepositoryAdapter implements OAuthClientRepository {
@@ -24,7 +24,7 @@ public class OAuthClientRepositoryAdapter implements OAuthClientRepository {
         OAuthClientJpaEntity entity = client.id() == null
                 ? OAuthClientJpaEntity.from(client)
                 : repository.findById(client.id())
-                        .orElseThrow(() -> new IllegalStateException("OAuth client does not exist."));
+                .orElseThrow(() -> new IllegalStateException("OAuth client does not exist."));
         if (client.id() != null) {
             entity.updateFrom(client);
         }

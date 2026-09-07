@@ -73,13 +73,39 @@ public final class Department {
         this.updatedAt = Objects.requireNonNull(now);
     }
 
-    public Long id() { return id; }
-    public long companyId() { return companyId; }
-    public Long parentDepartmentId() { return parentDepartmentId; }
-    public String code() { return code; }
-    public String name() { return name; }
-    public DepartmentStatus status() { return status; }
-    public long version() { return version; }
-    public Instant createdAt() { return createdAt; }
-    public Instant updatedAt() { return updatedAt; }
+    public Long id() {
+        return id;
+    }
+
+    public long companyId() {
+        return companyId;
+    }
+
+    public Long parentDepartmentId() {
+        return parentDepartmentId;
+    }
+
+    public String code() {
+        return code;
+    }
+
+    public String name() {
+        return name;
+    }
+
+    public DepartmentStatus status() {
+        return status;
+    }
+
+    public long version() {
+        return version;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
+    public Instant updatedAt() {
+        return updatedAt;
+    }
 }

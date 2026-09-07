@@ -1,9 +1,7 @@
 package com.sweet.authstudy.hr.user.domain;
 
-import java.util.Optional;
 import java.util.List;
-
-import com.sweet.authstudy.hr.user.domain.UserStatus;
+import java.util.Optional;
 
 public interface UserRepository {
 
@@ -21,5 +19,6 @@ public interface UserRepository {
 
     UserPage search(long companyId, String search, UserStatus status, int page, int size, String sort);
 
-    record UserPage(List<HrUser> content, long totalElements, int totalPages) {}
+    record UserPage(List<HrUser> content, long totalElements, int totalPages) {
+    }
 }

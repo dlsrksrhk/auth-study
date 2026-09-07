@@ -1,11 +1,11 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.util.Optional;
-
 import com.sweet.authstudy.oauth.domain.OAuthConsent;
 import com.sweet.authstudy.oauth.domain.OAuthConsentRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Optional;
 
 @Repository
 public class OAuthConsentRepositoryAdapter implements OAuthConsentRepository {
@@ -22,7 +22,7 @@ public class OAuthConsentRepositoryAdapter implements OAuthConsentRepository {
         OAuthConsentJpaEntity entity = consent.id() == null
                 ? OAuthConsentJpaEntity.from(consent)
                 : repository.findById(consent.id())
-                        .orElseThrow(() -> new IllegalStateException("OAuth consent does not exist."));
+                .orElseThrow(() -> new IllegalStateException("OAuth consent does not exist."));
         if (consent.id() != null) entity.updateFrom(consent);
         return repository.saveAndFlush(entity).toDomain();
     }

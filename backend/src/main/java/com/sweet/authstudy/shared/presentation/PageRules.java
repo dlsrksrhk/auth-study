@@ -1,12 +1,13 @@
 package com.sweet.authstudy.shared.presentation;
 
-import java.util.Set;
-
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 
+import java.util.Set;
+
 public final class PageRules {
-    private PageRules() {}
+    private PageRules() {
+    }
 
     public static void validate(int page, int size, String sort, Set<String> allowedSorts) {
         long offset = (long) page * size;

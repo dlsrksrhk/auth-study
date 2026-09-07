@@ -1,27 +1,5 @@
 package com.sweet.authstudy.acceptance;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.http.HttpHeaders.AUTHORIZATION;
-import static org.springframework.http.HttpHeaders.ORIGIN;
-import static org.springframework.http.HttpHeaders.SET_COOKIE;
-import static org.springframework.http.MediaType.APPLICATION_JSON;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
@@ -35,6 +13,15 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.time.Instant;
+import java.util.*;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.http.HttpHeaders.*;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(PostgresContainerConfiguration.class)
@@ -46,8 +33,10 @@ class HrAdminAcceptanceTest {
     private static final String SYSTEM_EMAIL = "admin@auth-study.local";
     private static final String SYSTEM_PASSWORD = "AuthStudy1234!";
 
-    @Autowired MockMvc mvc;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired
+    MockMvc mvc;
+    @Autowired
+    ObjectMapper objectMapper;
 
     @Test
     void completes_the_hr_admin_journey_through_http_jwt_cookie_and_origin_boundaries() throws Exception {
@@ -387,5 +376,6 @@ class HrAdminAcceptanceTest {
         }
     }
 
-    private record Login(String accessToken, Cookie refreshCookie) {}
+    private record Login(String accessToken, Cookie refreshCookie) {
+    }
 }

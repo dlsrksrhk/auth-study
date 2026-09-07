@@ -1,33 +1,11 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.security.Principal;
-import java.time.Clock;
-import java.time.Instant;
-import java.util.Collection;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-
-import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
 import com.sweet.authstudy.oauth.application.OAuthProtocolEventService;
-import com.sweet.authstudy.oauth.domain.OAuthAccessToken;
-import com.sweet.authstudy.oauth.domain.OAuthAuthorizationRepository;
-import com.sweet.authstudy.oauth.domain.OAuthClientSecret;
-import com.sweet.authstudy.oauth.domain.OAuthClientStatus;
-import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
-import com.sweet.authstudy.oauth.domain.OAuthProtocolEvent;
-import com.sweet.authstudy.oauth.domain.OAuthRefreshToken;
+import com.sweet.authstudy.oauth.application.OAuthSecurityProperties;
+import com.sweet.authstudy.oauth.domain.*;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.oauth2.core.AuthorizationGrantType;
-import org.springframework.security.oauth2.core.ClaimAccessor;
-import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
-import org.springframework.security.oauth2.core.OAuth2AccessToken;
-import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
-import org.springframework.security.oauth2.core.OAuth2Error;
-import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
-import org.springframework.security.oauth2.core.OAuth2RefreshToken;
-import org.springframework.security.oauth2.core.OAuth2Token;
+import org.springframework.security.oauth2.core.*;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
@@ -37,7 +15,17 @@ import org.springframework.security.oauth2.server.authorization.context.Authoriz
 import org.springframework.security.oauth2.server.authorization.token.DefaultOAuth2TokenContext;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator;
 
-/** Project-owned single-use refresh rotation backed by one PostgreSQL transaction. */
+import java.security.Principal;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Collection;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * Project-owned single-use refresh rotation backed by one PostgreSQL transaction.
+ */
 public final class OAuthRefreshTokenAuthenticationProvider implements AuthenticationProvider {
 
     private final OAuthAuthorizationRepository authorizations;
@@ -263,7 +251,7 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
     }
 
     private void recordFailure(OAuthAuthorizationRepository.RefreshRotationStatus status,
-            EventSnapshot snapshot) {
+                               EventSnapshot snapshot) {
         if (protocolEvents == null) return;
         if (status == OAuthAuthorizationRepository.RefreshRotationStatus.REUSED) {
             protocolEvents.failure(OAuthProtocolEvent.EventType.REFRESH_REUSE_DETECTED, snapshot.context(),
@@ -288,8 +276,12 @@ public final class OAuthRefreshTokenAuthenticationProvider implements Authentica
         return OAuth2RefreshTokenAuthenticationToken.class.isAssignableFrom(authentication);
     }
 
-    private record GeneratedResponse(OAuth2AccessToken accessToken, OAuth2RefreshToken refreshToken) { }
-    private static final class InvalidRefreshScopeException extends RuntimeException { }
+    private record GeneratedResponse(OAuth2AccessToken accessToken, OAuth2RefreshToken refreshToken) {
+    }
+
+    private static final class InvalidRefreshScopeException extends RuntimeException {
+    }
+
     private record EventSnapshot(OAuthProtocolEventService.Context context, Set<String> scopes) {
         private static EventSnapshot empty() {
             return new EventSnapshot(OAuthProtocolEventService.Context.empty(), Set.of());

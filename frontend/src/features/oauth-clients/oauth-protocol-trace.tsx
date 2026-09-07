@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { useAuth } from "@/features/auth/auth-provider";
+import {useRouter, useSearchParams} from "next/navigation";
+import {useEffect, useState} from "react";
+import {Button, buttonVariants} from "@/components/ui/button";
+import {useAuth} from "@/features/auth/auth-provider";
 import {
   oauthClientApi,
   type CursorResponse,
@@ -12,7 +12,7 @@ import {
   type ProtocolEventType,
   type ProtocolEventOutcome,
 } from "./oauth-client-api";
-import { oauthScopeCatalog } from "./oauth-scope-catalog";
+import {oauthScopeCatalog} from "./oauth-scope-catalog";
 
 type Props = { companyCode: string; clientId: string };
 const eventLabels = {
@@ -69,101 +69,105 @@ const metadataEnums: Record<string, readonly string[]> = {
     "SERVER_ERROR",
   ],
 };
+
 function safeMetadata(key: string, value: unknown): string | null {
   if (Object.hasOwn(metadataEnums, key))
     return typeof value === "string" && metadataEnums[key].includes(value)
-      ? value
-      : null;
+        ? value
+        : null;
   if (
-    ["public_client", "redirect_validated", "session_invalidated"].includes(key)
+      ["public_client", "redirect_validated", "session_invalidated"].includes(key)
   )
     return typeof value === "boolean" ? String(value) : null;
   if (key === "http_status")
     return typeof value === "number" &&
-      Number.isInteger(value) &&
-      value >= 100 &&
-      value <= 599
-      ? String(value)
-      : null;
+    Number.isInteger(value) &&
+    value >= 100 &&
+    value <= 599
+        ? String(value)
+        : null;
   if (
-    key === "scopes" &&
-    Array.isArray(value) &&
-    value.every(
-      (scope) =>
-        typeof scope === "string" && Object.hasOwn(oauthScopeCatalog, scope),
-    )
+      key === "scopes" &&
+      Array.isArray(value) &&
+      value.every(
+          (scope) =>
+              typeof scope === "string" && Object.hasOwn(oauthScopeCatalog, scope),
+      )
   )
     return value.join(", ");
   return null;
 }
-function Metadata({ value }: { value: Record<string, unknown> }) {
+
+function Metadata({value}: { value: Record<string, unknown> }) {
   const entries =
-    value && typeof value === "object" && !Array.isArray(value)
-      ? Object.entries(value)
-      : [["", null] as const];
+      value && typeof value === "object" && !Array.isArray(value)
+          ? Object.entries(value)
+          : [["", null] as const];
   return (
-    <dl className="flex flex-wrap gap-3 text-sm">
-      {entries.map(([key, item], index) => {
-        const safe = safeMetadata(key, item);
-        return safe === null ? (
-          <div key={index}>
-            <dt className="sr-only">숨긴 metadata</dt>
-            <dd className="rounded bg-slate-100 px-2">redacted</dd>
-          </div>
-        ) : (
-          <div key={index}>
-            <dt className="text-slate-500">{key}</dt>
-            <dd>{safe}</dd>
-          </div>
-        );
-      })}
-    </dl>
+      <dl className="flex flex-wrap gap-3 text-sm">
+        {entries.map(([key, item], index) => {
+          const safe = safeMetadata(key, item);
+          return safe === null ? (
+              <div key={index}>
+                <dt className="sr-only">숨긴 metadata</dt>
+                <dd className="rounded bg-slate-100 px-2">redacted</dd>
+              </div>
+          ) : (
+              <div key={index}>
+                <dt className="text-slate-500">{key}</dt>
+                <dd>{safe}</dd>
+              </div>
+          );
+        })}
+      </dl>
   );
 }
-export function OAuthProtocolTrace({ companyCode, clientId }: Props) {
-  const { actor, status } = useAuth();
+
+export function OAuthProtocolTrace({companyCode, clientId}: Props) {
+  const {actor, status} = useAuth();
   const search = useSearchParams();
   const system = actor?.roles.includes("SYSTEM_ADMIN");
   if (status === "loading")
     return <p aria-busy="true">이벤트 화면을 준비하는 중입니다.</p>;
   if (
-    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,49}$/.test(companyCode) ||
-    !clientId ||
-    status !== "authenticated" ||
-    !(
-      system ||
-      (actor?.roles.includes("COMPANY_ADMIN") &&
-        actor.companyCode?.toUpperCase() === companyCode.toUpperCase())
-    )
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,49}$/.test(companyCode) ||
+      !clientId ||
+      status !== "authenticated" ||
+      !(
+          system ||
+          (actor?.roles.includes("COMPANY_ADMIN") &&
+              actor.companyCode?.toUpperCase() === companyCode.toUpperCase())
+      )
   )
     return <p role="alert">이 회사의 OAuth 이벤트를 조회할 권한이 없습니다.</p>;
   const rawType = search.get("type") ?? "";
   const rawOutcome = search.get("outcome") ?? "";
   const type = Object.hasOwn(eventLabels, rawType)
-    ? (rawType as ProtocolEventType)
-    : undefined;
+      ? (rawType as ProtocolEventType)
+      : undefined;
   const outcome = Object.hasOwn(outcomeLabels, rawOutcome)
-    ? (rawOutcome as ProtocolEventOutcome)
-    : undefined;
+      ? (rawOutcome as ProtocolEventOutcome)
+      : undefined;
   const cursor = search.get("cursor") || undefined;
   return (
-    <Trace
-      key={`${companyCode}:${clientId}:${actor?.accountId}:${system}:${type}:${outcome}:${cursor}`}
-      companyCode={companyCode}
-      clientId={clientId}
-      type={type}
-      outcome={outcome}
-      cursor={cursor}
-    />
+      <Trace
+          key={`${companyCode}:${clientId}:${actor?.accountId}:${system}:${type}:${outcome}:${cursor}`}
+          companyCode={companyCode}
+          clientId={clientId}
+          type={type}
+          outcome={outcome}
+          cursor={cursor}
+      />
   );
 }
+
 function Trace({
-  companyCode,
-  clientId,
-  type,
-  outcome,
-  cursor,
-}: Props & {
+                 companyCode,
+                 clientId,
+                 type,
+                 outcome,
+                 cursor,
+               }: Props & {
   type?: ProtocolEventType;
   outcome?: ProtocolEventOutcome;
   cursor?: string;
@@ -176,24 +180,25 @@ function Trace({
   useEffect(() => {
     const controller = new AbortController();
     oauthClientApi
-      .listProtocolEvents(
-        companyCode,
-        clientId,
-        { size: 50, cursor, type, outcome },
-        controller.signal,
-      )
-      .then((next) => {
-        if (!controller.signal.aborted) setData(next);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setError(true);
-      });
+        .listProtocolEvents(
+            companyCode,
+            clientId,
+            {size: 50, cursor, type, outcome},
+            controller.signal,
+        )
+        .then((next) => {
+          if (!controller.signal.aborted) setData(next);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setError(true);
+        });
     return () => controller.abort();
   }, [companyCode, clientId, cursor, type, outcome, attempt]);
+
   function navigate(
-    nextType: ProtocolEventType | undefined,
-    nextOutcome: ProtocolEventOutcome | undefined,
-    nextCursor?: string,
+      nextType: ProtocolEventType | undefined,
+      nextOutcome: ProtocolEventOutcome | undefined,
+      nextCursor?: string,
   ) {
     const query = new URLSearchParams();
     if (nextType) query.set("type", nextType);
@@ -203,146 +208,147 @@ function Trace({
       scroll: false,
     });
   }
+
   return (
-    <section
-      aria-labelledby="oauth-trace-title"
-      className="mx-auto max-w-4xl space-y-5"
-    >
-      <div className="flex items-center justify-between gap-4">
-        <h1 id="oauth-trace-title" className="text-3xl font-semibold">
-          Protocol 이벤트
-        </h1>
-        <Link className={buttonVariants({ variant: "outline" })} href={path}>
-          client 상세
-        </Link>
-      </div>
-      <div className="flex flex-wrap gap-4">
-        <label htmlFor="oauth-event-type">
-          이벤트 유형
-          <select
-            id="oauth-event-type"
-            className="ml-2 rounded border p-2"
-            value={type ?? ""}
-            onChange={(e) =>
-              navigate(
-                e.target.value
-                  ? (e.target.value as ProtocolEventType)
-                  : undefined,
-                outcome,
-              )
-            }
-          >
-            <option value="">전체</option>
-            {Object.entries(eventLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label} ({value})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label htmlFor="oauth-event-outcome">
-          결과
-          <select
-            id="oauth-event-outcome"
-            className="ml-2 rounded border p-2"
-            value={outcome ?? ""}
-            onChange={(e) =>
-              navigate(
-                type,
-                e.target.value
-                  ? (e.target.value as ProtocolEventOutcome)
-                  : undefined,
-              )
-            }
-          >
-            <option value="">전체</option>
-            {Object.entries(outcomeLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {error ? (
-        <div>
-          <p role="alert">
-            Protocol 이벤트를 불러오지 못했습니다. 권한 또는 조회 조건을 확인해
-            주세요.
-          </p>
-          <Button
-            variant="outline"
-            onClick={() => {
-              setError(false);
-              setData(null);
-              setAttempt(attempt + 1);
-            }}
-          >
-            이벤트 다시 시도
-          </Button>
+      <section
+          aria-labelledby="oauth-trace-title"
+          className="mx-auto max-w-4xl space-y-5"
+      >
+        <div className="flex items-center justify-between gap-4">
+          <h1 id="oauth-trace-title" className="text-3xl font-semibold">
+            Protocol 이벤트
+          </h1>
+          <Link className={buttonVariants({variant: "outline"})} href={path}>
+            client 상세
+          </Link>
         </div>
-      ) : !data ? (
-        <p aria-busy="true">Protocol 이벤트를 불러오는 중입니다.</p>
-      ) : (
-        <>
-          {data.content.length ? (
-            <ol className="space-y-3">
-              {data.content.map((event) => (
-                <li
-                  key={event.id}
-                  className="space-y-2 rounded-xl border bg-white p-5"
-                >
-                  <p>
-                    <time dateTime={event.occurredAt}>{event.occurredAt}</time>
-                  </p>
-                  <p>
-                    {Object.hasOwn(eventLabels, event.eventType)
-                      ? `${eventLabels[event.eventType]} (${event.eventType})`
-                      : "redacted"}{" "}
-                    ·{" "}
-                    {Object.hasOwn(outcomeLabels, event.outcome)
-                      ? outcomeLabels[event.outcome]
-                      : "redacted"}
-                  </p>
-                  <dl className="text-sm">
-                    <dt>correlationId</dt>
-                    <dd className="break-all font-mono">
-                      {event.correlationId}
-                    </dd>
-                    <dt>subject</dt>
-                    <dd>
-                      {event.subject
-                        ? `${event.subject.slice(0, 8)}…${event.subject.slice(-4)}`
-                        : "없음"}
-                    </dd>
-                    <dt>errorCode</dt>
-                    <dd>{event.errorCode ?? "없음"}</dd>
-                  </dl>
-                  <Metadata value={event.metadata} />
-                </li>
+        <div className="flex flex-wrap gap-4">
+          <label htmlFor="oauth-event-type">
+            이벤트 유형
+            <select
+                id="oauth-event-type"
+                className="ml-2 rounded border p-2"
+                value={type ?? ""}
+                onChange={(e) =>
+                    navigate(
+                        e.target.value
+                            ? (e.target.value as ProtocolEventType)
+                            : undefined,
+                        outcome,
+                    )
+                }
+            >
+              <option value="">전체</option>
+              {Object.entries(eventLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label} ({value})
+                  </option>
               ))}
-            </ol>
-          ) : (
-            <p>조건에 맞는 protocol 이벤트가 없습니다.</p>
-          )}
-        </>
-      )}
-      <nav aria-label="이벤트 페이지" className="flex gap-3">
-        <Button
-          variant="outline"
-          disabled={!cursor}
-          onClick={() => navigate(type, outcome)}
-        >
-          첫 이벤트
-        </Button>
-        <Button
-          variant="outline"
-          disabled={!data?.hasNext || !data.nextCursor || error}
-          onClick={() => navigate(type, outcome, data?.nextCursor ?? undefined)}
-        >
-          다음 이벤트
-        </Button>
-      </nav>
-    </section>
+            </select>
+          </label>
+          <label htmlFor="oauth-event-outcome">
+            결과
+            <select
+                id="oauth-event-outcome"
+                className="ml-2 rounded border p-2"
+                value={outcome ?? ""}
+                onChange={(e) =>
+                    navigate(
+                        type,
+                        e.target.value
+                            ? (e.target.value as ProtocolEventOutcome)
+                            : undefined,
+                    )
+                }
+            >
+              <option value="">전체</option>
+              {Object.entries(outcomeLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {error ? (
+            <div>
+              <p role="alert">
+                Protocol 이벤트를 불러오지 못했습니다. 권한 또는 조회 조건을 확인해
+                주세요.
+              </p>
+              <Button
+                  variant="outline"
+                  onClick={() => {
+                    setError(false);
+                    setData(null);
+                    setAttempt(attempt + 1);
+                  }}
+              >
+                이벤트 다시 시도
+              </Button>
+            </div>
+        ) : !data ? (
+            <p aria-busy="true">Protocol 이벤트를 불러오는 중입니다.</p>
+        ) : (
+            <>
+              {data.content.length ? (
+                  <ol className="space-y-3">
+                    {data.content.map((event) => (
+                        <li
+                            key={event.id}
+                            className="space-y-2 rounded-xl border bg-white p-5"
+                        >
+                          <p>
+                            <time dateTime={event.occurredAt}>{event.occurredAt}</time>
+                          </p>
+                          <p>
+                            {Object.hasOwn(eventLabels, event.eventType)
+                                ? `${eventLabels[event.eventType]} (${event.eventType})`
+                                : "redacted"}{" "}
+                            ·{" "}
+                            {Object.hasOwn(outcomeLabels, event.outcome)
+                                ? outcomeLabels[event.outcome]
+                                : "redacted"}
+                          </p>
+                          <dl className="text-sm">
+                            <dt>correlationId</dt>
+                            <dd className="break-all font-mono">
+                              {event.correlationId}
+                            </dd>
+                            <dt>subject</dt>
+                            <dd>
+                              {event.subject
+                                  ? `${event.subject.slice(0, 8)}…${event.subject.slice(-4)}`
+                                  : "없음"}
+                            </dd>
+                            <dt>errorCode</dt>
+                            <dd>{event.errorCode ?? "없음"}</dd>
+                          </dl>
+                          <Metadata value={event.metadata}/>
+                        </li>
+                    ))}
+                  </ol>
+              ) : (
+                  <p>조건에 맞는 protocol 이벤트가 없습니다.</p>
+              )}
+            </>
+        )}
+        <nav aria-label="이벤트 페이지" className="flex gap-3">
+          <Button
+              variant="outline"
+              disabled={!cursor}
+              onClick={() => navigate(type, outcome)}
+          >
+            첫 이벤트
+          </Button>
+          <Button
+              variant="outline"
+              disabled={!data?.hasNext || !data.nextCursor || error}
+              onClick={() => navigate(type, outcome, data?.nextCursor ?? undefined)}
+          >
+            다음 이벤트
+          </Button>
+        </nav>
+      </section>
   );
 }

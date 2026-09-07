@@ -1,13 +1,13 @@
 package com.sweet.authstudy.hr.position.infrastructure;
 
-import java.util.List;
-import java.util.Optional;
-
-import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+
+import java.util.List;
+import java.util.Optional;
 
 interface PositionJpaRepository extends JpaRepository<PositionJpaEntity, Long> {
 
@@ -23,5 +23,5 @@ interface PositionJpaRepository extends JpaRepository<PositionJpaEntity, Long> {
                 or lower(p.name) like lower(concat('%', :search, '%')))
             """)
     Page<PositionJpaEntity> search(@Param("companyId") long companyId,
-            @Param("search") String search, @Param("active") Boolean active, Pageable pageable);
+                                   @Param("search") String search, @Param("active") Boolean active, Pageable pageable);
 }

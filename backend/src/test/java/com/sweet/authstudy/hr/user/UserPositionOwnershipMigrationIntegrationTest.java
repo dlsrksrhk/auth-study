@@ -1,14 +1,5 @@
 package com.sweet.authstudy.hr.user;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.util.UUID;
-
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
@@ -19,6 +10,13 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.*;
 
 @SpringBootTest
 @Import(PostgresContainerConfiguration.class)
@@ -107,11 +105,11 @@ class UserPositionOwnershipMigrationIntegrationTest {
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         Timestamp now = Timestamp.from(Instant.now());
         jdbc.update("""
-                insert into users
-                    (company_id, code, employee_number, name, phone, hired_at, workplace,
-                     position_id, status, created_at, updated_at)
-                values (?, ?, ?, 'User', '010-0000-0000', ?, 'Seoul', ?, 'PENDING', ?, ?)
-                """, companyId, "U" + suffix, "E" + suffix, LocalDate.parse("2026-08-20"),
+                        insert into users
+                            (company_id, code, employee_number, name, phone, hired_at, workplace,
+                             position_id, status, created_at, updated_at)
+                        values (?, ?, ?, 'User', '010-0000-0000', ?, 'Seoul', ?, 'PENDING', ?, ?)
+                        """, companyId, "U" + suffix, "E" + suffix, LocalDate.parse("2026-08-20"),
                 positionId, now, now);
     }
 

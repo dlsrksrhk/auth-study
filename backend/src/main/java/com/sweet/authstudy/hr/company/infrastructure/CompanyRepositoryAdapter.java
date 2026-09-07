@@ -1,17 +1,17 @@
 package com.sweet.authstudy.hr.company.infrastructure;
 
-import java.util.Optional;
-import java.util.List;
-import com.sweet.authstudy.hr.company.domain.CompanyStatus;
-import com.sweet.authstudy.shared.application.PageResult;
-
 import com.sweet.authstudy.hr.company.domain.Company;
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
+import com.sweet.authstudy.hr.company.domain.CompanyStatus;
+import com.sweet.authstudy.shared.application.PageResult;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
-import org.springframework.stereotype.Repository;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class CompanyRepositoryAdapter implements CompanyRepository {
@@ -29,7 +29,7 @@ public class CompanyRepositoryAdapter implements CompanyRepository {
         CompanyJpaEntity entity = company.id() == null
                 ? CompanyJpaEntity.from(company)
                 : repository.findById(company.id())
-                        .orElseThrow(() -> new IllegalStateException("Company does not exist."));
+                .orElseThrow(() -> new IllegalStateException("Company does not exist."));
         if (company.id() != null) {
             entity.updateFrom(company);
         }

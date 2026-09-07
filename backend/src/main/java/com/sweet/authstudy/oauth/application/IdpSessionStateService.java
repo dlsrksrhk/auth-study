@@ -1,8 +1,5 @@
 package com.sweet.authstudy.oauth.application;
 
-import java.time.Clock;
-import java.util.UUID;
-
 import com.sweet.authstudy.hr.company.domain.CompanyRepository;
 import com.sweet.authstudy.hr.company.domain.CompanyStatus;
 import com.sweet.authstudy.hr.user.domain.UserRepository;
@@ -13,9 +10,12 @@ import com.sweet.authstudy.oauth.domain.OAuthSubjectRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.util.UUID;
+
 @Service
 public class IdpSessionStateService {
-    public enum State { CURRENT, PASSWORD_CHANGE_REQUIRED, INVALID }
+    public enum State {CURRENT, PASSWORD_CHANGE_REQUIRED, INVALID}
 
     private final AccountRepository accounts;
     private final UserRepository users;
@@ -24,7 +24,7 @@ public class IdpSessionStateService {
     private final Clock clock;
 
     public IdpSessionStateService(AccountRepository accounts, UserRepository users,
-            CompanyRepository companies, OAuthSubjectRepository subjects, Clock clock) {
+                                  CompanyRepository companies, OAuthSubjectRepository subjects, Clock clock) {
         this.accounts = accounts;
         this.users = users;
         this.companies = companies;

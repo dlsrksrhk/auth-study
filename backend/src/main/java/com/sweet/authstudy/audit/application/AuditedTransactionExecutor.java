@@ -1,7 +1,5 @@
 package com.sweet.authstudy.audit.application;
 
-import java.util.function.Supplier;
-
 import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.trace.TraceIdProvider;
 import org.slf4j.Logger;
@@ -9,6 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.function.Supplier;
 
 @Component
 public class AuditedTransactionExecutor {
@@ -19,7 +19,7 @@ public class AuditedTransactionExecutor {
     private final TransactionTemplate transactions;
 
     public AuditedTransactionExecutor(AuditService auditService, TraceIdProvider traceIdProvider,
-            PlatformTransactionManager transactionManager) {
+                                      PlatformTransactionManager transactionManager) {
         this.auditService = auditService;
         this.traceIdProvider = traceIdProvider;
         this.transactions = new TransactionTemplate(transactionManager);

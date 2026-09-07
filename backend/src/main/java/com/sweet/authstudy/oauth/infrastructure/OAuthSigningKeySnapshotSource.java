@@ -1,12 +1,12 @@
 package com.sweet.authstudy.oauth.infrastructure;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.sweet.authstudy.oauth.domain.OAuthSigningKey;
 import com.sweet.authstudy.oauth.domain.OAuthSigningKeyRepository;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 final class OAuthSigningKeySnapshotSource {
 

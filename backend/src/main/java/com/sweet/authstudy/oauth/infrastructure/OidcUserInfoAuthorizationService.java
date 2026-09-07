@@ -5,7 +5,9 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.stereotype.Component;
 
-/** Restricts synthetic ID metadata to the authorization lookup performed by the UserInfo provider. */
+/**
+ * Restricts synthetic ID metadata to the authorization lookup performed by the UserInfo provider.
+ */
 @Component
 public final class OidcUserInfoAuthorizationService implements OAuth2AuthorizationService {
 
