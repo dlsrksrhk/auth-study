@@ -125,6 +125,20 @@ class OAuthClientAdminControllerIntegrationTest {
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.fieldErrors[*].field",
                         org.hamcrest.Matchers.hasItems("displayName", "redirectUris", "scopes")));
+        mvc.perform(post("/api/v1/admin/companies/{code}/oauth-clients", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + companyToken).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"publicClient\":true,\"postLogoutRedirectUris\":[],"
+                                + "\"trust\":\"CONSENT_REQUIRED\"}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors[*].field",
+                        org.hamcrest.Matchers.hasItems("displayName", "redirectUris", "scopes")));
+        mvc.perform(post("/api/v1/admin/companies/{code}/oauth-clients", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + companyToken).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"Client\",\"publicClient\":true,"
+                                + "\"redirectUris\":[\"https://client.example/cb\"],"
+                                + "\"postLogoutRedirectUris\":[],\"scopes\":[\"openid\"]}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
         mvc.perform(get("/api/v1/admin/companies/{code}/oauth-clients/missing-client", companyCode)
                         .header(AUTHORIZATION, "Bearer " + companyToken))
                 .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
