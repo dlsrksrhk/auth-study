@@ -35,6 +35,7 @@ import com.sweet.authstudy.oauth.presentation.IdpLoginController;
 import com.sweet.authstudy.oauth.presentation.IdpSessionAuthentication;
 import com.sweet.authstudy.support.PostgresContainerConfiguration;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -76,6 +77,17 @@ class OAuthProtocolSecurityAcceptanceTest {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired @Qualifier("oauthJwtEncoder") private JwtEncoder jwtEncoder;
     @Autowired @Qualifier("oauthJwtDecoder") private JwtDecoder jwtDecoder;
+
+    @AfterEach
+    void removeLegacyRedirectFixtures() {
+        jdbcClient.sql("""
+                delete from oauth_client
+                 where id in (
+                       select client_id from oauth_client_redirect_uri
+                        where redirect_uri in ('https:legacy-hostless',
+                                               'https://legacy.localhost:bad/callback'))
+                """).update();
+    }
 
     @Test
     void idp_browser_pages_and_authorization_redirects_send_no_referrer_frame_denial_and_self_only_csp()

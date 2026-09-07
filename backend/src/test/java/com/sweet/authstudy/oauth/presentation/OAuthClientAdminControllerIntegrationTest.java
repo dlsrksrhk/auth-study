@@ -73,10 +73,27 @@ class OAuthClientAdminControllerIntegrationTest {
 
     @Test
     void system_admin_can_list_oauth_clients() throws Exception {
-        mvc.perform(get("/api/v1/admin/oauth-clients").param("companyCode", companyCode)
+        String own = mvc.perform(post("/api/v1/admin/companies/{code}/oauth-clients", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(createJson(true, "CONSENT_REQUIRED")))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        String other = mvc.perform(post("/api/v1/admin/companies/{code}/oauth-clients", otherCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(createJson(true, "CONSENT_REQUIRED")))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        String ownId = com.jayway.jsonpath.JsonPath.read(own, "$.client.clientId");
+        String otherId = com.jayway.jsonpath.JsonPath.read(other, "$.client.clientId");
+
+        mvc.perform(get("/api/v1/admin/oauth-clients")
                         .header(AUTHORIZATION, "Bearer " + systemToken))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.content").isArray())
-                .andExpect(jsonPath("$.page").value(0)).andExpect(jsonPath("$.size").value(20));
+                .andExpect(jsonPath("$.page").value(0)).andExpect(jsonPath("$.size").value(20))
+                .andExpect(jsonPath("$.content[*].clientId", org.hamcrest.Matchers.hasItems(ownId, otherId)));
+        mvc.perform(get("/api/v1/admin/oauth-clients").param("companyCode", companyCode)
+                        .header(AUTHORIZATION, "Bearer " + systemToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].clientId", org.hamcrest.Matchers.hasItem(ownId)))
+                .andExpect(jsonPath("$.content[*].clientId", org.hamcrest.Matchers.not(org.hamcrest.Matchers.hasItem(otherId))));
         mvc.perform(get("/api/v1/admin/oauth-clients").header(AUTHORIZATION, "Bearer " + companyToken))
                 .andExpect(status().isForbidden());
     }
