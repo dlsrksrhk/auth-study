@@ -50,6 +50,13 @@ beforeEach(() => {
   auth.actor.roles = ["COMPANY_ADMIN"];
   auth.actor.companyCode = "ACME";
   vi.spyOn(oauthClientApi, "get").mockResolvedValue(client);
+  vi.spyOn(oauthClientApi, "listConsents").mockResolvedValue({
+    content: [],
+    page: 0,
+    size: 20,
+    totalElements: 0,
+    totalPages: 0,
+  });
   vi.spyOn(oauthClientApi, "update").mockResolvedValue({
     ...client,
     version: 8,

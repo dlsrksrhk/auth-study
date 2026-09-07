@@ -21,6 +21,7 @@ import {
   type OAuthClientInput,
 } from "./oauth-client-api";
 import { OAuthClientForm } from "./oauth-client-form";
+import { OAuthConsentList } from "./oauth-consent-list";
 import { useOAuthSecretOperations } from "./oauth-secret-operation-provider";
 
 type Props = { companyCode: string; clientId: string };
@@ -338,6 +339,13 @@ function ClientDetail({
               ))}
             </div>
           </fieldset>
+          <Link
+            className={buttonVariants({ variant: "outline" })}
+            href={`/companies/${encodeURIComponent(companyCode)}/oauth-clients/${encodeURIComponent(clientId)}/protocol-events`}
+          >
+            Protocol 이벤트 보기
+          </Link>
+          <OAuthConsentList companyCode={companyCode} clientId={clientId} />
         </>
       ) : null}
       <Dialog
