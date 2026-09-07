@@ -459,5 +459,26 @@ class OAuthClientServiceTest {
                     .filter(client -> client.companyId() == companyId)
                     .toList();
         }
+
+        @Override
+        public com.sweet.authstudy.shared.application.PageResult<OAuthClient> findPageByCompanyId(
+                long companyId, int page, int size) {
+            return page(findByCompanyId(companyId), page, size);
+        }
+
+        @Override
+        public com.sweet.authstudy.shared.application.PageResult<OAuthClient> findPage(int page, int size) {
+            return page(values.values().stream().toList(), page, size);
+        }
+
+        private com.sweet.authstudy.shared.application.PageResult<OAuthClient> page(
+                List<OAuthClient> source, int page, int size) {
+            var sorted = source.stream().sorted(java.util.Comparator.comparing(OAuthClient::clientId)).toList();
+            int from = Math.min(page * size, sorted.size());
+            int to = Math.min(from + size, sorted.size());
+            int pages = sorted.isEmpty() ? 0 : (sorted.size() + size - 1) / size;
+            return new com.sweet.authstudy.shared.application.PageResult<>(
+                    sorted.subList(from, to), sorted.size(), pages);
+        }
     }
 }

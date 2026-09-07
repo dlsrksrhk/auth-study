@@ -50,6 +50,9 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/v1/auth/login", "/api/v1/auth/refresh").permitAll()
+                        .requestMatchers("/api/v1/admin/oauth-clients/**").hasRole("SYSTEM_ADMIN")
+                        .requestMatchers("/api/v1/admin/companies/*/oauth-clients/**")
+                            .hasAnyRole("SYSTEM_ADMIN", "COMPANY_ADMIN")
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint((request, response, exception) -> problemWriter.write(

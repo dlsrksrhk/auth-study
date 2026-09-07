@@ -2,6 +2,7 @@ package com.sweet.authstudy.oauth.domain;
 
 import java.util.List;
 import java.util.Optional;
+import com.sweet.authstudy.shared.application.PageResult;
 
 public interface OAuthClientRepository {
 
@@ -13,4 +14,8 @@ public interface OAuthClientRepository {
     Optional<OAuthClient> findByClientId(String clientId);
 
     List<OAuthClient> findByCompanyId(long companyId);
+
+    PageResult<OAuthClient> findPageByCompanyId(long companyId, int page, int size);
+
+    PageResult<OAuthClient> findPage(int page, int size);
 }

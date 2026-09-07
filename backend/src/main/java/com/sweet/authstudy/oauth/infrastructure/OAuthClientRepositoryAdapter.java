@@ -6,6 +6,9 @@ import java.util.Optional;
 import com.sweet.authstudy.oauth.domain.OAuthClient;
 import com.sweet.authstudy.oauth.domain.OAuthClientRepository;
 import org.springframework.stereotype.Repository;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import com.sweet.authstudy.shared.application.PageResult;
 
 @Repository
 public class OAuthClientRepositoryAdapter implements OAuthClientRepository {
@@ -48,5 +51,24 @@ public class OAuthClientRepositoryAdapter implements OAuthClientRepository {
         return repository.findAllByCompanyId(companyId).stream()
                 .map(OAuthClientJpaEntity::toDomain)
                 .toList();
+    }
+
+    @Override
+    public PageResult<OAuthClient> findPageByCompanyId(long companyId, int page, int size) {
+        return toPage(repository.findAllByCompanyId(companyId, pageable(page, size)));
+    }
+
+    @Override
+    public PageResult<OAuthClient> findPage(int page, int size) {
+        return toPage(repository.findAllManaged(pageable(page, size)));
+    }
+
+    private PageRequest pageable(int page, int size) {
+        return PageRequest.of(page, size, Sort.by("clientId").ascending().and(Sort.by("id").ascending()));
+    }
+
+    private PageResult<OAuthClient> toPage(org.springframework.data.domain.Page<OAuthClientJpaEntity> page) {
+        return new PageResult<>(page.getContent().stream().map(OAuthClientJpaEntity::toDomain).toList(),
+                page.getTotalElements(), page.getTotalPages());
     }
 }

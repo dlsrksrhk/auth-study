@@ -24,6 +24,7 @@ import com.sweet.authstudy.shared.error.ApiException;
 import com.sweet.authstudy.shared.error.ErrorCode;
 import com.sweet.authstudy.shared.security.TenantGuard;
 import com.sweet.authstudy.shared.validation.BusinessCode;
+import com.sweet.authstudy.shared.application.PageResult;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -97,9 +98,9 @@ public class OAuthClientService {
                     ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "OAuth client version does not match.");
         }
         OAuthClientTrust trust = requireUpdateTrust(actor, client.trust(), command.trust());
-        OAuthClientStatus status = requireStatus(command.status());
+        OAuthClientStatus status = command.status() == null ? client.status() : requireStatus(command.status());
         Instant now = clock.instant();
-        if (status == OAuthClientStatus.DISABLED) {
+        if (client.status() != OAuthClientStatus.DISABLED && status == OAuthClientStatus.DISABLED) {
             oauthGrants.revokeClient(client.id(), now);
         }
         try {
@@ -159,6 +160,69 @@ public class OAuthClientService {
         return clientRepository.findByCompanyId(company.id()).stream()
                 .map(client -> OAuthClientView.from(client, company.code()))
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public void requireClientInCompany(AuthenticatedAccount actor, String companyCode, String clientId) {
+        Company company = requireActiveCompany(actor, companyCode);
+        ClientContext context = requireClientAccess(actor, clientId);
+        if (context.client().companyId() != company.id()) {
+            throw new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "OAuth client was not found.");
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public PageResult<OAuthClientView> list(
+            AuthenticatedAccount actor, String companyCode, int page, int size) {
+        Company company = requireActiveCompany(actor, companyCode);
+        var result = clientRepository.findPageByCompanyId(company.id(), page, size);
+        return mapPage(result, company.code());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResult<OAuthClientView> listAll(
+            AuthenticatedAccount actor, String companyCode, int page, int size) {
+        tenantGuard.requireSystemAdmin(actor);
+        if (companyCode != null && !companyCode.isBlank()) {
+            Company company = companyRepository.findByCode(BusinessCode.normalize(companyCode))
+                    .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
+            return mapPage(clientRepository.findPageByCompanyId(company.id(), page, size), company.code());
+        }
+        var result = clientRepository.findPage(page, size);
+        return new PageResult<>(result.content().stream().map(client -> {
+            Company company = companyRepository.findById(client.companyId()).orElseThrow(() ->
+                    new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "Company was not found."));
+            return OAuthClientView.from(client, company.code());
+        }).toList(), result.totalElements(), result.totalPages());
+    }
+
+    @Transactional
+    public OAuthClientView disable(AuthenticatedAccount actor, String clientId, long version) {
+        return changeStatus(actor, clientId, OAuthClientStatus.DISABLED, version);
+    }
+
+    @Transactional
+    public OAuthClientView enable(AuthenticatedAccount actor, String clientId, long version) {
+        return changeStatus(actor, clientId, OAuthClientStatus.ACTIVE, version);
+    }
+
+    private OAuthClientView changeStatus(AuthenticatedAccount actor, String clientId,
+            OAuthClientStatus status, long version) {
+        ClientContext context = requireClientAccess(actor, clientId);
+        OAuthClient client = context.client();
+        if (client.version() != version) {
+            throw new ApiException(ErrorCode.OPTIMISTIC_LOCK_CONFLICT, "OAuth client version does not match.");
+        }
+        if (status == OAuthClientStatus.DISABLED) oauthGrants.revokeClient(client.id(), clock.instant());
+        client.update(client.displayName(), status, client.trust(), client.redirectUris(),
+                client.postLogoutRedirectUris(), client.scopes(), clock.instant());
+        return OAuthClientView.from(clientRepository.save(client), context.company().code());
+    }
+
+    private PageResult<OAuthClientView> mapPage(PageResult<OAuthClient> result, String companyCode) {
+        return new PageResult<>(result.content().stream()
+                .map(client -> OAuthClientView.from(client, companyCode)).toList(),
+                result.totalElements(), result.totalPages());
     }
 
     private Company requireActiveCompany(AuthenticatedAccount actor, String companyCode) {

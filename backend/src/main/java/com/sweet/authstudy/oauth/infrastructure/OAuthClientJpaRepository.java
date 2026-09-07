@@ -5,6 +5,8 @@ import java.util.Optional;
 
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -18,6 +20,12 @@ interface OAuthClientJpaRepository extends JpaRepository<OAuthClientJpaEntity, L
     Optional<OAuthClientJpaEntity> findByIdForUpdate(@Param("id") long id);
 
     List<OAuthClientJpaEntity> findAllByCompanyId(long companyId);
+
+    Page<OAuthClientJpaEntity> findAllByCompanyId(long companyId, Pageable pageable);
+
+    @Query("select client from OAuthClientJpaEntity client where exists "
+            + "(select company.id from CompanyJpaEntity company where company.id = client.companyId)")
+    Page<OAuthClientJpaEntity> findAllManaged(Pageable pageable);
 
     @Query(value = """
             select r.redirect_uri
