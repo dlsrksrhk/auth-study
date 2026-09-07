@@ -8,6 +8,7 @@ export type ApiProblem = {
   title: string;
   status: number;
   detail?: string;
+  instance?: string;
   code: string;
   traceId: string;
   fieldErrors: ApiFieldError[];
@@ -18,6 +19,7 @@ export class ApiProblemError extends Error implements ApiProblem {
   readonly title: string;
   readonly status: number;
   readonly detail?: string;
+  readonly instance?: string;
   readonly code: string;
   readonly traceId: string;
   readonly fieldErrors: ApiFieldError[];
@@ -29,6 +31,7 @@ export class ApiProblemError extends Error implements ApiProblem {
     this.title = problem.title;
     this.status = problem.status;
     this.detail = problem.detail;
+    this.instance = problem.instance;
     this.code = problem.code;
     this.traceId = problem.traceId;
     this.fieldErrors = problem.fieldErrors;
