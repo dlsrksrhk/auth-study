@@ -85,6 +85,14 @@ async function confirm(label: string) {
   expect(dialog).toHaveAccessibleDescription();
   await userEvent.click(within(dialog).getByRole("button", { name: `${label} 확인` }));
 }
+it("shows none as the authentication method for a public client", async () => {
+  await show({ publicClient: true });
+  expect(screen.getByText("인증 방식: none")).toBeVisible();
+});
+it("shows client_secret_basic as the authentication method for a confidential client", async () => {
+  await show({ publicClient: false });
+  expect(screen.getByText("인증 방식: client_secret_basic")).toBeVisible();
+});
 it("fixes client_id, copies with a value-free live announcement, and hides public secret actions", async () => {
   const user = userEvent.setup();
   const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();

@@ -284,6 +284,9 @@ function ClientDetail({
               상태: {client.status} ·{" "}
               {client.publicClient ? "public" : "confidential"}
             </p>
+            <p className="text-sm">
+              인증 방식: {client.publicClient ? "none" : "client_secret_basic"}
+            </p>
             {!client.publicClient ? (
               <p className="text-sm">
                 활성 secret 힌트: {client.activeSecretHint ?? "없음"}
