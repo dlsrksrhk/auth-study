@@ -9,6 +9,7 @@ import com.sweet.referenceapp.user.domain.AppUser;
 import com.sweet.referenceapp.user.domain.AppUserStatus;
 import com.sweet.referenceapp.user.domain.ExternalUserSnapshot;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -70,5 +71,19 @@ class AppUserTest {
                 user.snapshot(), AppUserStatus.ACTIVE, Set.of(AppRole.APP_USER),
                 Instant.EPOCH, Instant.EPOCH, Instant.EPOCH, -1))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void viewCanonicalConstructorFreezesRoles() {
+        var roles = new HashSet<>(Set.of(AppRole.APP_USER));
+        var view = new AppUserView(UUID.randomUUID(), "issuer", "subject",
+                new ExternalUserSnapshot(null, null, null, null, Set.of()),
+                AppUserStatus.ACTIVE, roles, Instant.EPOCH, Instant.EPOCH, Instant.EPOCH, 0);
+
+        roles.add(AppRole.APP_ADMIN);
+
+        assertThat(view.roles()).containsExactly(AppRole.APP_USER);
+        assertThatThrownBy(() -> view.roles().add(AppRole.APP_ADMIN))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 }

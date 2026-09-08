@@ -24,6 +24,8 @@ class ExternalIdentityProfileTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> profile(URI.create("https:///issuer"), "subject"))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> profile(URI.create("https://user@idp.example"), "subject"))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> profile(URI.create("https://idp.example?tenant=a"), "subject"))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> profile(URI.create("https://idp.example#issuer"), "subject"))

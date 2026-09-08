@@ -20,6 +20,10 @@ public record AppUserView(
         Instant lastLoginAt,
         long version) {
 
+    public AppUserView {
+        roles = Set.copyOf(roles);
+    }
+
     public static AppUserView from(AppUser user) {
         return new AppUserView(user.id(), user.issuer(), user.subject(), user.snapshot(),
                 user.status(), user.roles(), user.createdAt(), user.updatedAt(),

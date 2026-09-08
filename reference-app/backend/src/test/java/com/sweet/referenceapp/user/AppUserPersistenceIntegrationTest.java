@@ -9,6 +9,7 @@ import com.sweet.referenceapp.user.domain.AppUser;
 import com.sweet.referenceapp.user.domain.ExternalUserSnapshot;
 import com.sweet.referenceapp.user.domain.AppUserRepository;
 import java.time.Instant;
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -18,6 +19,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -139,11 +141,14 @@ class AppUserPersistenceIntegrationTest {
     void roleInsertFailureRollsBackUser() {
         var first = user(UUID.randomUUID().toString(),
                 new ExternalUserSnapshot(null, null, null, null, Set.of()));
-        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+        tx.executeWithoutResult(status -> {
             jdbc.execute("CREATE FUNCTION pg_temp.fail_role_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced role failure'; END $$");
             jdbc.execute("CREATE TRIGGER fail_role_insert BEFORE INSERT ON app_user_role FOR EACH ROW EXECUTE FUNCTION pg_temp.fail_role_insert()");
-            repository.insertIfAbsent(first);
-        })).isInstanceOf(RuntimeException.class);
+            assertThatThrownBy(() -> repository.insertIfAbsent(first))
+                    .rootCause()
+                    .hasMessageContaining("forced role failure");
+            status.setRollbackOnly();
+        });
         assertThat(jdbc.queryForObject("select count(*) from app_user where id=?", Long.class, first.id())).isZero();
     }
 
@@ -160,8 +165,32 @@ class AppUserPersistenceIntegrationTest {
     }
 
     private void assertConstraintViolation(String sql, Object... args) {
-        assertThatThrownBy(() -> tx.executeWithoutResult(status -> jdbc.update(sql, args)))
-                .isInstanceOf(RuntimeException.class);
+        var failure = org.assertj.core.api.Assertions.catchThrowable(
+                () -> tx.executeWithoutResult(status -> jdbc.update(sql, args)));
+        assertThat(failure).as("constraint statement must fail").isNotNull();
+        assertThat(hasDataIntegrityViolation(failure) || hasConstraintSqlState(failure))
+                .as("expected DataIntegrityViolationException or SQLSTATE class 23, but got %s", failure)
+                .isTrue();
+    }
+
+    private boolean hasDataIntegrityViolation(Throwable failure) {
+        for (var cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof DataIntegrityViolationException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasConstraintSqlState(Throwable failure) {
+        for (var cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sqlException
+                    && sqlException.getSQLState() != null
+                    && sqlException.getSQLState().startsWith("23")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private AppUser user(String subject, ExternalUserSnapshot snapshot) {
