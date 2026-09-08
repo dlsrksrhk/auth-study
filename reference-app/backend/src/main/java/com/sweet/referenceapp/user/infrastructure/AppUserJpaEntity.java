@@ -80,6 +80,12 @@ public class AppUserJpaEntity {
         this.lastLoginAt = lastLoginAt;
     }
 
+    void addAdministrator(Instant now) {
+        if (roles.add(AppRole.APP_ADMIN)) {
+            updatedAt = now;
+        }
+    }
+
     AppUser toDomain() {
         return new AppUser(id, issuer, subject,
                 new ExternalUserSnapshot(email, displayName, companySnapshot,

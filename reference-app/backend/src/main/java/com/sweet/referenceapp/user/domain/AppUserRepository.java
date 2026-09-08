@@ -1,5 +1,6 @@
 package com.sweet.referenceapp.user.domain;
 
+import java.time.Instant;
 import java.util.Optional;
 
 public interface AppUserRepository {
@@ -8,4 +9,6 @@ public interface AppUserRepository {
     Optional<AppUser> findByIdentityForUpdate(String issuer, String subject);
 
     AppUser updateSnapshot(AppUser user);
+
+    AppUser addAdministrator(AppUser user, Instant now);
 }

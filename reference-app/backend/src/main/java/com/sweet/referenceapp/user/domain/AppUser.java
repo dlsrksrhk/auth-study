@@ -1,6 +1,7 @@
 package com.sweet.referenceapp.user.domain;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -45,5 +46,19 @@ public record AppUser(
     public AppUser replaceSnapshot(ExternalUserSnapshot next, Instant now) {
         return new AppUser(id, issuer, subject, next, status, roles,
                 createdAt, now, now, version);
+    }
+
+    public AppUser withAdministrator(Instant now) {
+        Objects.requireNonNull(now, "now");
+        if (status != AppUserStatus.ACTIVE) {
+            throw new IllegalStateException("Active user required");
+        }
+        if (roles.contains(AppRole.APP_ADMIN)) {
+            return this;
+        }
+        var nextRoles = new HashSet<>(roles);
+        nextRoles.add(AppRole.APP_ADMIN);
+        return new AppUser(id, issuer, subject, snapshot, status, nextRoles,
+                createdAt, now, lastLoginAt, version);
     }
 }

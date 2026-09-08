@@ -6,6 +6,7 @@ import com.sweet.referenceapp.user.domain.AppUser;
 import com.sweet.referenceapp.user.domain.AppUserRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
+import java.time.Instant;
 import java.util.Optional;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Repository;
@@ -67,15 +68,41 @@ public class AppUserRepositoryAdapter implements AppUserRepository {
 
     @Override
     public AppUser updateSnapshot(AppUser user) {
-        var entity = jpaRepository.findLocked(user.issuer(), user.subject())
-                .orElseThrow(() -> new IllegalStateException("App user does not exist"));
-        entityManager.refresh(entity, LockModeType.PESSIMISTIC_WRITE);
-        if (entity.version() != user.version()) {
-            throw new ObjectOptimisticLockingFailureException(AppUserJpaEntity.class, user.id());
-        }
+        var entity = lockedUser(user);
+        verifyVersion(entity, user);
         entity.replaceSnapshot(user.snapshot(), user.updatedAt(), user.lastLoginAt());
         entityManager.flush();
         return entity.toDomain();
+    }
+
+    @Override
+    public AppUser addAdministrator(AppUser user, Instant now) {
+        var entity = lockedUser(user);
+        var current = entity.toDomain();
+        if (!current.id().equals(user.id())) {
+            throw new IllegalArgumentException("App user id does not match identity");
+        }
+        verifyVersion(entity, user);
+        var promoted = current.withAdministrator(now);
+        if (promoted == current) {
+            return current;
+        }
+        entity.addAdministrator(now);
+        entityManager.flush();
+        return entity.toDomain();
+    }
+
+    private AppUserJpaEntity lockedUser(AppUser user) {
+        var entity = jpaRepository.findLocked(user.issuer(), user.subject())
+                .orElseThrow(() -> new IllegalStateException("App user does not exist"));
+        entityManager.refresh(entity, LockModeType.PESSIMISTIC_WRITE);
+        return entity;
+    }
+
+    private void verifyVersion(AppUserJpaEntity entity, AppUser user) {
+        if (entity.version() != user.version()) {
+            throw new ObjectOptimisticLockingFailureException(AppUserJpaEntity.class, user.id());
+        }
     }
 
     private String json(Object value) {
