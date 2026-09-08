@@ -57,7 +57,7 @@
 - Produces: `OidcLoginFailureHandler.onAuthenticationFailure(request, response, exception)` as the single cleanup path used by callback guard and OIDC failure.
 - Produces: standard `OAuth2AuthenticationToken` only; no local AppUser principal or application-role mapping.
 
-- [ ] **Step 1: Add real HTTP test issuer and failing authorization/CSRF tests.**
+- [x] **Step 1: Add real HTTP test issuer and failing authorization/CSRF tests.**
 
 Use JDK `HttpServer` on loopback ephemeral port with Discovery, JWKS, token and UserInfo paths. Sign ID Tokens with generated Nimbus RSA keys. Keep the test server/configuration lifecycle in test sources. Capture token form and Authorization header to prove PKCE verifier and Basic authentication. Invalid fixtures vary only one field from a valid token. Use embedded BFF on a random port and a test property supplier resolving that port before callback construction; alternatively reserve a loopback port for the test server and release immediately before startup. Keep same-host browser session isolation separate from the IdP fixture's token requests.
 
@@ -73,7 +73,7 @@ assertThat(csrfJson.fieldNames()).toIterable().containsExactlyInAnyOrder("csrfHe
 
 Tests use the real application configuration with datasource/JPA/Flyway excluded only in this HTTP fixture if no persistence is needed. Existing full application tests retain Testcontainers. Do not add production test switches.
 
-- [ ] **Step 2: Run RED and record concrete failures.**
+- [x] **Step 2: Run RED and record concrete failures.**
 
 ```powershell
 cd reference-app/backend
@@ -82,7 +82,7 @@ cd reference-app/backend
 
 Expected: configured login/CSRF routes and cookie policy do not exist yet, giving status/redirect assertion failures. Resolve test harness startup mistakes before interpreting failure as RED.
 
-- [ ] **Step 3: Add validated configuration, authorization request and CSRF policies.**
+- [x] **Step 3: Add validated configuration, authorization request and CSRF policies.**
 
 Use a configuration properties record under `reference.security` for the two origins; reject invalid scheme/host/user-info/path/query/fragment/wildcard values in its constructor. Derive routes with literal fixed paths and do not use incoming host to build redirects. Use Spring Boot session settings rather than another cookie property wrapper.
 
@@ -115,11 +115,11 @@ csrfRepository.setHeaderName("X-CSRF-TOKEN");
 
 Origin guard requires one exact Origin on unsafe `/bff/**`. Headers containing lists, multiple entries, null, different scheme/host/port fail with 403. No CORS allowlist is opened. GET login and CSRF are public; `/bff/session` GET is reserved public; other BFF routes authenticated with API 401. Disable form login, Basic and default logout; deny other routes except the internal error dispatch. Deny TRACE.
 
-- [ ] **Step 4: Run GREEN for authorization, cookie and CSRF behavior.**
+- [x] **Step 4: Run GREEN for authorization, cookie and CSRF behavior.**
 
 Run the same focused command. Verify real `/bff/csrf` response→header→test mutation, not Spring test `.with(csrf())`. Preserve XOR masking, no-store and header-only semantics. Authenticated test-only mutation endpoints must never ship in main sources.
 
-- [ ] **Step 5: Add failing callback, cleanup and token-validation tests.**
+- [x] **Step 5: Add failing callback, cleanup and token-validation tests.**
 
 Run a complete authorization→callback code exchange with real signed tokens and assert session fixation rotation, server-side authorized client and no token in HTTP responses. Test state missing/mismatch/duplicate before token HTTP requests, callback authority mismatch even with forged forwarded headers, missing/incorrect nonce, bad issuer/audience/signature/kid, missing exp/iat, expired/future iat, callback replay, IdP error and token endpoint failures. Assert old cookie does not authorize further access after failure and cleanup does not create a fresh session.
 
@@ -131,7 +131,7 @@ assertThat(protectedRequestWithOldCookie.statusCode()).isEqualTo(401);
 
 Run the focused suite and retain output proving the absent behavior fails before adding callback-specific code. For upstream protections that already pass, document them as characterization coverage rather than manufacturing a failure.
 
-- [ ] **Step 6: Implement callback guard and common cleanup; keep standard validators.**
+- [x] **Step 6: Implement callback guard and common cleanup; keep standard validators.**
 
 Guard only the registration's callback path. Compare expected authority/path before code exchange, require single state and valid response shape, read pending request without relying on a state-based lookup that would hide a mismatch. The resolved standard repository is final and has no public peek; implement a narrow `SessionAuthorizationRequestRepository` with a single session-held request and a peek accessor, preserving standard lifetime conventions rather than mirroring state into another attribute. Compare UTF-8 state bytes with `MessageDigest.isEqual` after rejecting absent values. Invoke common failure handler and return on error.
 
@@ -139,7 +139,7 @@ Failure handler clears SecurityContext, invalidates an existing session, expires
 
 Inspect `OidcIdTokenDecoderFactory` and `OidcIdTokenValidator` from resolved 6.5.11. Preserve standard issuer/audience/azp/signature/nonce checks. Add only missing exp/iat/skew validation using `OAuth2TokenValidator<Jwt>` and the OIDC decoder factory's validator factory. A token must contain exp/iat and satisfy 60-second skew. Do not require auth_time when max_age was not requested.
 
-- [ ] **Step 7: Run focused and full regression; document actual usage.**
+- [x] **Step 7: Run focused and full regression; document actual usage.**
 
 ```powershell
 .\gradlew.bat test --tests '*OAuth2ClientConfigurationIntegrationTest' --tests '*BffSessionSecurityIntegrationTest' --tests '*ReferenceSecurityPropertiesTest'
@@ -149,7 +149,7 @@ git diff --check
 
 Count tests/failures/errors/skips from fresh XML. README documents IdP startup/client registration prerequisites, fixed dev origins, BFF command, CSRF contract, intermediate Task 4 OIDC principal and absent Task 5 APIs. State whether browser E2E was run. No secrets or OAuth tokens in logs or reports.
 
-- [ ] **Step 8: Commit only this task's files and produce a review report.**
+- [x] **Step 8: Commit only this task's files and produce a review report.**
 
 Stage `reference-app/backend/src/main/java/com/sweet/referenceapp/security`, the three listed configuration files, `reference-app/backend/src/test/java/com/sweet/referenceapp/security`, and `reference-app/backend/README.md`. Check the staged diff before committing.
 
