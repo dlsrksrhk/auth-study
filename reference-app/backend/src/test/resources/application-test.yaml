@@ -2,3 +2,32 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+  security:
+    oauth2:
+      client:
+        registration:
+          reference-app:
+            client-id: test-reference-client
+            client-secret: test-reference-secret
+            client-authentication-method: client_secret_basic
+            authorization-grant-type: authorization_code
+            redirect-uri: ${reference.security.bff-origin}/login/oauth2/code/reference-app
+            scope: openid,profile,email,hr.company,hr.organization,hr.roles
+        provider:
+          reference-app:
+            authorization-uri: http://idp.test/authorize
+            token-uri: http://idp.test/token
+            jwk-set-uri: http://idp.test/jwks
+            user-info-uri: http://idp.test/userinfo
+            user-name-attribute: sub
+
+reference:
+  security:
+    bff-origin: http://rp.localhost:8180
+    spa-origin: http://rp.localhost:3100
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false

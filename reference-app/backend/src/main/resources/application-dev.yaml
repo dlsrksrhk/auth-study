@@ -3,3 +3,28 @@ spring:
     url: jdbc:postgresql://localhost:55433/reference_app
     username: reference_app
     password: reference_app
+  security:
+    oauth2:
+      client:
+        registration:
+          reference-app:
+            client-id: ${REFERENCE_APP_CLIENT_ID:rp_local_7WmB7sW9dNxQ5mF3kC2vA8yJ}
+            client-secret: ${REFERENCE_APP_CLIENT_SECRET:ReferenceAppLocalSecret-DoNotReuse}
+            client-authentication-method: client_secret_basic
+            authorization-grant-type: authorization_code
+            redirect-uri: ${reference.security.bff-origin}/login/oauth2/code/reference-app
+            scope: openid,profile,email,hr.company,hr.organization,hr.roles
+        provider:
+          reference-app:
+            issuer-uri: ${REFERENCE_APP_ISSUER:http://idp.localhost:8080}
+
+reference:
+  security:
+    bff-origin: ${REFERENCE_APP_BFF_ORIGIN:http://rp.localhost:8180}
+    spa-origin: ${REFERENCE_APP_SPA_ORIGIN:http://rp.localhost:3100}
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false

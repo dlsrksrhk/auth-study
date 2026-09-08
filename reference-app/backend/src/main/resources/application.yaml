@@ -6,4 +6,15 @@ spring:
 
 server:
   port: 8180
-  forward-headers-strategy: framework
+  forward-headers-strategy: none
+  servlet:
+    session:
+      timeout: 30m
+      tracking-modes: cookie
+      persistent: false
+      cookie:
+        name: RP_SESSION
+        path: /
+        http-only: true
+        same-site: lax
+        secure: true
