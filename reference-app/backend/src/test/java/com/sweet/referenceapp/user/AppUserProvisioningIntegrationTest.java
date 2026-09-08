@@ -133,6 +133,34 @@ class AppUserProvisioningIntegrationTest {
                 .isEqualTo(before);
     }
 
+    @Test
+    void bootstrapLockAndExistingProvisionRollbackRestoreSnapshotAuditAndVersion() {
+        var sub = UUID.randomUUID().toString();
+        var original = service.provision(profile(ISSUER, sub, "old@example.test"));
+        var userBefore = jdbc.queryForMap(
+                "select email,updated_at,last_login_at,version from app_user where id=?", original.id());
+        var bootstrapBefore = jdbc.queryForMap(
+                "select bootstrapped_user_id,bootstrapped_at,version from app_bootstrap_state where singleton_key=1");
+
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            jdbc.queryForObject(
+                    "select singleton_key from app_bootstrap_state where singleton_key=1 for update",
+                    Short.class);
+            service.provision(profile(ISSUER, sub, "new@example.test"));
+            throw new IllegalStateException("existing bootstrap failure");
+        })).isInstanceOf(IllegalStateException.class).hasMessage("existing bootstrap failure");
+
+        var userAfter = jdbc.queryForMap(
+                "select email,updated_at,last_login_at,version from app_user where id=?", original.id());
+        assertThat(userAfter).containsEntry("email", userBefore.get("email"))
+                .containsEntry("updated_at", userBefore.get("updated_at"))
+                .containsEntry("last_login_at", userBefore.get("last_login_at"))
+                .containsEntry("version", userBefore.get("version"));
+        assertThat(jdbc.queryForMap(
+                "select bootstrapped_user_id,bootstrapped_at,version from app_bootstrap_state where singleton_key=1"))
+                .isEqualTo(bootstrapBefore);
+    }
+
     private long count(String sql, Object... args) {
         return jdbc.queryForObject(sql, Long.class, args);
     }
