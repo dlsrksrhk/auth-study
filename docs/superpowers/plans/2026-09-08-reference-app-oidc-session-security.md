@@ -36,6 +36,7 @@
 - Create: `reference-app/backend/src/main/java/com/sweet/referenceapp/security/OAuth2ClientSecurityConfig.java`
 - Create: `reference-app/backend/src/main/java/com/sweet/referenceapp/security/PkceAuthorizationRequestResolver.java`
 - Create: `reference-app/backend/src/main/java/com/sweet/referenceapp/security/OidcCallbackGuard.java`
+- Create: `reference-app/backend/src/main/java/com/sweet/referenceapp/security/SessionAuthorizationRequestRepository.java`
 - Create: `reference-app/backend/src/main/java/com/sweet/referenceapp/security/OidcLoginFailureHandler.java`
 - Create: `reference-app/backend/src/main/java/com/sweet/referenceapp/security/BffOriginGuard.java`
 - Create: `reference-app/backend/src/main/java/com/sweet/referenceapp/security/HeaderOnlyCsrfTokenRequestHandler.java`
@@ -48,7 +49,7 @@
 - Modify: `reference-app/backend/src/main/resources/application.yaml`
 - Modify: `reference-app/backend/src/main/resources/application-dev.yaml`
 - Modify: `reference-app/backend/src/test/resources/application-test.yaml`
-- Create: `reference-app/backend/README.md` (実装結果に合わせた起動・検証手順)
+- Create: `reference-app/backend/README.md` (구현 결과에 맞춘 실행·검증 절차)
 
 **Interfaces:**
 - Consumes: Boot OAuth2 client registration properties, `ClientRegistrationRepository`, standard OIDC provider/decoder and authorization request repository.
@@ -132,7 +133,7 @@ Run the focused suite and retain output proving the absent behavior fails before
 
 - [ ] **Step 6: Implement callback guard and common cleanup; keep standard validators.**
 
-Guard only the registration's callback path. Compare expected authority/path before code exchange, require single state and valid response shape, read pending request without relying on a state-based lookup that would hide a mismatch. Wrap/subclass the standard request repository only if required for constant-time matching; use its session lifetime conventions. Compare UTF-8 state bytes with `MessageDigest.isEqual` after rejecting absent values. Invoke common failure handler and return on error.
+Guard only the registration's callback path. Compare expected authority/path before code exchange, require single state and valid response shape, read pending request without relying on a state-based lookup that would hide a mismatch. The resolved standard repository is final and has no public peek; implement a narrow `SessionAuthorizationRequestRepository` with a single session-held request and a peek accessor, preserving standard lifetime conventions rather than mirroring state into another attribute. Compare UTF-8 state bytes with `MessageDigest.isEqual` after rejecting absent values. Invoke common failure handler and return on error.
 
 Failure handler clears SecurityContext, invalidates an existing session, expires the host-only RP_SESSION cookie at `/`, and redirects to the configured generic failure URI. Do not save the exception in a new session. Success handler ignores saved requests and redirects only to `successUri()`.
 
