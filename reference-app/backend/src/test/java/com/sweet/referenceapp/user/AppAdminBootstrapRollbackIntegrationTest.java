@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sweet.referenceapp.support.BootstrapIntegrationSupport;
 import com.sweet.referenceapp.user.application.AppLoginProvisioningService;
+import com.sweet.referenceapp.user.application.AppUserProvisioningService;
 import com.sweet.referenceapp.user.application.AppUserView;
 import com.sweet.referenceapp.user.application.ExternalIdentityProfile;
 import java.net.URI;
@@ -20,6 +21,7 @@ class AppAdminBootstrapRollbackIntegrationTest extends BootstrapIntegrationSuppo
     private static final URI ISSUER = URI.create("http://idp.localhost:8080");
 
     @Autowired AppLoginProvisioningService service;
+    @Autowired AppUserProvisioningService jitService;
 
     @ParameterizedTest(name = "{0}, existing={1}")
     @MethodSource("storageFailures")
@@ -78,7 +80,7 @@ class AppAdminBootstrapRollbackIntegrationTest extends BootstrapIntegrationSuppo
         Map<String, Object> beforeUser = null;
         java.util.List<String> beforeRoles = null;
         if (existing) {
-            user = service.provision(new ExternalIdentityProfile(ISSUER, subject,
+            user = jitService.provision(new ExternalIdentityProfile(ISSUER, subject,
                     "before@example.test", "Before",
                     Map.of("code", "BEFORE", "name", "Before Co"),
                     Map.of("position", Map.of("code", "OLD", "name", "Before Position")),
