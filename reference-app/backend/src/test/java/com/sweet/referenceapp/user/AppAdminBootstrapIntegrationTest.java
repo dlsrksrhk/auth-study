@@ -9,7 +9,10 @@ import java.sql.Timestamp;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 class AppAdminBootstrapIntegrationTest extends BootstrapIntegrationSupport {
@@ -29,14 +32,22 @@ class AppAdminBootstrapIntegrationTest extends BootstrapIntegrationSupport {
                 Timestamp.class)).isNotNull();
     }
 
-    @Test
-    void ordinaryUserDoesNotConsumeBootstrapBeforeEligibleCandidate() {
-        var ordinary = service.provision(profile("ordinary", Set.of("EMPLOYEE")));
-        var eligible = service.provision(profile("eligible", Set.of("COMPANY_ADMIN")));
+    @ParameterizedTest
+    @MethodSource("ordinaryHrRoleSets")
+    void ordinaryUserDoesNotConsumeBootstrapBeforeEligibleCandidate(Set<String> hrRoles) {
+        var ordinary = service.provision(profile("ordinary", hrRoles));
 
         assertThat(ordinary.roles()).containsExactly(AppRole.APP_USER);
+        assertThat(bootstrappedUserId()).isNull();
+
+        var eligible = service.provision(profile("eligible", Set.of("COMPANY_ADMIN")));
+
         assertThat(eligible.roles()).containsExactlyInAnyOrder(AppRole.APP_USER, AppRole.APP_ADMIN);
         assertThat(bootstrappedUserId()).isEqualTo(eligible.id());
+    }
+
+    private static Stream<Set<String>> ordinaryHrRoleSets() {
+        return Stream.of(Set.of(), Set.of("EMPLOYEE"));
     }
 
     @Test
