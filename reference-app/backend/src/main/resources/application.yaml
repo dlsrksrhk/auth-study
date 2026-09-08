@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: oidc-reference-backend
+  profiles:
+    default: dev
+
+server:
+  port: 8180
+  forward-headers-strategy: framework
