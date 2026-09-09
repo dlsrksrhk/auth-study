@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 class ReferenceSecurityPropertiesTest {
+    static { System.setProperty("jdk.httpclient.allowRestrictedHeaders", "host"); }
     private static final URI VALID = URI.create("https://rp.example");
 
     @ParameterizedTest
@@ -84,6 +85,11 @@ class ReferenceSecurityPropertiesTest {
     @TestComponent
     @Configuration(proxyBeanMethods = false)
     @EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class, HibernateJpaAutoConfiguration.class, FlywayAutoConfiguration.class})
-    @Import({OAuth2ClientSecurityConfig.class, BffLoginController.class, CsrfController.class})
-    static class CookieApplication { }
+    @Import({OAuth2ClientSecurityConfig.class, BffLoginController.class, CsrfController.class, AppOidcUserService.class, OidcExternalIdentityMapper.class})
+    static class CookieApplication {
+        @org.springframework.context.annotation.Bean
+        com.sweet.referenceapp.user.application.AppLocalLoginService localLogin() {
+            return org.mockito.Mockito.mock(com.sweet.referenceapp.user.application.AppLocalLoginService.class);
+        }
+    }
 }

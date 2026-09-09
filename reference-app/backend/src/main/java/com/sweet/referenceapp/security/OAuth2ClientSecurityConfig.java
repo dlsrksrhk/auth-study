@@ -29,7 +29,7 @@ public class OAuth2ClientSecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ReferenceSecurityProperties properties,
             ClientRegistrationRepository registrations, OAuth2AuthorizedClientRepository authorizedClients,
-            ServerProperties server) throws Exception {
+            ServerProperties server, AppOidcUserService appOidcUserService) throws Exception {
         var csrfTokens = new HttpSessionCsrfTokenRepository();
         csrfTokens.setHeaderName("X-CSRF-TOKEN");
         var requests = new SessionAuthorizationRequestRepository();
@@ -52,6 +52,7 @@ public class OAuth2ClientSecurityConfig {
                 .addFilterBefore(new BffOriginGuard(properties), CsrfFilter.class)
                 .addFilterBefore(new OidcCallbackGuard(properties, requests, failureHandler), CsrfFilter.class)
                 .oauth2Login(login -> login.authorizedClientRepository(authorizedClients)
+                        .userInfoEndpoint(endpoint -> endpoint.oidcUserService(appOidcUserService))
                         .authorizationEndpoint(endpoint -> endpoint.authorizationRequestResolver(new PkceAuthorizationRequestResolver(registrations))
                                 .authorizationRequestRepository(requests))
                         .redirectionEndpoint(endpoint -> endpoint.baseUri("/login/oauth2/code/reference-app"))

@@ -1,5 +1,11 @@
 package com.sweet.referenceapp.security;
 
+import com.sweet.referenceapp.user.application.AppLocalLoginService;
+import com.sweet.referenceapp.user.application.CurrentAppUserService;
+import com.sweet.referenceapp.user.application.LocalUserDisabledException;
+import com.sweet.referenceapp.user.domain.AppRole;
+import org.springframework.beans.factory.annotation.Autowired;
+import static org.mockito.Mockito.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -41,6 +47,46 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class OAuth2ClientConfigurationIntegrationTest extends HttpSecurityTestSupport {
     @Test
+    void disabledLocalLoginUsesDistinctFixedErrorAndInvalidatesExistingSession() throws Exception {
+        var authenticated = login();
+        var pending = begin(authenticated);
+        when(localLogin.login(any())).thenThrow(new LocalUserDisabledException());
+        var response = callback(pending, "code=valid-code&state=" + pending.state());
+        assertThat(response.statusCode()).isEqualTo(302);
+        assertThat(response.headers().firstValue("Location")).contains(SPA + "/login-error?code=local_user_disabled");
+        assertThat(response.headers().allValues("Set-Cookie")).singleElement().asString().contains("Max-Age=0");
+        assertThat(send("GET", "/bff/test", authenticated, "").statusCode()).isEqualTo(401);
+        assertNoTokenLeak(response);
+        assertSecurityHeaders(response);
+    }
+
+    @Test
+    void localDatabaseFailureUsesGenericCleanupWithoutLeakingDetails() throws Exception {
+        var pending = begin(null);
+        when(localLogin.login(any())).thenThrow(new IllegalStateException("private-database-secret"));
+        var response = callback(pending, "code=valid-code&state=" + pending.state());
+        assertFailed(response, pending.cookie());
+        assertThat(response.body() + response.headers().map()).doesNotContain("private-database-secret");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"numeric-name", "numeric-email", "numeric-sub", "missing-sub", "mismatched-sub", "userinfo-error"})
+    void invalidUserInfoFailsBeforeLocalLogin(String fault) throws Exception {
+        var pending = begin(null);
+        ISSUER.fault = fault;
+        assertFailed(callback(pending, "code=valid-code&state=" + pending.state()), pending.cookie());
+        assertThat(ISSUER.userInfoRequestCount()).isEqualTo(1);
+        verifyNoInteractions(localLogin);
+    }
+
+    @Test
+    void externalDisabledErrorCodeCannotSelectLocalDisabledRedirect() throws Exception {
+        var pending = begin(null);
+        assertFailed(callback(pending, "error=local_user_disabled&state=" + pending.state()), pending.cookie());
+        verifyNoInteractions(localLogin);
+    }
+
+    @Test
     void signedLoginRotatesSessionAndKeepsTokensOnlyInThatSession() throws Exception {
         var pending = begin(null);
         var response = callback(pending, "code=valid-code&state=" + pending.state() + "&returnTo=https://attacker.example");
@@ -54,7 +100,10 @@ class OAuth2ClientConfigurationIntegrationTest extends HttpSecurityTestSupport {
         var info = JSON.readTree(session.body());
         assertThat(info.get("authorizedClient").asBoolean()).isTrue();
         assertThat(info.get("principalType").asText()).isEqualTo("OAuth2AuthenticationToken");
-        assertThat(info.get("authorities").toString()).doesNotContain("APP_USER", "APP_ADMIN");
+        assertThat(info.get("principalName").asText()).isEqualTo("external-user-1");
+        assertThat(info.get("registrationId").asText()).isEqualTo("reference-app");
+        assertThat(ISSUER.userInfoRequestCount()).isEqualTo(1);
+        assertThat(info.get("authorities").toString()).isEqualTo("[\"APP_USER\"]");
         assertThat(info.get("timeout").asInt()).isEqualTo(1800);
         assertThat(info.get("encodedUrl").asText()).isEqualTo("/bff/test");
         var expectedChallenge = Base64.getUrlEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256")
@@ -254,6 +303,8 @@ abstract class HttpSecurityTestSupport {
     @Import(ProbeController.class)
     static class Application {
         @Bean(destroyMethod = "close") MockOidcIssuer issuer() { return ISSUER; }
+        @Bean AppLocalLoginService localLogin() { return mock(AppLocalLoginService.class); }
+        @Bean CurrentAppUserService currentUser() { return mock(CurrentAppUserService.class); }
     }
 
     @TestComponent
@@ -266,6 +317,8 @@ abstract class HttpSecurityTestSupport {
             OAuth2AuthorizedClient client = clients.loadAuthorizedClient("reference-app", authentication, request);
             return Map.of("authorizedClient", client != null, "timeout", request.getSession().getMaxInactiveInterval(),
                     "principalType", authentication.getClass().getSimpleName(),
+                    "principalName", authentication.getName(),
+                    "registrationId", ((org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken) authentication).getAuthorizedClientRegistrationId(),
                     "encodedUrl", response.encodeURL("/bff/test"),
                     "matchesExpectedClient", client != null && client.getAccessToken().getTokenValue().equals(
                             "test-access-token-" + request.getParameter("expectedExchange")),
@@ -290,7 +343,16 @@ abstract class HttpSecurityTestSupport {
         registry.add(registration + "scope", () -> "openid,profile,email,hr.company,hr.organization,hr.roles");
     }
 
-    @BeforeEach void resetIssuer() { ISSUER.reset(); }
+    @Autowired AppLocalLoginService localLogin;
+    @Autowired CurrentAppUserService currentUser;
+
+    @BeforeEach void resetIssuer() {
+        ISSUER.reset();
+        reset(localLogin, currentUser);
+        var local = AppOidcUserServiceTest.local(java.util.Set.of(AppRole.APP_USER));
+        when(localLogin.login(any())).thenReturn(local);
+        when(currentUser.find(any())).thenReturn(java.util.Optional.of(local));
+    }
 
     static int reservePort() {
         try (var socket = new ServerSocket(0, 0, java.net.InetAddress.getByName("127.0.0.1"))) {

@@ -32,6 +32,7 @@ final class MockOidcIssuer implements AutoCloseable {
     private final RSAKey signingKey;
     private final RSAKey wrongKey;
     private final AtomicInteger tokenRequests = new AtomicInteger();
+    private final AtomicInteger userInfoRequests = new AtomicInteger();
     volatile String nonce;
     volatile String fault = "valid";
     volatile Map<String, String> tokenForm = Map.of();
@@ -49,8 +50,7 @@ final class MockOidcIssuer implements AutoCloseable {
                     "subject_types_supported", List.of("public"),
                     "id_token_signing_alg_values_supported", List.of("RS256"))));
             server.createContext("/jwks", exchange -> respond(exchange, 200, new JWKSet(signingKey.toPublicJWK()).toJSONObject()));
-            server.createContext("/userinfo", exchange -> respond(exchange, 200,
-                    Map.of("sub", "external-user-1", "name", "Reference User", "email", "user@example.test")));
+            server.createContext("/userinfo", this::userInfo);
             server.createContext("/token", this::token);
             server.start();
         } catch (IOException | JOSEException exception) {
@@ -60,14 +60,33 @@ final class MockOidcIssuer implements AutoCloseable {
 
     String origin() { return "http://127.0.0.1:" + server.getAddress().getPort(); }
     int tokenRequestCount() { return tokenRequests.get(); }
+    int userInfoRequestCount() { return userInfoRequests.get(); }
     void reset() {
         fault = "valid";
         nonce = null;
         tokenForm = Map.of();
         clientAuthorization = null;
         tokenRequests.set(0);
+        userInfoRequests.set(0);
     }
 
+    private void userInfo(HttpExchange exchange) throws IOException {
+        userInfoRequests.incrementAndGet();
+        if (fault.equals("userinfo-error")) {
+            respond(exchange, 500, Map.of("error", "local_user_disabled"));
+            return;
+        }
+        var claims = new LinkedHashMap<String, Object>(Map.of("sub", "external-user-1", "name", "Reference User", "email", "user@example.test"));
+        switch (fault) {
+            case "numeric-name" -> claims.put("name", 42);
+            case "numeric-email" -> claims.put("email", 42);
+            case "numeric-sub" -> claims.put("sub", 42);
+            case "missing-sub" -> claims.remove("sub");
+            case "mismatched-sub" -> claims.put("sub", "other-user");
+            default -> { }
+        }
+        respond(exchange, 200, claims);
+    }
     private void token(HttpExchange exchange) throws IOException {
         tokenRequests.incrementAndGet();
         tokenForm = parameters(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
