@@ -40,7 +40,20 @@ final class OidcCallbackGuard extends OncePerRequestFilter {
             failureHandler.onAuthenticationFailure(request, response, new OAuth2AuthenticationException("oidc_login_failed"));
             return;
         }
-        chain.doFilter(request, response);
+        try {
+            chain.doFilter(request, response);
+        } catch (IOException exception) {
+            failureHandler.clearSession(request, response);
+            throw exception;
+        } catch (RuntimeException | ServletException exception) {
+            // Provisioning may already be committed; only local authentication is discarded.
+            if (response.isCommitted() || failureHandler.failureResponseStarted(request)) {
+                failureHandler.clearSession(request, response);
+                throw exception;
+            }
+            failureHandler.onAuthenticationFailure(request, response,
+                    new OAuth2AuthenticationException("oidc_login_failed"));
+        }
     }
 
     private boolean matchesAddress(HttpServletRequest request) {

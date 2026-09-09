@@ -15,8 +15,13 @@ final class RpSessionCleaner {
         SecurityContextHolder.clearContext();
         var session = request.getSession(false);
         if (session != null) session.invalidate();
-        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from("RP_SESSION", "").path("/")
+        if (response.isCommitted()) return;
+        // A failed login may already have rotated the ID and queued its cookie.
+        var otherCookies = response.getHeaders(HttpHeaders.SET_COOKIE).stream()
+                .filter(cookie -> !cookie.startsWith("RP_SESSION=")).toList();
+        response.setHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from("RP_SESSION", "").path("/")
                 .httpOnly(true).secure(secureCookie).sameSite("Lax").maxAge(0).build().toString());
+        otherCookies.forEach(cookie -> response.addHeader(HttpHeaders.SET_COOKIE, cookie));
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
     }
 }
