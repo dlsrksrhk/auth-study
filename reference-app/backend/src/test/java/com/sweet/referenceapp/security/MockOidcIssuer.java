@@ -33,6 +33,9 @@ final class MockOidcIssuer implements AutoCloseable {
     private final RSAKey wrongKey;
     private final AtomicInteger tokenRequests = new AtomicInteger();
     private final AtomicInteger userInfoRequests = new AtomicInteger();
+    volatile Map<String, Object> userInfoClaims = defaultClaims();
+    volatile int userInfoStatus = 200;
+    volatile String subject = "external-user-1";
     volatile String nonce;
     volatile String fault = "valid";
     volatile Map<String, String> tokenForm = Map.of();
@@ -58,10 +61,17 @@ final class MockOidcIssuer implements AutoCloseable {
         }
     }
 
+    private static Map<String, Object> defaultClaims() {
+        return Map.of("sub", "external-user-1", "name", "Reference User", "email", "user@example.test");
+    }
+
     String origin() { return "http://127.0.0.1:" + server.getAddress().getPort(); }
     int tokenRequestCount() { return tokenRequests.get(); }
     int userInfoRequestCount() { return userInfoRequests.get(); }
     void reset() {
+        userInfoClaims = defaultClaims();
+        userInfoStatus = 200;
+        subject = "external-user-1";
         fault = "valid";
         nonce = null;
         tokenForm = Map.of();
@@ -76,7 +86,7 @@ final class MockOidcIssuer implements AutoCloseable {
             respond(exchange, 500, Map.of("error", "local_user_disabled"));
             return;
         }
-        var claims = new LinkedHashMap<String, Object>(Map.of("sub", "external-user-1", "name", "Reference User", "email", "user@example.test"));
+        var claims = new LinkedHashMap<String, Object>(userInfoClaims);
         switch (fault) {
             case "numeric-name" -> claims.put("name", 42);
             case "numeric-email" -> claims.put("email", 42);
@@ -85,7 +95,7 @@ final class MockOidcIssuer implements AutoCloseable {
             case "mismatched-sub" -> claims.put("sub", "other-user");
             default -> { }
         }
-        respond(exchange, 200, claims);
+        respond(exchange, userInfoStatus, claims);
     }
     private void token(HttpExchange exchange) throws IOException {
         tokenRequests.incrementAndGet();
@@ -97,7 +107,7 @@ final class MockOidcIssuer implements AutoCloseable {
         }
         try {
             var now = Instant.now();
-            var claims = new JWTClaimsSet.Builder().issuer(origin()).subject("external-user-1")
+            var claims = new JWTClaimsSet.Builder().issuer(origin()).subject(subject)
                     .audience(CLIENT_ID).expirationTime(Date.from(now.plusSeconds(300)))
                     .issueTime(Date.from(now.minusSeconds(300))).claim("nonce", nonce);
             switch (fault) {

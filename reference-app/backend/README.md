@@ -1,6 +1,6 @@
 # Reference App BFF
 
-독립 Spring Boot BFF의 Task 4 구현입니다. OIDC Authorization Code 로그인, confidential client의 PKCE S256, 콜백 검증과 서버 세션 보안을 제공합니다. Java 21과 Docker Desktop이 필요합니다.
+독립 Spring Boot BFF의 Task 5 구현입니다. OIDC Authorization Code 로그인과 로컬 사용자 JIT·최초 관리자 지정을 연결하고, 현재 DB 상태와 권한을 반영하는 세션·프로필 API를 제공합니다. confidential client의 PKCE S256, 콜백 검증과 서버 세션 보안도 유지합니다. Java 21과 Docker Desktop이 필요합니다.
 
 ## 로컬 실행
 
@@ -64,7 +64,45 @@ $headers = @{ Origin = 'http://rp.localhost:3100'; 'X-CSRF-TOKEN' = $csrf.csrfTo
 
 `RP_SESSION`은 host-only, HttpOnly, SameSite=Lax, Path=/ 쿠키이며 기본 Secure=true입니다. 로컬 `dev`와 HTTP 테스트에서만 Secure=false를 사용합니다. 유휴 만료는 30분이고 URL rewriting과 재시작 후 세션 복원은 꺼져 있습니다. SecurityContext, 한 개의 pending 로그인 요청, authorized client와 OAuth token은 해당 HttpSession에만 저장합니다. 성공 시 세션 ID를 교체하며 실패 시 기존 세션과 쿠키를 폐기합니다. 토큰 검증은 Spring Security 6.5.11의 기본 OIDC 검증기를 사용합니다. `exp`/`iat` 필수 및 60초 clock skew 검증도 기본 검증기에 포함됩니다.
 
-현재 인증은 Spring의 `OAuth2AuthenticationToken`과 OIDC principal입니다. 로컬 `AppUser` 인증 완료를 의미하지 않습니다. 외부 역할을 `APP_USER`/`APP_ADMIN`으로 매핑하지 않습니다. Task 5의 사용자 provisioning 연결, 로컬 principal, `/bff/session`·`/bff/profile` controller는 아직 없습니다. GET `/bff/session`은 익명 접근 규칙만 예약되어 있습니다. token 갱신·logout은 Task 6이며 mutation 테스트용 endpoint는 테스트 소스에만 있습니다.
+인증은 `OAuth2AuthenticationToken`과 로컬 UUID를 연결한 OIDC principal을 사용합니다. 검증된 UserInfo를 한 번 조회한 뒤 로컬 사용자 생성·외부 사본 갱신·최초 관리자 지정을 한 트랜잭션으로 처리합니다. 최초 적격 `COMPANY_ADMIN` 사용자만 bootstrap으로 `APP_ADMIN`을 받으며 이후 외부 역할로 로컬 권한을 동기화하지 않습니다.
+
+`GET /bff/session`의 익명 응답은 200 `{"authenticated":false}`이며 새 세션을 만들지 않습니다. 인증된 응답은 다음 형식입니다.
+
+```json
+{
+  "authenticated": true,
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "displayName": "홍길동",
+    "email": "user@example.com",
+    "status": "ACTIVE",
+    "roles": ["APP_USER"]
+  },
+  "csrfHeaderName": "X-CSRF-TOKEN",
+  "csrfToken": "masked-session-csrf-token"
+}
+```
+
+`GET /bff/profile`은 익명에게 redirect 없이 401을 반환하며 인증된 응답은 다음 필드만 포함합니다. 이름·이메일·회사·조직은 null을 허용합니다.
+
+```json
+{
+  "displayName": "홍길동",
+  "email": "user@example.com",
+  "company": null,
+  "organization": null,
+  "hrRoles": [],
+  "roles": ["APP_USER"]
+}
+```
+
+두 API와 `/bff/csrf`는 `Cache-Control: no-store`를 반환합니다. OAuth 토큰·client secret·issuer·subject·원본 principal·DB 내부 시각은 API에 노출하지 않습니다. CSRF 토큰은 요청 헤더 전송을 위한 공개 값입니다.
+
+인증된 `/bff/**` 요청마다 DB에서 현재 사용자와 역할을 읽고 그 조회 결과를 인가와 응답에 사용합니다. 이 과정은 UserInfo 호출이나 `lastLoginAt` 갱신을 수행하지 않습니다. 역할 변경은 다음 요청부터 적용되며, 비활성화·삭제 사용자는 세션과 쿠키를 폐기하여 session은 익명 200, profile은 401을 반환합니다. DB 조회 장애는 503으로 차단하며 과거 권한을 사용하지 않습니다.
+
+콜백에서 비활성 사용자가 확인되면 `/login-error?code=local_user_disabled`로 이동하고 외부 사본·로그인 시각 변경도 롤백합니다. 프로토콜·UserInfo·DB 오류는 `/login-error?code=oidc_login_failed`로 이동합니다. 두 주소는 고정 SPA origin을 사용하며 실패 시 기존 세션·쿠키를 정리합니다. 외부 오류 문자열로 오류 코드를 선택하지 않습니다.
+
+토큰 refresh·revocation·logout, 실제 관리자 API와 SPA는 아직 구현하지 않았습니다. 테스트의 권한·authorized client·상태 변경 확인용 endpoint는 테스트 소스에만 있습니다.
 
 ## 검증
 
@@ -72,10 +110,11 @@ $headers = @{ Origin = 'http://rp.localhost:3100'; 'X-CSRF-TOKEN' = $csrf.csrfTo
 
 ```powershell
 .\gradlew.bat test --tests '*OAuth2ClientConfigurationIntegrationTest' --tests '*BffSessionSecurityIntegrationTest' --tests '*ReferenceSecurityPropertiesTest'
-.\gradlew.bat test
+.\gradlew.bat test --tests '*OidcLocalLoginIntegrationTest' --tests '*LocalSessionLifecycleIntegrationTest'
+.\gradlew.bat clean test
 git diff --check
 ```
 
-HTTP suite는 임시 포트의 Discovery/JWKS/token/UserInfo 서버와 실제 RSA 서명 token을 사용하고 실제 내장 BFF에 redirect를 자동 추적하지 않는 HTTP client로 접속합니다. 일반 `test` 프로필은 고정 provider metadata를 사용하므로 기존 JIT/bootstrap 회귀 테스트도 로컬 IdP 없이 실행됩니다. 보안 HTTP fixture만 persistence 자동 구성을 제외하며 실제 프로덕션 필터 체인과 controller를 사용합니다.
+HTTP suite는 임시 포트의 Discovery/JWKS/token/UserInfo 서버와 실제 RSA 서명 token을 사용하고 실제 내장 BFF에 redirect를 자동 추적하지 않는 HTTP client로 접속합니다. 일반 `test` 프로필은 고정 provider metadata를 사용하므로 기존 JIT/bootstrap 회귀 테스트도 로컬 IdP 없이 실행됩니다. 기존 프로토콜 HTTP suite는 persistence 자동 구성을 제외합니다. OidcLocalLoginIntegrationTest와 LocalSessionLifecycleIntegrationTest는 실제 ReferenceApplication·서비스·JPA·PostgreSQL Testcontainer를 연결하여 콜백, JIT/bootstrap rollback, 다음 요청의 상태·권한 변경, API와 CSRF를 검증합니다. 테스트 DB 변경은 HTTP 요청에서 관찰할 수 있도록 커밋하며 로컬 개발 DB는 사용하지 않습니다.
 
-실제 IdP와 브라우저를 연결한 E2E는 이번 Task 4에서 실행하지 않았습니다.
+실제 IdP와 브라우저를 연결한 E2E는 이번 Task 5에서 실행하지 않았습니다.
