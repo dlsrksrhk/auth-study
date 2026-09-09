@@ -349,7 +349,9 @@ abstract class HttpSecurityTestSupport {
     @BeforeEach void resetIssuer() {
         ISSUER.reset();
         reset(localLogin, currentUser);
-        var local = AppOidcUserServiceTest.local(java.util.Set.of(AppRole.APP_USER));
+        var template = AppOidcUserServiceTest.local(java.util.Set.of(AppRole.APP_USER));
+        var local = new com.sweet.referenceapp.user.application.AppUserView(template.id(), ISSUER.origin(), "external-user-1",
+                template.snapshot(), template.status(), template.roles(), template.createdAt(), template.updatedAt(), template.lastLoginAt(), template.version());
         when(localLogin.login(any())).thenReturn(local);
         when(currentUser.find(any())).thenReturn(java.util.Optional.of(local));
     }

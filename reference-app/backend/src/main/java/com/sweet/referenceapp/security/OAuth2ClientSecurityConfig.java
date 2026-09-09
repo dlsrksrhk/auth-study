@@ -1,6 +1,8 @@
 package com.sweet.referenceapp.security;
 
 import jakarta.servlet.DispatcherType;
+import com.sweet.referenceapp.user.application.CurrentAppUserService;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.autoconfigure.web.ServerProperties;
 import org.springframework.context.annotation.Bean;
@@ -29,7 +31,7 @@ public class OAuth2ClientSecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ReferenceSecurityProperties properties,
             ClientRegistrationRepository registrations, OAuth2AuthorizedClientRepository authorizedClients,
-            ServerProperties server, AppOidcUserService appOidcUserService) throws Exception {
+            ServerProperties server, AppOidcUserService appOidcUserService, CurrentAppUserService currentUsers) throws Exception {
         var csrfTokens = new HttpSessionCsrfTokenRepository();
         csrfTokens.setHeaderName("X-CSRF-TOKEN");
         var requests = new SessionAuthorizationRequestRepository();
@@ -49,6 +51,8 @@ public class OAuth2ClientSecurityConfig {
                 .securityContext(context -> context.securityContextRepository(new HttpSessionSecurityContextRepository()))
                 .sessionManagement(session -> session.sessionFixation(fixation -> fixation.changeSessionId()))
                 .csrf(csrf -> csrf.csrfTokenRepository(csrfTokens).csrfTokenRequestHandler(new HeaderOnlyCsrfTokenRequestHandler()))
+                .addFilterBefore(new CurrentAppUserFilter(currentUsers,
+                        new RpSessionCleaner(Boolean.TRUE.equals(server.getServlet().getSession().getCookie().getSecure()))), AuthorizationFilter.class)
                 .addFilterBefore(new BffOriginGuard(properties), CsrfFilter.class)
                 .addFilterBefore(new OidcCallbackGuard(properties, requests, failureHandler), CsrfFilter.class)
                 .oauth2Login(login -> login.authorizedClientRepository(authorizedClients)

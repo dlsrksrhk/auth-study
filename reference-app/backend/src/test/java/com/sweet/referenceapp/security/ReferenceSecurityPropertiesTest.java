@@ -88,6 +88,10 @@ class ReferenceSecurityPropertiesTest {
     @Import({OAuth2ClientSecurityConfig.class, BffLoginController.class, CsrfController.class, AppOidcUserService.class, OidcExternalIdentityMapper.class})
     static class CookieApplication {
         @org.springframework.context.annotation.Bean
+        com.sweet.referenceapp.user.application.CurrentAppUserService currentUsers() {
+            return org.mockito.Mockito.mock(com.sweet.referenceapp.user.application.CurrentAppUserService.class);
+        }
+        @org.springframework.context.annotation.Bean
         com.sweet.referenceapp.user.application.AppLocalLoginService localLogin() {
             return org.mockito.Mockito.mock(com.sweet.referenceapp.user.application.AppLocalLoginService.class);
         }
