@@ -8,6 +8,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
@@ -64,6 +65,11 @@ public class AppUserRepositoryAdapter implements AppUserRepository {
             entityManager.refresh(entity, LockModeType.PESSIMISTIC_WRITE);
             return entity.toDomain();
         });
+    }
+
+    @Override
+    public Optional<AppUser> findById(UUID id) {
+        return jpaRepository.findWithRoles(id).map(AppUserJpaEntity::toDomain);
     }
 
     @Override

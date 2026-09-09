@@ -13,4 +13,7 @@ public interface AppUserJpaRepository extends JpaRepository<AppUserJpaEntity, UU
     @Query("select u from AppUserJpaEntity u where u.issuer=:issuer and u.subject=:subject")
     Optional<AppUserJpaEntity> findLocked(@Param("issuer") String issuer,
             @Param("subject") String subject);
+
+    @Query("select distinct u from AppUserJpaEntity u left join fetch u.roles where u.id=:id")
+    Optional<AppUserJpaEntity> findWithRoles(@Param("id") UUID id);
 }
