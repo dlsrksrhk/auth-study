@@ -4,6 +4,8 @@ import com.sweet.referenceapp.user.application.AppLocalLoginService;
 import com.sweet.referenceapp.user.application.CurrentAppUserService;
 import com.sweet.referenceapp.user.application.LocalUserDisabledException;
 import com.sweet.referenceapp.user.domain.AppRole;
+import com.sweet.referenceapp.user.presentation.ProfileController;
+import com.sweet.referenceapp.user.presentation.SessionController;
 import org.springframework.beans.factory.annotation.Autowired;
 import static org.mockito.Mockito.*;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -300,7 +302,7 @@ abstract class HttpSecurityTestSupport {
             HibernateJpaAutoConfiguration.class, FlywayAutoConfiguration.class})
     @ComponentScan(basePackages = "com.sweet.referenceapp.security", excludeFilters =
             @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = TestComponent.class))
-    @Import(ProbeController.class)
+    @Import({ProbeController.class, SessionController.class, ProfileController.class})
     static class Application {
         @Bean(destroyMethod = "close") MockOidcIssuer issuer() { return ISSUER; }
         @Bean AppLocalLoginService localLogin() { return mock(AppLocalLoginService.class); }
