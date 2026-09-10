@@ -1,5 +1,7 @@
 # Reference App 토큰 수명·로그아웃 검증 기록
 
+> 최종 재검토 상태: **병합 보류 — Important 1건 미해결**. `28cf494`는 이전 로그인 요청이 새 로그인 토큰·세션·쿠키를 덮어쓰거나 정리하는 문제를 해결했습니다. 다만 callback 진입에서 이전 refresh State를 제거한 뒤 이전 인증/client를 유지하므로, callback 처리 중 들어온 보호 요청이 같은 Refresh Token으로 두 번째 갱신을 시작할 수 있습니다. 이 실패는 진행 중인 callback의 세션을 종료할 수도 있습니다. callback 진행 중 기존 client 갱신을 차단하고, 첫 refresh와 callback을 보류한 상태에서 추가 보호 요청을 보내 교환 횟수가 늘지 않는 회귀 검증이 필요합니다. 아래 277개 통과 결과는 이 미검증 경합의 안전성을 입증하지 않습니다. 병합·push는 수행하지 않았습니다.
+
 검증일: 2026-09-10 (Asia/Seoul). 브랜치: `codex/reference-app-token-lifecycle`.
 
 승인된 [설계](../specs/2026-09-10-reference-app-token-lifecycle-design.md)와 [세부 계획](../plans/2026-09-10-reference-app-token-lifecycle.md)의 Tasks 1–6를 구현했습니다. 실제 내장 HTTP 서버와 PostgreSQL Testcontainers를 사용한 Reference App 전체 테스트가 통과했습니다. 병합·push와 실제 브라우저 E2E는 수행하지 않았습니다.
