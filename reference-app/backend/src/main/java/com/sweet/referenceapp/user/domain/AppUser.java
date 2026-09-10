@@ -48,6 +48,11 @@ public record AppUser(
                 createdAt, now, now, version);
     }
 
+    public AppUser refreshSnapshot(ExternalUserSnapshot next, Instant now) {
+        return new AppUser(id, issuer, subject, next, status, roles,
+                createdAt, now, lastLoginAt, version);
+    }
+
     public AppUser withAdministrator(Instant now) {
         Objects.requireNonNull(now, "now");
         if (status != AppUserStatus.ACTIVE) {

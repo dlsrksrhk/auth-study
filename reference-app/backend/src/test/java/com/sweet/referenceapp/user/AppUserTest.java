@@ -17,6 +17,20 @@ import org.junit.jupiter.api.Test;
 class AppUserTest {
 
     @Test
+    void snapshotRefreshPreservesLoginTimeAndLocalRoles() {
+        var before = Instant.parse("2026-09-10T00:00:00Z");
+        var snapshot = new ExternalUserSnapshot("a@example.test", "A", null, null, Set.of());
+        var original = AppUser.create(UUID.randomUUID(), "https://idp.test", "sub", snapshot,
+                before);
+
+        var next = original.refreshSnapshot(snapshot, before.plusSeconds(60));
+
+        assertThat(next.lastLoginAt()).isEqualTo(before);
+        assertThat(next.updatedAt()).isEqualTo(before.plusSeconds(60));
+        assertThat(next.roles()).isEqualTo(original.roles());
+    }
+
+    @Test
     void replacementPreservesLocalPolicyAndIdentity() {
         var t = Instant.parse("2026-09-08T00:00:00Z");
         var old = new ExternalUserSnapshot("a@example.test", "A", null, null,
