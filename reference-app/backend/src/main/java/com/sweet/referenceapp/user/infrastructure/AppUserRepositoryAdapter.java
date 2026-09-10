@@ -74,7 +74,8 @@ public class AppUserRepositoryAdapter implements AppUserRepository {
 
     @Override
     public Optional<AppUser> findByIdForUpdate(UUID id) {
-        var entity = entityManager.find(AppUserJpaEntity.class, id, LockModeType.PESSIMISTIC_WRITE);
+        // Refresh acquires the lock without checking a cached entity's obsolete version first.
+        var entity = entityManager.find(AppUserJpaEntity.class, id);
         if (entity == null) {
             return Optional.empty();
         }
