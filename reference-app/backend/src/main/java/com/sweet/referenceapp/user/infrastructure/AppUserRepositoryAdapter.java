@@ -3,10 +3,15 @@ package com.sweet.referenceapp.user.infrastructure;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sweet.referenceapp.user.domain.AppUser;
+import com.sweet.referenceapp.user.domain.AppRole;
+import com.sweet.referenceapp.user.domain.AppUserPage;
 import com.sweet.referenceapp.user.domain.AppUserRepository;
+import com.sweet.referenceapp.user.domain.AppUserStatus;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -84,6 +89,41 @@ public class AppUserRepositoryAdapter implements AppUserRepository {
     }
 
     @Override
+    public AppUserPage findPage(int page, int size, AppUserStatus status, AppRole role) {
+        var where = new StringBuilder(" where 1=1");
+        if (status != null) {
+            where.append(" and u.status=:status");
+        }
+        if (role != null) {
+            where.append(" and exists (select 1 from app_user_role r"
+                    + " where r.app_user_id=u.id and r.role=:role)");
+        }
+        var countQuery = entityManager.createNativeQuery(
+                "select count(*) from app_user u" + where);
+        bindFilters(countQuery, status, role);
+        long total = ((Number) countQuery.getSingleResult()).longValue();
+
+        var idQuery = entityManager.createNativeQuery(
+                "select u.id from app_user u" + where
+                        + " order by u.created_at desc,u.id asc limit :size offset :offset");
+        bindFilters(idQuery, status, role);
+        idQuery.setParameter("size", size);
+        idQuery.setParameter("offset", (long) page * size);
+        @SuppressWarnings("unchecked")
+        List<UUID> ids = idQuery.getResultList();
+        if (ids.isEmpty()) {
+            return new AppUserPage(List.of(), total);
+        }
+        var entities = entityManager.createQuery("""
+                select distinct u from AppUserJpaEntity u left join fetch u.roles
+                where u.id in :ids
+                """, AppUserJpaEntity.class).setParameter("ids", ids).getResultList();
+        var byId = new HashMap<UUID, AppUser>();
+        entities.forEach(entity -> byId.put(entity.toDomain().id(), entity.toDomain()));
+        return new AppUserPage(ids.stream().map(byId::get).toList(), total);
+    }
+
+    @Override
     public long countActiveAdministrators() {
         return ((Number) entityManager.createNativeQuery("""
                 select count(distinct u.id) from app_user u
@@ -146,6 +186,15 @@ public class AppUserRepositoryAdapter implements AppUserRepository {
     private void verifyVersion(AppUserJpaEntity entity, AppUser user) {
         if (entity.version() != user.version()) {
             throw new ObjectOptimisticLockingFailureException(AppUserJpaEntity.class, user.id());
+        }
+    }
+
+    private void bindFilters(jakarta.persistence.Query query, AppUserStatus status, AppRole role) {
+        if (status != null) {
+            query.setParameter("status", status.name());
+        }
+        if (role != null) {
+            query.setParameter("role", role.name());
         }
     }
 

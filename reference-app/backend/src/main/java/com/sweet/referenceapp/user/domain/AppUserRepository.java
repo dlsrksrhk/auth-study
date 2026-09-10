@@ -13,6 +13,8 @@ public interface AppUserRepository {
 
     Optional<AppUser> findByIdForUpdate(UUID id);
 
+    AppUserPage findPage(int page, int size, AppUserStatus status, AppRole role);
+
     long countActiveAdministrators();
 
     AppUser updateSnapshot(AppUser user);
