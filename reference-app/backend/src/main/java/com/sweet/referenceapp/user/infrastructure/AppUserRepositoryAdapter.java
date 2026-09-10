@@ -73,10 +73,47 @@ public class AppUserRepositoryAdapter implements AppUserRepository {
     }
 
     @Override
+    public Optional<AppUser> findByIdForUpdate(UUID id) {
+        var entity = entityManager.find(AppUserJpaEntity.class, id, LockModeType.PESSIMISTIC_WRITE);
+        if (entity == null) {
+            return Optional.empty();
+        }
+        entityManager.refresh(entity, LockModeType.PESSIMISTIC_WRITE);
+        return Optional.of(entity.toDomain());
+    }
+
+    @Override
+    public long countActiveAdministrators() {
+        return ((Number) entityManager.createNativeQuery("""
+                select count(distinct u.id) from app_user u
+                join app_user_role r on r.app_user_id=u.id
+                where u.status='ACTIVE' and r.role='APP_ADMIN'
+                """).getSingleResult()).longValue();
+    }
+
+    @Override
     public AppUser updateSnapshot(AppUser user) {
         var entity = lockedUser(user);
         verifyVersion(entity, user);
         entity.replaceSnapshot(user.snapshot(), user.updatedAt(), user.lastLoginAt());
+        entityManager.flush();
+        return entity.toDomain();
+    }
+
+    @Override
+    public AppUser updateAdministration(AppUser user) {
+        var entity = entityManager.find(AppUserJpaEntity.class, user.id(),
+                LockModeType.PESSIMISTIC_WRITE);
+        if (entity == null) {
+            throw new IllegalStateException("App user does not exist");
+        }
+        entityManager.refresh(entity, LockModeType.PESSIMISTIC_WRITE);
+        verifyVersion(entity, user);
+        var current = entity.toDomain();
+        if (current.status() == user.status() && current.roles().equals(user.roles())) {
+            return current;
+        }
+        entity.updateAdministration(user);
         entityManager.flush();
         return entity.toDomain();
     }

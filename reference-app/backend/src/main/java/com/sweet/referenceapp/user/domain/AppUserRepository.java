@@ -11,7 +11,13 @@ public interface AppUserRepository {
 
     Optional<AppUser> findById(UUID id);
 
+    Optional<AppUser> findByIdForUpdate(UUID id);
+
+    long countActiveAdministrators();
+
     AppUser updateSnapshot(AppUser user);
+
+    AppUser updateAdministration(AppUser user);
 
     AppUser addAdministrator(AppUser user, Instant now);
 }

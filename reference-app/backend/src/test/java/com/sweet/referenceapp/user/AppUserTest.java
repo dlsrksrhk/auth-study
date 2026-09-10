@@ -17,6 +17,41 @@ import org.junit.jupiter.api.Test;
 class AppUserTest {
 
     @Test
+    void roleChangePreservesIdentitySnapshotAndTimestampsExceptUpdatedAt() {
+        var now = Instant.parse("2026-09-10T00:00:00Z");
+        var user = AppUser.create(UUID.randomUUID(), "https://issuer.test", "subject",
+                new ExternalUserSnapshot("u@example.test", "User", null, null, Set.of()), now);
+
+        var next = user.changeRoles(Set.of(AppRole.APP_USER, AppRole.APP_ADMIN),
+                now.plusSeconds(1));
+
+        assertThat(next.roles()).containsExactlyInAnyOrder(AppRole.APP_USER, AppRole.APP_ADMIN);
+        assertThat(next.snapshot()).isEqualTo(user.snapshot());
+        assertThat(next.lastLoginAt()).isEqualTo(now);
+        assertThat(next.createdAt()).isEqualTo(now);
+        assertThat(next.updatedAt()).isEqualTo(now.plusSeconds(1));
+    }
+
+    @Test
+    void changingToCurrentStatusReturnsSameUser() {
+        var now = Instant.parse("2026-09-10T00:00:00Z");
+        var user = AppUser.create(UUID.randomUUID(), "https://issuer.test", "subject",
+                new ExternalUserSnapshot("u@example.test", "User", null, null, Set.of()), now);
+
+        assertThat(user.changeStatus(AppUserStatus.ACTIVE, now.plusSeconds(1))).isSameAs(user);
+    }
+
+    @Test
+    void roleChangeRejectsRemovingRequiredAppUserRole() {
+        var now = Instant.parse("2026-09-10T00:00:00Z");
+        var user = AppUser.create(UUID.randomUUID(), "https://issuer.test", "subject",
+                new ExternalUserSnapshot("u@example.test", "User", null, null, Set.of()), now);
+
+        assertThatThrownBy(() -> user.changeRoles(Set.of(AppRole.APP_ADMIN), now))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void snapshotRefreshPreservesLoginTimeAndLocalRoles() {
         var before = Instant.parse("2026-09-10T00:00:00Z");
         var snapshot = new ExternalUserSnapshot("a@example.test", "A", null, null, Set.of());

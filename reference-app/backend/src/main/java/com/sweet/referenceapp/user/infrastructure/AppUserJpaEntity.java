@@ -86,6 +86,17 @@ public class AppUserJpaEntity {
         }
     }
 
+    void updateAdministration(AppUser user) {
+        if (status != user.status()) {
+            status = user.status();
+        }
+        roles.retainAll(user.roles());
+        roles.addAll(user.roles());
+        if (!updatedAt.equals(user.updatedAt())) {
+            updatedAt = user.updatedAt();
+        }
+    }
+
     AppUser toDomain() {
         return new AppUser(id, issuer, subject,
                 new ExternalUserSnapshot(email, displayName, companySnapshot,

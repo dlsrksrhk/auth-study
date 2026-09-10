@@ -53,6 +53,29 @@ public record AppUser(
                 createdAt, now, lastLoginAt, version);
     }
 
+    public AppUser changeStatus(AppUserStatus next, Instant now) {
+        Objects.requireNonNull(next, "next");
+        Objects.requireNonNull(now, "now");
+        if (status == next) {
+            return this;
+        }
+        return new AppUser(id, issuer, subject, snapshot, next, roles,
+                createdAt, now, lastLoginAt, version);
+    }
+
+    public AppUser changeRoles(Set<AppRole> next, Instant now) {
+        Objects.requireNonNull(next, "next");
+        Objects.requireNonNull(now, "now");
+        if (!next.contains(AppRole.APP_USER)) {
+            throw new IllegalArgumentException("APP_USER role is required");
+        }
+        if (roles.equals(next)) {
+            return this;
+        }
+        return new AppUser(id, issuer, subject, snapshot, status, next,
+                createdAt, now, lastLoginAt, version);
+    }
+
     public AppUser withAdministrator(Instant now) {
         Objects.requireNonNull(now, "now");
         if (status != AppUserStatus.ACTIVE) {
