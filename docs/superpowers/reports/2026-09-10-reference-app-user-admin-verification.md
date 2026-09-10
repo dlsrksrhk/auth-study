@@ -54,7 +54,7 @@ IdP 코드·DB·의존성은 바꾸지 않아 IdP suite는 반복하지 않았�
 
 ## 독립 review 결과
 
-Task 1–4 작업별 독립 검토는 완료되었습니다. Task 4에서 실제 HTTP 보안 확인을 유보한 항목은 위 통합 증거로 검증 대상에 포함했습니다. Task 5 후 전체 변경 검토에서 트랜잭션 시작 실패의 503 누락(P2)과 identity 조회 경로 문서 오류(P3)를 발견했습니다. 아래 수정 후 해당 범위 재검토를 기다리고 있으며 최종 승인 완료로 주장하지 않습니다.
+Task 1–5 작업별 독립 검토를 완료했습니다. Task 4의 실제 HTTP 보안 유보 항목은 Task 5 검토에서 해소했습니다. 전체 변경 검토에서 발견한 트랜잭션 시작 실패의 503 누락(P2)과 identity 조회 경로 문서 오류(P3)는 436e5f0에서 수정했습니다. 독립된 수정 범위 재검토에서 두 항목 모두 ADDRESSED, 새로운 결함 없음으로 확인했습니다. 미해결 Critical/Important 항목은 없습니다.
 
 ## 최종 검토 지적 수정과 재검증
 
@@ -64,4 +64,4 @@ P3: 위 구현 commit 설명을 바로잡았습니다. UUID의 find 후 locking 
 
 - RED: `.\gradlew.bat test --tests '*AppUserAdminControllerTest.transactionCreationFailureReturnsSafeUnavailableProblem' --console=plain` — exit 1, `BUILD FAILED in 4s`, 1 test/1 failure입니다. 수정 전 CannotCreateTransactionException이 ServletException으로 전파되어 의도한 503 응답 검증에 실패했습니다.
 - GREEN: `.\gradlew.bat test --tests '*AppUserAdminControllerTest' --tests '*AppUserAdminHttpIntegrationTest' --console=plain` — exit 0, `BUILD SUCCESSFUL in 25s`, XML 2 suites, tests=24, failures=0, errors=0, skipped=0입니다. 새 사례는 하위 SQLException의 비밀 문자열을 가진 트랜잭션 생성 예외에 대해 응답 키·code·content type·query 없는 instance·no-store·비밀 미노출을 검증합니다. 실제 연결 고갈 재현이 아닌 MVC 오류 매핑 테스트입니다.
-- 수정 후 전체: `.\gradlew.bat test --console=plain` — exit 0, `BUILD SUCCESSFUL in 55s`, XML 41 suites, tests=384, failures=0, errors=0, skipped=0입니다. production 오류 처리 수정 후 focused 안정화 뒤 전체 suite를 한 번 실행했습니다. 기존 경고·미실행 범위는 위와 같으며 수정 범위 독립 재검토는 대기 중입니다.
+- 수정 후 전체: `.\gradlew.bat test --console=plain` — exit 0, `BUILD SUCCESSFUL in 55s`, XML 41 suites, tests=384, failures=0, errors=0, skipped=0입니다. production 오류 처리 수정 후 focused 안정화 뒤 전체 suite를 한 번 실행했습니다. 기존 경고·미실행 범위는 위와 같으며 수정 범위 독립 재검토도 통과했습니다.
