@@ -36,4 +36,5 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    jvmArgs("-Djdk.httpclient.allowRestrictedHeaders=host")
 }

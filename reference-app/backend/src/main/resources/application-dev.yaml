@@ -19,6 +19,9 @@ spring:
             issuer-uri: ${REFERENCE_APP_ISSUER:http://idp.localhost:8080}
 
 reference:
+  token-lifecycle:
+    revocation-uri: ${REFERENCE_APP_REVOCATION_URI:http://idp.localhost:8080/oauth2/revoke}
+    end-session-uri: ${REFERENCE_APP_END_SESSION_URI:http://idp.localhost:8080/connect/logout}
   security:
     bff-origin: ${REFERENCE_APP_BFF_ORIGIN:http://rp.localhost:8180}
     spa-origin: ${REFERENCE_APP_SPA_ORIGIN:http://rp.localhost:3100}

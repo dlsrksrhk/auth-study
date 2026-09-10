@@ -23,6 +23,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 final class MockOidcIssuer implements AutoCloseable {
     static final String CLIENT_ID = "test-reference-client";
@@ -33,6 +36,8 @@ final class MockOidcIssuer implements AutoCloseable {
     private final RSAKey wrongKey;
     private final AtomicInteger tokenRequests = new AtomicInteger();
     private final AtomicInteger userInfoRequests = new AtomicInteger();
+    private final AtomicInteger revocationRequests = new AtomicInteger();
+    private final ExecutorService executor = Executors.newCachedThreadPool();
     volatile Map<String, Object> userInfoClaims = defaultClaims();
     volatile int userInfoStatus = 200;
     volatile String subject = "external-user-1";
@@ -40,6 +45,9 @@ final class MockOidcIssuer implements AutoCloseable {
     volatile String fault = "valid";
     volatile Map<String, String> tokenForm = Map.of();
     volatile String clientAuthorization;
+    volatile String userInfoAuthorization;
+    volatile Map<String, String> revocationForm = Map.of();
+    volatile CountDownLatch requestLatch = new CountDownLatch(0);
 
     MockOidcIssuer() {
         try {
@@ -55,6 +63,8 @@ final class MockOidcIssuer implements AutoCloseable {
             server.createContext("/jwks", exchange -> respond(exchange, 200, new JWKSet(signingKey.toPublicJWK()).toJSONObject()));
             server.createContext("/userinfo", this::userInfo);
             server.createContext("/token", this::token);
+            server.createContext("/revoke", this::revoke);
+            server.setExecutor(executor);
             server.start();
         } catch (IOException | JOSEException exception) {
             throw new IllegalStateException(exception);
@@ -68,6 +78,7 @@ final class MockOidcIssuer implements AutoCloseable {
     String origin() { return "http://127.0.0.1:" + server.getAddress().getPort(); }
     int tokenRequestCount() { return tokenRequests.get(); }
     int userInfoRequestCount() { return userInfoRequests.get(); }
+    int revocationRequestCount() { return revocationRequests.get(); }
     void reset() {
         userInfoClaims = defaultClaims();
         userInfoStatus = 200;
@@ -76,12 +87,17 @@ final class MockOidcIssuer implements AutoCloseable {
         nonce = null;
         tokenForm = Map.of();
         clientAuthorization = null;
+        userInfoAuthorization = null;
+        revocationForm = Map.of();
+        requestLatch = new CountDownLatch(0);
         tokenRequests.set(0);
         userInfoRequests.set(0);
+        revocationRequests.set(0);
     }
 
     private void userInfo(HttpExchange exchange) throws IOException {
         userInfoRequests.incrementAndGet();
+        userInfoAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
         if (fault.equals("userinfo-error")) {
             respond(exchange, 500, Map.of("error", "local_user_disabled"));
             return;
@@ -101,8 +117,24 @@ final class MockOidcIssuer implements AutoCloseable {
         tokenRequests.incrementAndGet();
         tokenForm = parameters(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
         clientAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
+        if (fault.equals("token-delay")) {
+            try { Thread.sleep(1000); } catch (InterruptedException exception) { Thread.currentThread().interrupt(); }
+        }
         if (fault.equals("token-error")) {
             respond(exchange, 400, Map.of("error", "invalid_grant"));
+            return;
+        }
+        if (fault.equals("token-malformed")) {
+            respondRaw(exchange, 200, "not-json");
+            return;
+        }
+        if ("refresh_token".equals(tokenForm.get("grant_type"))) {
+            if (fault.equals("refresh-missing-token")) {
+                respond(exchange, 200, Map.of("access_token", "test-access-token-refreshed", "token_type", "Bearer", "expires_in", 300));
+                return;
+            }
+            respond(exchange, 200, Map.of("access_token", "test-access-token-refreshed", "token_type", "Bearer", "expires_in", 300,
+                    "refresh_token", "test-refresh-token-refreshed", "scope", "openid profile email"));
             return;
         }
         try {
@@ -135,6 +167,30 @@ final class MockOidcIssuer implements AutoCloseable {
         }
     }
 
+    private void revoke(HttpExchange exchange) throws IOException {
+        revocationRequests.incrementAndGet();
+        revocationForm = parameters(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        clientAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
+        requestLatch.countDown();
+        if (fault.equals("revoke-delay")) {
+            try { Thread.sleep(1000); } catch (InterruptedException exception) { Thread.currentThread().interrupt(); }
+        }
+        if (fault.equals("revoke-redirect")) {
+            exchange.getResponseHeaders().set("Location", origin() + "/revoke");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+            return;
+        }
+        respond(exchange, fault.equals("revoke-error") ? 500 : 200, Map.of());
+    }
+
+    private void respondRaw(HttpExchange exchange, int status, String body) throws IOException {
+        var bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (var output = exchange.getResponseBody()) { output.write(bytes); }
+    }
+
     private void respond(HttpExchange exchange, int status, Object body) throws IOException {
         var bytes = json.writeValueAsBytes(body);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -152,5 +208,5 @@ final class MockOidcIssuer implements AutoCloseable {
         return values;
     }
 
-    @Override public void close() { server.stop(0); }
+    @Override public void close() { server.stop(0); executor.shutdownNow(); }
 }

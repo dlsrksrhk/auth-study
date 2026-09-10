@@ -18,3 +18,14 @@ server:
         http-only: true
         same-site: lax
         secure: true
+
+reference:
+  token-lifecycle:
+    connect-timeout: 2s
+    read-timeout: 3s
+    refresh-timeout: 10s
+    revocation-timeout: 3s
+    handoff-ttl: 60s
+    handoff-capacity: 1000
+    revocation-uri: ${REFERENCE_APP_REVOCATION_URI:http://idp.localhost:8080/oauth2/revoke}
+    end-session-uri: ${REFERENCE_APP_END_SESSION_URI:http://idp.localhost:8080/connect/logout}
