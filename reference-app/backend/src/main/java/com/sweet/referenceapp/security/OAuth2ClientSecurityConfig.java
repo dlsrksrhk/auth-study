@@ -73,6 +73,7 @@ public class OAuth2ClientSecurityConfig {
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.GET, "/bff/login", "/bff/csrf", "/bff/session",
                                 "/oauth2/authorization/reference-app", "/login/oauth2/code/reference-app", "/bff/logout/continue/*").permitAll()
+                        .requestMatchers("/bff/admin/**").hasAuthority("APP_ADMIN")
                         .requestMatchers("/bff/**").authenticated()
                         .anyRequest().denyAll())
                 .formLogin(AbstractHttpConfigurer::disable)
@@ -89,6 +90,7 @@ public class OAuth2ClientSecurityConfig {
                 .addFilterBefore(new OAuthSessionLifecycleFilter(coordinator, currentUsers, cleaner), AuthorizationFilter.class)
                 .addFilterBefore(new CurrentAppUserFilter(currentUsers, cleaner), OAuthSessionLifecycleFilter.class)
                 .addFilterBefore(new BffOriginGuard(properties), CsrfFilter.class)
+                .addFilterBefore(new AdminApiHeadersFilter(), BffOriginGuard.class)
                 .addFilterBefore(new OidcCallbackGuard(properties, requests, failureHandler), CsrfFilter.class)
                 .oauth2Login(login -> login.authorizedClientRepository(authorizedClients)
                         .userInfoEndpoint(endpoint -> endpoint.oidcUserService(appOidcUserService))
