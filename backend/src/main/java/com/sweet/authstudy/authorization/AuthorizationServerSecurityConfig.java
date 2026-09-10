@@ -86,7 +86,8 @@ public class AuthorizationServerSecurityConfig {
             ObjectProvider<OAuth2AuthorizationConsentService> consentServices,
             ObjectProvider<JWKSource<SecurityContext>> jwkSources,
             @Qualifier("oauthJwtEncoder") ObjectProvider<JwtEncoder> oauthJwtEncoders,
-            @Qualifier("oauthJwtDecoder") ObjectProvider<JwtDecoder> oauthJwtDecoders) throws Exception {
+            @Qualifier("oauthJwtDecoder") ObjectProvider<JwtDecoder> oauthJwtDecoders,
+            @Qualifier("oauthLogoutJwtDecoder") ObjectProvider<JwtDecoder> oauthLogoutJwtDecoders) throws Exception {
         JWKSource<SecurityContext> jwkSource = jwkSources.getIfAvailable();
         JwtEncoder oauthJwtEncoder = oauthJwtEncoders.getIfAvailable();
         JwtDecoder oauthJwtDecoder = oauthJwtDecoders.getIfAvailable();
@@ -104,7 +105,7 @@ public class AuthorizationServerSecurityConfig {
             OAuth2AuthorizationServerConfigurer authorizationServer =
                     OAuth2AuthorizationServerConfigurer.authorizationServer();
             OidcLogoutSuccessHandler logoutHandler = new OidcLogoutSuccessHandler(
-                    oauthJwtDecoder, oauthClients, properties, protocolEvents);
+                    oauthLogoutJwtDecoders.getObject(), oauthClients, properties, protocolEvents);
             http.setSharedObject(JwtEncoder.class, oauthJwtEncoder);
             http.setSharedObject(JwtDecoder.class, oauthJwtDecoder);
             http.setSharedObject(OAuth2TokenGenerator.class, tokenGenerator);

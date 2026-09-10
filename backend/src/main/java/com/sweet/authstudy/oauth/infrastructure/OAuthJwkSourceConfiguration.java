@@ -96,6 +96,21 @@ public class OAuthJwkSourceConfiguration {
         return decoder;
     }
 
+    @Bean("oauthLogoutJwtDecoder")
+    JwtDecoder oauthLogoutJwtDecoder(JWKSource<SecurityContext> jwkSource,
+                                     OAuthSecurityProperties properties, Clock clock) {
+        DefaultJWTProcessor<SecurityContext> processor = new DefaultJWTProcessor<>();
+        processor.setJWSKeySelector(new JWSVerificationKeySelector<>(JWSAlgorithm.RS256, jwkSource));
+        // Nimbus still verifies the RS256 signature. Only claim timestamp validation
+        // moves to the logout validator so an elapsed exp is not rejected twice.
+        processor.setJWTClaimsSetVerifier((claims, context) -> { });
+        NimbusJwtDecoder decoder = new NimbusJwtDecoder(processor);
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                new JwtIssuerValidator(properties.issuer().toString()),
+                new OidcLogoutTokenValidator(clock)));
+        return decoder;
+    }
+
     private OAuthSigningKey generate(OAuthPrivateKeyCipher cipher, Instant activatedAt) {
         try {
             KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");

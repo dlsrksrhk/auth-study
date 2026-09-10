@@ -871,31 +871,35 @@ class OAuthProtocolSecurityAcceptanceTest {
     }
 
     @Test
-    void rp_logout_rejects_expired_wrong_client_audience_subject_and_uri_without_redirect_or_session_loss()
+    void rp_logout_rejects_independently_invalid_claims_signature_client_and_redirect_without_session_loss()
             throws Exception {
         ProtocolFixture fixture = protocolFixture();
         ProtocolFixture other = protocolFixture();
         TokenSet tokens = issueTokens(fixture);
-        Instant authTime = jwtDecoder.decode(tokens.idToken()).getClaimAsInstant("auth_time");
-        String expired = signedIdToken(fixture.subject().toString(), fixture.clientId(), authTime,
-                Instant.now().minusSeconds(120), Instant.now().minusSeconds(60));
-        String wrongAudience = signedIdToken(fixture.subject().toString(), other.clientId(), authTime,
-                Instant.now(), Instant.now().plusSeconds(300));
-        String wrongSubject = signedIdToken(other.subject().toString(), fixture.clientId(), authTime,
-                Instant.now(), Instant.now().plusSeconds(300));
-
+        String wrongAudience = mutatedIdToken(tokens.idToken(), c -> c.put("aud", List.of(other.clientId())));
+        String wrongSubject = mutatedIdToken(tokens.idToken(), c -> c.put("sub", other.subject().toString()));
+        String wrongIssuer = mutatedIdToken(tokens.idToken(), c -> c.put("iss", "https://wrong-issuer.example"));
+        String wrongSid = mutatedIdToken(tokens.idToken(), c -> c.put("sid", UUID.randomUUID().toString()));
+        String wrongAuthTime = mutatedIdToken(tokens.idToken(), c -> c.put("auth_time", Instant.now().minusSeconds(600)));
+        String[] parts = tokens.idToken().split("\\.");
+        byte[] signature = Base64.getUrlDecoder().decode(parts[2]);
+        signature[0] ^= 1;
+        String wrongSignature = parts[0] + "." + parts[1] + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(signature);
         List<LogoutCase> cases = List.of(
-                new LogoutCase(expired, fixture.clientId(), fixture.postLogoutRedirectUri()),
                 new LogoutCase(tokens.idToken(), other.clientId(), fixture.postLogoutRedirectUri()),
-                new LogoutCase(wrongAudience, other.clientId(), fixture.postLogoutRedirectUri()),
+                new LogoutCase(wrongAudience, fixture.clientId(), fixture.postLogoutRedirectUri()),
                 new LogoutCase(wrongSubject, fixture.clientId(), fixture.postLogoutRedirectUri()),
+                new LogoutCase(wrongIssuer, fixture.clientId(), fixture.postLogoutRedirectUri()),
+                new LogoutCase(wrongSid, fixture.clientId(), fixture.postLogoutRedirectUri()),
+                new LogoutCase(wrongAuthTime, fixture.clientId(), fixture.postLogoutRedirectUri()),
+                new LogoutCase(wrongSignature, fixture.clientId(), fixture.postLogoutRedirectUri()),
                 new LogoutCase(tokens.idToken(), fixture.clientId(), PUBLIC_ORIGIN + "/unregistered"),
                 new LogoutCase("not.a.valid-jwt", fixture.clientId(), fixture.postLogoutRedirectUri()));
 
         for (LogoutCase invalid : cases) {
             MockHttpSession session = idpSession(fixture, tokens.idToken());
             MvcResult result = mockMvc.perform(logoutRequest(session, invalid.idTokenHint(),
-                            invalid.clientId(), invalid.postLogoutRedirectUri(), "unsafe\r\nLocation: injected"))
+                            invalid.clientId(), invalid.postLogoutRedirectUri(), "valid-state"))
                     .andExpect(status().isBadRequest())
                     .andExpect(header().doesNotExist("Location"))
                     .andExpect(forwardedUrl("/idp/error"))
@@ -905,6 +909,47 @@ class OAuthProtocolSecurityAcceptanceTest {
             assertThat(result.getResponse().getContentAsString())
                     .doesNotContain(invalid.idTokenHint()).doesNotContain("injected");
         }
+    }
+
+    @Test
+    void expired_hint_logs_out_only_its_current_bound_session_while_normal_decoder_remains_strict() throws Exception {
+        ProtocolFixture fixture = protocolFixture();
+        TokenSet tokens = issueTokens(fixture);
+        MockHttpSession bound = idpSession(fixture, tokens.idToken());
+        MockHttpSession other = idpSession(fixture, tokens.idToken(), false);
+        String expired = mutatedIdToken(tokens.idToken(), c -> {
+            c.put("iat", Instant.now().minusSeconds(7200));
+            c.put("exp", Instant.now().minusSeconds(3600));
+        });
+        assertThatThrownBy(() -> jwtDecoder.decode(expired)).isInstanceOf(JwtException.class);
+        assertThat(applicationContext.getBean("oauthLogoutJwtDecoder", JwtDecoder.class).decode(expired).getSubject())
+                .isEqualTo(fixture.subject().toString());
+        mockMvc.perform(get("/connect/logout").session(other)
+                        .queryParam("id_token_hint", expired).queryParam("client_id", fixture.clientId())
+                        .queryParam("post_logout_redirect_uri", fixture.postLogoutRedirectUri()))
+                .andExpect(status().isBadRequest()).andExpect(header().doesNotExist("Location"));
+        assertThat(other.isInvalid()).isFalse();
+        mockMvc.perform(get("/connect/logout")
+                        .queryParam("id_token_hint", expired).queryParam("client_id", fixture.clientId())
+                        .queryParam("post_logout_redirect_uri", fixture.postLogoutRedirectUri()))
+                .andExpect(status().isBadRequest()).andExpect(header().doesNotExist("Location"));
+        mockMvc.perform(get("/connect/logout").session(bound)
+                        .queryParam("id_token_hint", expired).queryParam("client_id", fixture.clientId())
+                        .queryParam("post_logout_redirect_uri", fixture.postLogoutRedirectUri()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location", fixture.postLogoutRedirectUri()));
+        assertThat(bound.isInvalid()).isTrue();
+    }
+
+    @Test
+    void rp_logout_rejects_unsafe_state_with_otherwise_valid_hint() throws Exception {
+        ProtocolFixture fixture = protocolFixture();
+        TokenSet tokens = issueTokens(fixture);
+        MockHttpSession session = idpSession(fixture, tokens.idToken());
+        mockMvc.perform(logoutRequest(session, tokens.idToken(), fixture.clientId(),
+                        fixture.postLogoutRedirectUri(), "unsafe\r\nLocation: injected"))
+                .andExpect(status().isBadRequest()).andExpect(header().doesNotExist("Location"));
+        assertThat(session.isInvalid()).isFalse();
     }
 
     @Test
@@ -1373,11 +1418,14 @@ class OAuthProtocolSecurityAcceptanceTest {
                 .param("state", state);
     }
 
-    private String signedIdToken(String subject, String audience, Instant authTime,
-                                 Instant issuedAt, Instant expiresAt) {
-        JwtClaimsSet claims = JwtClaimsSet.builder().issuer(ISSUER).subject(subject)
-                .audience(List.of(audience)).issuedAt(issuedAt).expiresAt(expiresAt)
-                .claim("auth_time", java.util.Date.from(authTime.truncatedTo(ChronoUnit.SECONDS))).build();
+    private String mutatedIdToken(String original, java.util.function.Consumer<Map<String, Object>> mutation) {
+        JwtClaimsSet claims = JwtClaimsSet.builder().claims(c -> {
+            c.putAll(jwtDecoder.decode(original).getClaims());
+            mutation.accept(c);
+            if (c.get("auth_time") instanceof Instant authTime) {
+                c.put("auth_time", java.util.Date.from(authTime));
+            }
+        }).build();
         return jwtEncoder.encode(JwtEncoderParameters.from(
                 JwsHeader.with(SignatureAlgorithm.RS256).build(), claims)).getTokenValue();
     }
