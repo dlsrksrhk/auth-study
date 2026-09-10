@@ -1,6 +1,6 @@
 # Reference App BFF
 
-독립 Spring Boot BFF의 Task 6 구현입니다. OIDC Authorization Code 로그인과 로컬 사용자 JIT·최초 관리자 지정, 현재 DB 상태와 권한을 반영하는 API, 요청 시 토큰 갱신 및 앱·IdP 로그아웃을 제공합니다. confidential client의 PKCE S256, 콜백 검증과 서버 세션 보안도 유지합니다. Java 21과 Docker Desktop이 필요합니다.
+독립 Spring Boot BFF의 Task 7 구현입니다. OIDC Authorization Code 로그인과 로컬 사용자 JIT·최초 관리자 지정, 현재 DB 상태와 권한을 반영하는 API, 요청 시 토큰 갱신 및 앱·IdP 로그아웃을 제공합니다. confidential client의 PKCE S256, 콜백 검증과 서버 세션 보안도 유지합니다. Java 21과 Docker Desktop이 필요합니다.
 
 ## 로컬 실행
 
@@ -156,3 +156,31 @@ git diff --check
 HTTP suite는 임시 포트의 Discovery/JWKS/token/UserInfo 서버와 실제 RSA 서명 token을 사용하고 실제 내장 BFF에 redirect를 자동 추적하지 않는 HTTP client로 접속합니다. 일반 `test` 프로필은 고정 provider metadata를 사용하므로 기존 JIT/bootstrap 회귀 테스트도 로컬 IdP 없이 실행됩니다. 기존 프로토콜 HTTP suite는 persistence 자동 구성을 제외합니다. OidcLocalLoginIntegrationTest와 LocalSessionLifecycleIntegrationTest는 실제 ReferenceApplication·서비스·JPA·PostgreSQL Testcontainer를 연결하여 콜백, JIT/bootstrap rollback, 다음 요청의 상태·권한 변경, API와 CSRF를 검증합니다. 테스트 DB 변경은 HTTP 요청에서 관찰할 수 있도록 커밋하며 로컬 개발 DB는 사용하지 않습니다.
 
 TokenLifecycleHttpIntegrationTest는 같은 HTTP·PostgreSQL fixture에서 단일 갱신, 실제 커밋 후 게시 전 로그아웃, 토큰 교환 중 로그아웃, 전체 작업 제한 이후 후속 토큰 폐기, 프로토콜·DB 실패를 latch로 검증합니다. 테스트 전용 transaction proxy 외부 gate를 사용하며 production 테스트 endpoint는 추가하지 않습니다. 실제 IdP와 브라우저를 연결한 E2E는 이번 Task 6에서 실행하지 않았습니다. 정확한 실행 결과와 한계는 [검증 보고서](../../docs/superpowers/reports/2026-09-10-reference-app-token-lifecycle-verification.md)에 기록합니다.
+
+## 로컬 사용자 관리 API
+
+`/bff/admin/**`는 현재 DB의 ACTIVE APP_ADMIN만 접근합니다. HR 관리자 snapshot만으로는 접근할 수 없습니다. 사용자 생성은 OIDC 최초 로그인 JIT로 유지하며 수동 생성·삭제와 HR 편집은 제공하지 않습니다. 모든 관리 응답은 `Cache-Control: no-store`입니다.
+
+로그인한 브라우저 세션을 `$browser`로 유지한 PowerShell 예시입니다. 실제 사용자 UUID를 넣으세요. PUT은 매번 상세를 다시 조회한 version과 유효한 CSRF·SPA Origin을 사용합니다.
+
+```powershell
+$base = 'http://rp.localhost:8180'
+$users = Invoke-RestMethod "$base/bff/admin/users?page=0&size=20&status=ACTIVE&role=APP_ADMIN" -WebSession $browser
+$userId = '<사용자 UUID>'
+$detail = Invoke-RestMethod "$base/bff/admin/users/$userId" -WebSession $browser
+$csrf = Invoke-RestMethod "$base/bff/csrf" -WebSession $browser
+$headers = @{ Origin = 'http://rp.localhost:3100'; 'X-CSRF-TOKEN' = $csrf.csrfToken }
+$body = @{ status = 'DISABLED'; version = $detail.version } | ConvertTo-Json
+Invoke-RestMethod "$base/bff/admin/users/$userId/status" -Method Put -WebSession $browser -Headers $headers -ContentType 'application/json' -Body $body
+$detail = Invoke-RestMethod "$base/bff/admin/users/$userId" -WebSession $browser
+$body = @{ roles = @('APP_USER', 'APP_ADMIN'); version = $detail.version } | ConvertTo-Json
+Invoke-RestMethod "$base/bff/admin/users/$userId/roles" -Method Put -WebSession $browser -Headers $headers -ContentType 'application/json' -Body $body
+```
+
+목록 page는 0부터, size는 1~100(기본 20)입니다. status·role은 AND 필터이고 정렬은 createdAt DESC, id ASC입니다. 목록은 items/page/size/totalElements/totalPages이며 issuer·subject는 상세 externalIdentity에만 포함됩니다. OAuth 토큰과 내부 인증 객체는 노출하지 않습니다.
+
+역할 전체 집합에는 APP_USER가 필수입니다. 같은 값·같은 version은 version/updatedAt을 바꾸지 않습니다. 로그인과 외부 snapshot 갱신도 version을 바꾸므로 `409 OPTIMISTIC_LOCK_CONFLICT`이면 상세를 재조회하고 변경 의도를 확인한 뒤 새 version으로 요청합니다. 자동 재시도하지 않습니다. `409 LAST_ACTIVE_ADMIN_REQUIRED`는 마지막 ACTIVE APP_ADMIN의 강등·비활성화가 거절되었다는 뜻입니다. 다른 활성 관리자가 있으면 자기 변경도 PUT 200으로 성공합니다. 권한 회수는 다음 요청부터 403, 비활성화는 다음 요청의 사용자 검사에서 세션 종료와 보호 API 401로 반영되며 `/bff/session`은 익명 200을 반환합니다.
+
+관리 변경은 기존 bootstrap singleton → 사용자 행 순서로 잠그고 actor 권한을 다시 확인합니다. 최초 관리자 지정·JIT 로그인과 공통 잠금으로 경합할 수 있습니다. READ_COMMITTED에서 PostgreSQL lock_timeout 3초, statement_timeout 5초, Spring 트랜잭션 timeout 10초를 적용하며 DB 설정은 해당 트랜잭션에만 유지합니다. DB 장애·잠금 시간 제한은 MVC에서 `503 SERVICE_UNAVAILABLE`과 전체 롤백으로 처리합니다. 필터의 익명/만료 401과 인가·CSRF·Origin 403은 기존 본문 계약을 유지하며 항상 Problem Details인 것은 아닙니다.
+
+실제 HTTP 관리 회귀는 `AppUserAdminHttpIntegrationTest`에서 같은 OIDC callback·PostgreSQL fixture로 검증합니다. 최신 명령·XML 합계·경쟁 검증·독립 검토 상태는 [사용자 관리 검증 보고서](../../docs/superpowers/reports/2026-09-10-reference-app-user-admin-verification.md)에 기록합니다. 관리자 SPA와 실제 브라우저 E2E는 후속 Task 9·10입니다.

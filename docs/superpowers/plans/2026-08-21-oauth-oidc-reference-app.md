@@ -418,6 +418,8 @@ Expected: PASS.
 
 ### Task 7: local 사용자 관리 API와 마지막 관리자 보호
 
+구현·검증 실행 완료이며 최종 독립 검토는 대기 중입니다. 승인된 [세부 설계](../specs/2026-09-10-reference-app-user-admin-design.md), [실행 계획](2026-09-10-reference-app-user-admin.md), [검증 기록](../reports/2026-09-10-reference-app-user-admin-verification.md)이 아래 초기 파일·명령 예시를 구체화합니다.
+
 **Files:**
 - Create: reference-app/backend/src/main/java/com/sweet/referenceapp/user/application/AppUserAdminService.java
 - Create: reference-app/backend/src/main/java/com/sweet/referenceapp/user/application/AppUserAdminCommands.java
@@ -438,31 +440,31 @@ Expected: PASS.
     PUT  /bff/admin/users/{userId}/status
     PUT  /bff/admin/users/{userId}/roles
 
-- [ ] **Step 1: local authorization과 last-admin 실패 테스트 작성**
+- [x] **Step 1: local authorization과 last-admin 실패 테스트 작성**
 
 APP_USER는 모든 /bff/admin/**에 403이어야 합니다. 자기 자신을 포함해 마지막 ACTIVE APP_ADMIN을 disable하거나 roles에서 APP_ADMIN을 제거하면 409 LAST_ACTIVE_ADMIN_REQUIRED입니다. 두 admin을 동시에 disable/demote해 active admin 0명이 되는 race도 막아야 합니다.
 
-- [ ] **Step 2: service/controller 부재 실패 확인**
+- [x] **Step 2: service/controller 부재 실패 확인**
 
 Run: cd reference-app/backend; .\gradlew.bat test --tests "*AppUserAdminIntegrationTest" --tests "*AppUserAdminConcurrencyIntegrationTest"
 
 Expected: FAIL.
 
-- [ ] **Step 3: row-lock mutation 구현**
+- [x] **Step 3: 공통 singleton 잠금 mutation 구현**
 
-role/status mutation은 active APP_ADMIN rows를 stable id order로 SELECT FOR UPDATE하고 결과 상태를 계산한 뒤 최소 한 명을 보장합니다. target version을 비교해 stale request는 409 OPTIMISTIC_LOCK_CONFLICT로 반환합니다. DISABLED 사용자의 기존 RP session은 다음 request에서 DB status recheck로 invalidate합니다.
+role/status mutation은 기존 bootstrap singleton을 먼저 잠그고 actor를 최신 조회하여 재인가한 뒤 target 사용자 행을 잠급니다. READ_COMMITTED, DB lock/statement timeout 3/5초, Spring timeout 10초를 적용하고 결과 상태에서 최소 한 명의 ACTIVE APP_ADMIN을 보장합니다. target version을 비교해 stale request는 409 OPTIMISTIC_LOCK_CONFLICT로 반환합니다. DISABLED 사용자의 기존 RP session은 다음 request에서 DB status recheck로 invalidate합니다.
 
-- [ ] **Step 4: controller와 security 구현**
+- [x] **Step 4: controller와 security 구현**
 
-AppUserAuthentication의 local APP_ADMIN authority만 사용하고 HR roles snapshot으로 API 접근을 허용하지 않습니다. response에는 issuer와 opaque subject를 표시할 수 있지만 OAuth token과 IdP internal id는 없습니다.
+OAuth2AuthenticationToken의 AppOidcUser와 요청별 DB 사용자 조회에서 얻은 local APP_ADMIN authority만 사용하고 HR roles snapshot으로 API 접근을 허용하지 않습니다. 상세 externalIdentity에만 issuer와 opaque subject를 표시하며 OAuth token과 IdP internal id는 없습니다.
 
-- [ ] **Step 5: 통합·동시성 테스트 통과**
+- [x] **Step 5: 통합·동시성 테스트 통과**
 
 Run: cd reference-app/backend; .\gradlew.bat test --tests "*AppUserAdminIntegrationTest" --tests "*AppUserAdminConcurrencyIntegrationTest"
 
 Expected: PASS with exactly one concurrent destructive mutation rejected.
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
     git add reference-app/backend/src/main/java/com/sweet/referenceapp/user/application/AppUserAdminService.java reference-app/backend/src/main/java/com/sweet/referenceapp/user/application/AppUserAdminCommands.java reference-app/backend/src/main/java/com/sweet/referenceapp/user/presentation/AppUserAdminController.java reference-app/backend/src/main/java/com/sweet/referenceapp/user/presentation/AppUserAdminRequests.java reference-app/backend/src/main/java/com/sweet/referenceapp/security/OAuth2ClientSecurityConfig.java reference-app/backend/src/test/java/com/sweet/referenceapp/user/AppUserAdminIntegrationTest.java reference-app/backend/src/test/java/com/sweet/referenceapp/user/AppUserAdminConcurrencyIntegrationTest.java
     git commit -m "feat: manage independent app users"

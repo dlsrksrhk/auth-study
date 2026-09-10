@@ -224,6 +224,14 @@ abstract class LocalLoginHttpTestSupport {
         return cookie(response);
     }
 
+    static String loginAs(String subject, boolean hrAdmin) throws Exception {
+        ISSUER.subject = subject;
+        ISSUER.userInfoClaims = Map.of("sub", subject, "name", "Reference " + subject,
+                "email", subject + "@example.test", HR_ROLES,
+                hrAdmin ? List.of("COMPANY_ADMIN") : List.of());
+        return login();
+    }
+
     static String csrfToken(String cookie) throws Exception {
         return JSON.readTree(send("GET", "/bff/csrf", cookie, "").body()).path("csrfToken").asText();
     }

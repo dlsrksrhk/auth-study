@@ -53,7 +53,7 @@
 - AppUserRepository 추가: `Optional<AppUser> findByIdForUpdate(UUID id)`, `long countActiveAdministrators()`, `AppUser updateAdministration(AppUser user)`.
 - 기존 repository MANDATORY 계약을 유지합니다. updateAdministration은 version 검사 후 상태·역할·updatedAt만 적용하고 flush하여 새 version을 반환합니다.
 
-- [ ] **Step 1: domain RED 작성·실행**
+- [x] **Step 1: domain RED 작성·실행**
 
 기존 AppUserTest에서 아래 각각을 독립 사례로 작성합니다.
 
@@ -74,7 +74,7 @@ assertThatThrownBy(() -> user.changeRoles(Set.of(AppRole.APP_ADMIN), now))
 
 Run: `.\gradlew.bat test --tests '*AppUserTest' --console=plain`. 새 메서드가 없는 실패를 확인합니다.
 
-- [ ] **Step 2: domain·entity 구현**
+- [x] **Step 2: domain·entity 구현**
 
 ```java
 public AppUser changeStatus(AppUserStatus next, Instant now) {
@@ -92,7 +92,7 @@ public AppUser changeRoles(Set<AppRole> next, Instant now) {
 
 entity는 status/roles/updatedAt만 변경하고 역할 collection은 기존 관리 collection에 차이만 반영합니다. 같은 값은 dirty하게 만들지 않습니다.
 
-- [ ] **Step 3: 실제 DB RED·adapter 구현**
+- [x] **Step 3: 실제 DB RED·adapter 구현**
 
 BootstrapIntegrationSupport를 상속하고 provisioning(AppUserProvisioningService), users(AppUserRepository)를 주입합니다.
 
@@ -118,7 +118,7 @@ where u.status='ACTIVE' and r.role='APP_ADMIN'
 
 상태만 변경, 역할만 변경, stale version, no-op version 보존, 예외 후 상태·역할·version 전체 롤백도 별도 사례로 검증합니다.
 
-- [ ] **Step 4: GREEN·커밋**
+- [x] **Step 4: GREEN·커밋**
 
 Run: `.\gradlew.bat test --tests '*AppUserTest' --tests '*AppUserAdminPersistenceIntegrationTest' --tests '*AppUserPersistenceIntegrationTest' --console=plain`.
 
@@ -139,7 +139,7 @@ Files의6개 파일만 명시 stage합니다. Commit: `feat: persist app user ad
 - AppUserAdminException extends RuntimeException: nested `Code {INVALID_REQUEST, FORBIDDEN, APP_USER_NOT_FOUND, OPTIMISTIC_LOCK_CONFLICT, LAST_ACTIVE_ADMIN_REQUIRED, SERVICE_UNAVAILABLE}`, constructor(Code), `code()`. 메시지는 code명이며 원본 입력을 보관하지 않습니다.
 - AppAdminTransactionSettings: 같은 DataSource의 JdbcTemplate과 `void apply()`.
 
-- [ ] **Step 1: 서비스 RED 작성·실행**
+- [x] **Step 1: 서비스 RED 작성·실행**
 
 BootstrapIntegrationSupport를 상속하고 AppLocalLoginService(login), 새 서비스(admin)를 주입합니다.
 
@@ -154,7 +154,7 @@ assertThatThrownBy(() -> admin.changeStatus(actor.id(), actor.id(), AppUserStatu
 
 Run: `.\gradlew.bat test --tests '*AppUserAdminIntegrationTest' --console=plain`.
 
-- [ ] **Step 2: 공통 변경 처리 구현**
+- [x] **Step 2: 공통 변경 처리 구현**
 
 public 메서드에 `@Transactional(isolation=Isolation.READ_COMMITTED, timeout=10)`을 적용합니다. 입력 null/음수/APP_USER 누락은 INVALID_REQUEST입니다. 아래 mutation은 UnaryOperator<AppUser>, expectedVersion은 요청 version입니다.
 
@@ -186,7 +186,7 @@ jdbc.execute("SET LOCAL statement_timeout = '5s'");
 
 DB 예외는 삼키거나 재시도하지 않고 Task 4에서 HTTP로 변환합니다.
 
-- [ ] **Step 3: 실제 DB 경쟁·timeout 검증**
+- [x] **Step 3: 실제 DB 경쟁·timeout 검증**
 
 전체 테스트를@Transactional로 감싸지 않습니다. 두 관리자를 fixture a/b로 만들고 시작 gate 뒤 각각 자기 비활성화를 호출합니다. 기존 awaitLatch를 사용하며 admin은 Spring proxy입니다.
 
@@ -214,7 +214,7 @@ assertThat(tx.execute(s -> users.countActiveAdministrators())).isEqualTo(1L);
 
 다른 연결로 singleton을 유지하여3초 lock timeout과 전체 DB 불변을 검증합니다. gate는 finally에서 해제하고 같은 연결 재사용 후 SHOW lock_timeout/statement_timeout이 사전 값으로 복구되는지 확인합니다. 부여·활성화와 회수·비활성화, bootstrap/login과 관리 변경, snapshot refresh와 관리 변경도 검증합니다. 역할 덮어쓰기와 잠금 역전이 없어야 합니다.
 
-- [ ] **Step 4: GREEN·커밋**
+- [x] **Step 4: GREEN·커밋**
 
 Run: `.\gradlew.bat test --tests '*AppUserAdminIntegrationTest' --tests '*AppUserAdminConcurrencyIntegrationTest' --tests '*AppAdminBootstrap*' --tests '*AppLocalLoginIntegrationTest' --console=plain`.
 
@@ -238,7 +238,7 @@ Files의5개 파일을 stage합니다. Commit: `feat: guard app administrator mu
 - repository: `AppUserPage findPage(int page, int size, AppUserStatus status, AppRole role)`.
 - service: `AppUserAdminPage list(AppUserAdminQuery query)`, `AppUserView detail(UUID id)`. 불존재는 APP_USER_NOT_FOUND입니다.
 
-- [ ] **Step 1: 조회 RED 작성·실행**
+- [x] **Step 1: 조회 RED 작성·실행**
 
 BootstrapIntegrationSupport를 상속하고 같은 createdAt의 여러 사용자, 두 role 사용자, disabled를 만듭니다. queries는 새 query service입니다.
 
@@ -254,7 +254,7 @@ AND 필터, 중복 없는 count, createdAt DESC/id ASC, 빈 결과/범위 밖 pa
 
 Run: `.\gradlew.bat test --tests '*AppUserAdminQueryIntegrationTest' --console=plain`.
 
-- [ ] **Step 2: 포트와 조회 구현**
+- [x] **Step 2: 포트와 조회 구현**
 
 list는 `@Transactional(readOnly=true, isolation=Isolation.REPEATABLE_READ)`, detail은 readOnly입니다. 공통 배타 잠금을 잡지 않습니다. 역할 필터는 EXISTS로 중복을 피합니다.
 
@@ -268,7 +268,7 @@ limit :size offset :offset
 
 미지정 필터 조건은 고정 SQL 조각에서 제외하고 모든 값은 bind합니다. offset은 `(long) page * size`입니다. 같은 WHERE의 count와 선택 UUID의 roles 포함 entity 조회를 같은 트랜잭션에서 수행합니다. 결과를 선택 UUID 순서로 재배열합니다. collection fetch join에 pagination을 적용하지 않습니다. totalPages는 `total / size + (total % size == 0 ? 0 : 1)`입니다. 목록은 List.copyOf로 방어 복사합니다.
 
-- [ ] **Step 3: snapshot 검증·GREEN·커밋**
+- [x] **Step 3: snapshot 검증·GREEN·커밋**
 
 count/목록 사이의 테스트 전용 gate에서 별도 연결로 추가 commit하여 같은 호출의 count/items가 같은 snapshot인지 확인합니다. 다음 호출에서는 추가분이 보여야 합니다. production hook은 추가하지 않습니다.
 
@@ -294,7 +294,7 @@ Files의7개 파일을 stage합니다. Commit: `feat: query app users with consi
 - Responses nested Summary/ExternalIdentity/Detail/Page는 spec의 JSON 필드·자료형을 사용합니다. static `detail(AppUserView)`, `page(AppUserAdminPage)`로 변환합니다.
 - actor는 CurrentAppUser.find(request)의 UUID이며 JSON·헤더로 받지 않습니다.
 
-- [ ] **Step 1: 입력 RED·parser 구현**
+- [x] **Step 1: 입력 RED·parser 구현**
 
 ```java
 var mapper = new ObjectMapper();
@@ -310,7 +310,7 @@ isObject/isTextual/isArray/isIntegralNumber/canConvertToLong과0 이상을 검�
 
 Run RED→GREEN: `.\gradlew.bat test --tests '*AppUserAdminRequestsTest' --console=plain`.
 
-- [ ] **Step 2: MVC RED·controller/DTO 구현**
+- [x] **Step 2: MVC RED·controller/DTO 구현**
 
 MockMvc standaloneSetup에서 실제 controller/advice와 service mock을 사용합니다. CurrentAppUser.set(request, actorView)로 actor를 주입하고 body의 actorId가 사용되지 않는지 verify합니다. DTO 키 집합, null snapshot, role 순서, version, no-store를 단언합니다.
 
@@ -327,7 +327,7 @@ ResponseEntity<?> changeStatus(@PathVariable UUID userId, @RequestBody JsonNode 
 
 클래스 RequestMapping은 `/bff/admin/users`입니다. 역할 PUT은 roles parser/service를, 목록 GET은 query service를, 상세 GET은 detail service를 사용합니다. 성공은200/no-store입니다. Instant는 ISO 표현, roles는 APP_USER→APP_ADMIN 순서입니다. 상세만 externalIdentity를 포함하고 raw principal을 직렬화하지 않습니다.
 
-- [ ] **Step 3: 오류와 security 구현**
+- [x] **Step 3: 오류와 security 구현**
 
 Advice는 `@RestControllerAdvice(assignableTypes=AppUserAdminController.class)`로 제한합니다. spec의 code/status를 switch로 고정하고 다음 방식으로 응답합니다.
 
@@ -348,7 +348,7 @@ status/safeDetail은 고정 매핑입니다. 입력 바인딩/JSON parse는400, 
 
 위 순서로 matcher를 추가합니다. AdminApiHeadersFilter는 `/bff/admin` 또는 `/bff/admin/` 하위만 chain 전 `response.setHeader("Cache-Control", "no-store")`를 적용합니다. BffOriginGuard보다 먼저 등록하고 servlet 자동 등록은 하지 않습니다. 기존 필터의 상대 순서를 유지합니다.
 
-- [ ] **Step 4: GREEN·커밋**
+- [x] **Step 4: GREEN·커밋**
 
 Run: `.\gradlew.bat test --tests '*AppUserAdminRequestsTest' --tests '*AppUserAdminControllerTest' --tests '*BffSessionSecurityIntegrationTest' --console=plain`.
 
@@ -366,7 +366,7 @@ Run: `.\gradlew.bat test --tests '*AppUserAdminRequestsTest' --tests '*AppUserAd
 
 **Interfaces:** package-private LocalLoginHttpTestSupport를 상속하므로 HTTP 테스트는 security 패키지입니다. `login(): String`, `csrfToken(String cookie): String`, `userId(String cookie): UUID`, `send(String method, String path, String cookie, String body, String... headers): HttpResponse<String>`를 사용합니다. send body는 null 대신 빈 문자열입니다.
 
-- [ ] **Step 1: 실제 로그인 fixture와 HTTP RED**
+- [x] **Step 1: 실제 로그인 fixture와 HTTP RED**
 
 실제 OIDC callback으로 admin과 일반 사용자를 로그인시킵니다. mock issuer subject를 구분하고 초기 bootstrap은 기존 COMPANY_ADMIN claim을 사용합니다. 검증 대상 권한 변경은 실제 관리 API로 수행합니다.
 
@@ -378,7 +378,7 @@ assertThat(denied.headers().firstValue("Cache-Control")).contains("no-store");
 
 익명, APP_USER, HR 관리자 snapshot만 보유한 APP_USER, 로컬 APP_ADMIN을 구분합니다. fixture 변경은 공통 클래스에 모아 고정 포트의 추가 Spring context를 피합니다.
 
-- [ ] **Step 2: API와 다음 요청 반영 검증**
+- [x] **Step 2: API와 다음 요청 반영 검증**
 
 adminCookie는 login 반환값, targetId는 대상 cookie의 userId(), version은 직전 상세 GET에서 가져옵니다. 두 번째 관리자 존재 여부를 명시하여 다음 요청을 검증합니다.
 
@@ -392,19 +392,19 @@ assertThat(JSON.readTree(changed.body()).path("version").asLong()).isGreaterThan
 
 권한 회수 후 admin API403, 비활성화 후 profile401/session 익명200을 확인합니다. 자기 변경은 PUT 자체200 뒤 다음 요청부터 반영됩니다. CSRF 누락/잘못된 Origin은403이며 DB는 불변입니다. JSON 키 집합과 기존 assertNoTokenLeak을 함께 확인합니다. issuer/subject는 상세 externalIdentity에만 있습니다.409의 OPTIMISTIC_LOCK_CONFLICT와 LAST_ACTIVE_ADMIN_REQUIRED를 구분합니다.
 
-- [ ] **Step 3: 실제 DB 장애·갱신 version 충돌**
+- [x] **Step 3: 실제 DB 장애·갱신 version 충돌**
 
 별도 연결로 singleton을 잡고 올바른 HTTP PUT을 보내503 SERVICE_UNAVAILABLE과 상태·역할·version 불변을 확인합니다. gate는 finally에서 해제합니다. 짧은 Access Token이 GET 전에 refresh될 수 있으므로 정상 변경은 직전 GET version을 사용합니다. 별도 사례에서는 snapshot refresh 뒤 이전 version PUT이409이고 외부 snapshot·roles를 덮어쓰지 않아야 합니다.
 
 Run: `.\gradlew.bat test --tests '*AppUserAdminHttpIntegrationTest' --console=plain`. 실패 원인·RED 증거를 남기고 필요한 최소 수정만 합니다. 필터 DB 장애와 MVC service timeout 응답을 구분합니다.
 
-- [ ] **Step 4: 전체 회귀**
+- [x] **Step 4: 전체 회귀**
 
 Run: `.\gradlew.bat test --console=plain`.
 
 종료 코드와 `build/test-results/test/TEST-*.xml`의 tests/failures/errors/skipped 합계를 기록합니다. 안정화 뒤 전체 suite1회를 기본으로 하고 추가 변경·실패 없이 반복하지 않습니다. 기존 재로그인·갱신·로그아웃을 포함합니다. IdP 미변경 시 그 suite를 재실행하지 않으며 실제 SPA 브라우저 E2E 완료를 주장하지 않습니다.
 
-- [ ] **Step 5: 문서·완료 기록·커밋**
+- [x] **Step 5: 문서·완료 기록·커밋**
 
 README에4개 API 예, 필요role, version 재조회,409 두 종류, 자기 변경, 다음 요청 반영,3/5/10초 제한과 로그인과의 공통 잠금 경합을 기록합니다. 상위 Task 7의 활성 관리자 행 전체 잠금과 옛 AppUserAuthentication은 승인 spec 및 실제 AppOidcUser 구조에 맞춰 정리합니다.
 
@@ -430,4 +430,6 @@ Task 1→2→3→4→5 순서입니다. 각 작업에 RED/GREEN과 독립 검토
 
 자체 검토에서 승인 spec의 모든 요구를 위 표에 배정했고 작업 간 메서드·타입명을 대조했습니다. 기존 HTTP fixture의 csrfToken(cookie), userId(cookie), 빈 문자열 body 계약을 확인했습니다. actor 재조회도 UUID 잠금 최신화를 사용하도록 구체화해 기존 영속성 컨텍스트 값의 재사용을 피했습니다. 미정 항목은 없습니다.
 
-현재는 계획 작성 단계이며 앱 코드·테스트는 변경하지 않았습니다. 실행 시 spec을 기준으로 판단하고 실제 검증 증거와 작업별 검토 결과를 기록합니다.
+2026-09-10: Task 1–5 구현 및 실행 검증을 마쳤습니다. 체크는 구현·실행 완료를 뜻하며 최종 독립 검토 승인을 뜻하지 않습니다. Task 1–4는 작업별 검토를 마쳤고 Task 5 및 전체 변경 최종 검토는 대기 중입니다. 정확한 실행 결과와 한계는 [검증 보고서](../reports/2026-09-10-reference-app-user-admin-verification.md)에 기록합니다.
+
+실행 결과: HTTP focused 8/8, 전체 Reference App 383/383(41 suites), failures/errors/skipped 모두 0이며 exit 0입니다. 최종 전체 명령은 `.\gradlew.bat test --console=plain`이고 56초에 완료했습니다. IdP·실제 SPA 브라우저 E2E는 미실행입니다.
