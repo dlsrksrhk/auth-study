@@ -72,7 +72,7 @@ public final class OAuthSessionRefreshCoordinator {
                                     authentication.getAuthorizedClientRegistrationId(),
                                     authentication,
                                     request);
-                    if (current == null) {
+                    if (current == null || current.getAccessToken().getExpiresAt() == null) {
                         state.close();
                         throw new SessionRefreshException();
                     }

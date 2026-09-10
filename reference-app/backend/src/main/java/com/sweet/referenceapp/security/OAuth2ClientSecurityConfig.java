@@ -51,8 +51,8 @@ public class OAuth2ClientSecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ReferenceSecurityProperties properties,
             ClientRegistrationRepository registrations, OAuth2AuthorizedClientRepository authorizedClients,
-            ServerProperties server, AppOidcUserService appOidcUserService, CurrentAppUserService currentUsers, OAuthSessionRefreshCoordinator coordinator) throws Exception {
-        var cleaner = new RpSessionCleaner(Boolean.TRUE.equals(server.getServlet().getSession().getCookie().getSecure()));
+            ServerProperties server, AppOidcUserService appOidcUserService, CurrentAppUserService currentUsers, OAuthSessionRefreshCoordinator coordinator, OAuthTokenRevoker revoker) throws Exception {
+        var cleaner = new RpSessionCleaner(Boolean.TRUE.equals(server.getServlet().getSession().getCookie().getSecure()), authorizedClients, revoker);
         var csrfTokens = new HttpSessionCsrfTokenRepository();
         csrfTokens.setHeaderName("X-CSRF-TOKEN");
         var requests = new SessionAuthorizationRequestRepository();

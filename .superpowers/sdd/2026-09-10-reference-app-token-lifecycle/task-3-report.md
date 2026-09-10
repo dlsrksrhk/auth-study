@@ -43,3 +43,29 @@ Race evidence:
 ## Self-review and limitations
 
 No unresolved correctness blocker found. DB work itself is not forcibly cancelled on a servlet timeout; its eventual candidate remains the worker's revocation responsibility. The executor bounds this to 32 workers and rejects excess work without queuing token-bearing jobs; rejection closes the requesting session. This preserves request wait bounds even if a dependency stalls. Existing Mockito JVM-sharing and pre-existing unchecked-test warnings remain; tests are green.
+
+## Fix round 1 (base 0906026)
+
+Both Important findings resolved:
+
+1. A retained access token without expiresAt now closes coordinator state and throws the fixed SessionRefreshException. The regression test invokes ensureFresh twice and verifies neither protocol nor snapshot service is called.
+2. RpSessionCleaner now optionally owns retained-token termination. New package constructor: RpSessionCleaner(boolean secureCookie, OAuth2AuthorizedClientRepository clients, OAuthTokenRevoker revoker). Existing clear(request,response) and legacy boolean constructor remain compatible. Security configuration supplies the new constructor to the shared CurrentAppUserFilter/OAuthSessionLifecycleFilter cleaner. Thus both before-refresh disabled cleanup and post-refresh failure cleanup use it.
+
+Task 4 handoff: reuse the three-argument cleaner for logout. It already captures and revokes the retained refresh token; do not add a second service-side revoke of that same retained token. Capture any full-logout ID-token/handoff data before invoking clear. Legacy callback-only cleaner construction remains unchanged in this round.
+
+Cleanup captures authentication before clearing the SecurityContext; under the same session mutex as publication it closes refresh state, captures the retained authorized client, and invalidates the session. Only that capture/termination owner retains revocation responsibility. Local SecurityContext, request-local user, and response cookie/cache cleanup finish before one bounded revoke outside the mutex. A concurrent cleaner sees an invalidated/empty session and cannot recapture the token. The refresh worker retains separate responsibility for an unpublished successor.
+
+Red evidence:
+- ./gradlew.bat test --tests '*OAuthSessionRefreshCoordinatorTest.absentExpiry*' --tests '*OAuthSessionLifecycleFilterTest.failureRevokes*' --console=plain
+- Output: four tests completed, four failed; missing expiry AssertionError and three WantedButNotInvoked revocation failures (exchange/database/disabled); BUILD FAILED in 5s.
+- Added explicit capture-order assertion failed all three failure cases before moving context cleanup after retained-client capture. This assertion checks real repository access occurs under mutex while original authentication is still available.
+
+Final green evidence:
+- ./gradlew.bat test --tests '*OAuthSessionRefreshCoordinatorTest' --tests '*OAuthSessionLifecycleFilterTest' --tests '*CurrentAppUserFilterTest' --tests '*OAuth2ClientConfigurationIntegrationTest' --tests '*ReferenceSecurityPropertiesTest' --tests '*BffSessionSecurityIntegrationTest' --console=plain
+- Output: BUILD SUCCESSFUL in 16s; 5 actionable tasks: 3 executed, 2 up-to-date.
+- XML totals: 95 tests across 6 suites, 0 failures, 0 errors, 0 skipped.
+- New real coordinator/repository/cleaner tests verify old-token revocation after exchange failure and acknowledged successor revocation after post-publication database/disabled failure. Revocation callbacks assert session invalid, no request session/context/user, expired cookie, and no held termination mutex. Repeated clear does not revoke again.
+- Eight concurrent cleaners verify exactly one retained-token revocation.
+- git diff --check passed. Existing JVM sharing and unchecked-test warnings are unchanged.
+
+Self-review: no unresolved finding. No protocol transport changes, merge, or push.

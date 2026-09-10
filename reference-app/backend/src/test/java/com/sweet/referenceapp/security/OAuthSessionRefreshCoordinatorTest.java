@@ -521,6 +521,29 @@ class OAuthSessionRefreshCoordinatorTest {
         }
     }
 
+    @Test
+    void absentExpiryTerminatesWithoutExchangeOrRetry() {
+        var malformed =
+                new OAuth2AuthorizedClient(
+                        registration,
+                        "subject",
+                        new OAuth2AccessToken(
+                                OAuth2AccessToken.TokenType.BEARER, "access", now, null),
+                        new OAuth2RefreshToken("old", now));
+        save(session, malformed);
+        var c = coordinator(Duration.ofSeconds(2));
+        for (int attempt = 0; attempt < 2; attempt++) {
+            assertThatThrownBy(
+                            () ->
+                                    c.ensureFresh(
+                                            request(session), new MockHttpServletResponse(), auth))
+                    .isInstanceOf(OAuthSessionRefreshCoordinator.SessionRefreshException.class)
+                    .hasMessage("Session refresh failed")
+                    .hasNoCause();
+        }
+        verifyNoInteractions(tokens, snapshots);
+    }
+
     OAuth2AuthorizedClient client(long seconds, String refresh) {
         return new OAuth2AuthorizedClient(
                 registration,

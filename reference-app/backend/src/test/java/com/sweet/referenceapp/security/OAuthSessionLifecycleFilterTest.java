@@ -178,6 +178,122 @@ class OAuthSessionLifecycleFilterTest {
         assertThat(req.getSession(false)).isNull();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"exchange", "database", "disabled"})
+    void failureRevokesRetainedTokenOnlyAfterLocalCleanupOutsideMutex(String failure)
+            throws Exception {
+        fixture.setup();
+        var req = request("/bff/profile");
+        var session = (MockHttpSession) req.getSession(false);
+        var mutex = new Object();
+        session.setAttribute(org.springframework.web.util.WebUtils.SESSION_MUTEX_ATTRIBUTE, mutex);
+        var old = fixture.client(30, "retained-old");
+        fixture.save(session, old);
+        if (failure.equals("exchange")) {
+            when(fixture.tokens.refresh(any(), any()))
+                    .thenThrow(new IllegalStateException("private-token"));
+        } else if (failure.equals("database")) {
+            when(users.find(any()))
+                    .thenThrow(
+                            new org.springframework.dao.DataAccessResourceFailureException(
+                                    "private-db"));
+        } else {
+            var user = fixture.view;
+            when(users.find(any()))
+                    .thenReturn(
+                            Optional.of(
+                                    new AppUserView(
+                                            user.id(),
+                                            user.issuer(),
+                                            user.subject(),
+                                            user.snapshot(),
+                                            AppUserStatus.DISABLED,
+                                            user.roles(),
+                                            user.createdAt(),
+                                            user.updatedAt(),
+                                            user.lastLoginAt(),
+                                            user.version())));
+        }
+        var expected = failure.equals("exchange") ? old : fixture.successor;
+        var response = new MockHttpServletResponse();
+        doAnswer(
+                        call -> {
+                            assertThat(Thread.holdsLock(mutex)).isFalse();
+                            assertThat(session.isInvalid()).isTrue();
+                            assertThat(req.getSession(false)).isNull();
+                            assertThat(SecurityContextHolder.getContext().getAuthentication())
+                                    .isNull();
+                            assertThat(CurrentAppUser.find(req)).isEmpty();
+                            assertThat(response.getHeader("Set-Cookie")).contains("Max-Age=0");
+                            return null;
+                        })
+                .when(fixture.revoker)
+                .revoke(fixture.registration, expected.getRefreshToken());
+        var observingRepository = spy(fixture.repository);
+        doAnswer(
+                        call -> {
+                            assertThat(Thread.holdsLock(mutex)).isTrue();
+                            assertThat(SecurityContextHolder.getContext().getAuthentication())
+                                    .isSameAs(fixture.auth);
+                            return call.callRealMethod();
+                        })
+                .when(observingRepository)
+                .loadAuthorizedClient(anyString(), any(), any());
+        var realCleaner = new RpSessionCleaner(false, observingRepository, fixture.revoker);
+        var realFilter =
+                new OAuthSessionLifecycleFilter(
+                        fixture.coordinator(java.time.Duration.ofSeconds(2)), users, realCleaner);
+        CurrentAppUser.set(req, fixture.view);
+        realFilter.doFilter(
+                req,
+                response,
+                (r, s) -> {
+                    throw new AssertionError("must stop");
+                });
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(session.isInvalid()).isTrue();
+        realCleaner.clear(req, response);
+        verify(fixture.revoker, times(1)).revoke(fixture.registration, expected.getRefreshToken());
+        verifyNoMoreInteractions(fixture.revoker);
+    }
+
+    @Test
+    void concurrentCleanersOwnRetainedTokenExactlyOnce() throws Exception {
+        var session = new MockHttpSession();
+        session.setAttribute(
+                org.springframework.web.util.WebUtils.SESSION_MUTEX_ATTRIBUTE, new Object());
+        var retained = fixture.client(30, "old");
+        fixture.save(session, retained);
+        var cleaner = new RpSessionCleaner(false, fixture.repository, fixture.revoker);
+        var callers = java.util.concurrent.Executors.newFixedThreadPool(8);
+        var start = new java.util.concurrent.CyclicBarrier(8);
+        try {
+            var results = new ArrayList<java.util.concurrent.Future<?>>();
+            for (int i = 0; i < 8; i++) {
+                results.add(
+                        callers.submit(
+                                () -> {
+                                    var req = request("/bff/profile");
+                                    req.setSession(session);
+                                    try {
+                                        start.await();
+                                        cleaner.clear(req, new MockHttpServletResponse());
+                                    } finally {
+                                        SecurityContextHolder.clearContext();
+                                    }
+                                    return null;
+                                }));
+            }
+            for (var result : results) result.get(2, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(session.isInvalid()).isTrue();
+            verify(fixture.revoker, times(1))
+                    .revoke(fixture.registration, retained.getRefreshToken());
+            verifyNoMoreInteractions(fixture.revoker);
+        } finally {
+            callers.shutdownNow();
+        }
+    }
+
     MockHttpServletRequest request(String path) {
         SecurityContextHolder.setContext(SecurityContextHolder.createEmptyContext());
         SecurityContextHolder.getContext().setAuthentication(fixture.auth);
