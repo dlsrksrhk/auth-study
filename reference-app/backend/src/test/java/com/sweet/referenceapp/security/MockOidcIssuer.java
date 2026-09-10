@@ -98,6 +98,10 @@ final class MockOidcIssuer implements AutoCloseable {
     private void userInfo(HttpExchange exchange) throws IOException {
         userInfoRequests.incrementAndGet();
         userInfoAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
+        if (fault.equals("userinfo-drop")) {
+            exchange.close();
+            return;
+        }
         if (fault.equals("userinfo-error")) {
             respond(exchange, 500, Map.of("error", "local_user_disabled"));
             return;
@@ -117,6 +121,10 @@ final class MockOidcIssuer implements AutoCloseable {
         tokenRequests.incrementAndGet();
         tokenForm = parameters(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
         clientAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
+        if (fault.equals("token-drop")) {
+            exchange.close();
+            return;
+        }
         if (fault.equals("token-delay")) {
             try { Thread.sleep(1000); } catch (InterruptedException exception) { Thread.currentThread().interrupt(); }
         }
@@ -174,6 +182,12 @@ final class MockOidcIssuer implements AutoCloseable {
         requestLatch.countDown();
         if (fault.equals("revoke-delay")) {
             try { Thread.sleep(1000); } catch (InterruptedException exception) { Thread.currentThread().interrupt(); }
+        }
+        if (fault.equals("revoke-body-stall")) {
+            exchange.sendResponseHeaders(200, 1024);
+            try { Thread.sleep(1000); } catch (InterruptedException exception) { Thread.currentThread().interrupt(); }
+            exchange.close();
+            return;
         }
         if (fault.equals("revoke-redirect")) {
             exchange.getResponseHeaders().set("Location", origin() + "/revoke");

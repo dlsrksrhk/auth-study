@@ -4,6 +4,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.*;
 import org.springframework.security.oauth2.core.*;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
@@ -29,6 +30,14 @@ class OAuthTokenRevokerTest {
             assertThatCode(() -> revoker.revoke(registration("id", "secret"), token())).doesNotThrowAnyException();
             assertThat(issuer.revocationRequestCount()).isEqualTo(1);
         }
+    }
+
+    @Test void bodyStallCannotExceedWholeRevocationDeadline() {
+        issuer.fault = "revoke-body-stall";
+        var started = System.nanoTime();
+        new OAuthTokenRevoker(properties(Duration.ofMillis(100))).revoke(registration("id", "secret"), token());
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(700);
+        assertThat(issuer.revocationRequestCount()).isEqualTo(1);
     }
 
     private OAuthTokenLifecycleProperties properties(Duration deadline) { return new OAuthTokenLifecycleProperties(Duration.ofMillis(100), Duration.ofMillis(500), Duration.ofSeconds(1), deadline, Duration.ofSeconds(60), 1000, URI.create(issuer.origin()+"/revoke"), URI.create(issuer.origin()+"/logout")); }

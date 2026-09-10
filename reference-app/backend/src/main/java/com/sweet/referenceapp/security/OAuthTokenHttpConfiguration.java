@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(OAuthTokenLifecycleProperties.class)
 public class OAuthTokenHttpConfiguration {
     @Bean OAuthTokenRevoker oauthTokenRevoker(OAuthTokenLifecycleProperties properties) { return new OAuthTokenRevoker(properties); }
-    @Bean OAuthSessionTokenService oauthSessionTokenService(OAuthTokenLifecycleProperties properties,
+    @Bean(destroyMethod = "close") OAuthSessionTokenService oauthSessionTokenService(OAuthTokenLifecycleProperties properties,
             OidcExternalIdentityMapper mapper, OAuthTokenRevoker revoker) {
         return new OAuthSessionTokenService(properties, mapper, revoker);
     }

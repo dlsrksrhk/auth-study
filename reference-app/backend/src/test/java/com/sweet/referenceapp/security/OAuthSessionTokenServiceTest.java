@@ -58,6 +58,20 @@ class OAuthSessionTokenServiceTest {
         assertThat(issuer.userInfoRequestCount()).isZero();
     }
 
+    @Test void droppedRefreshConnectionIsNeverRetried() {
+        issuer.fault = "token-drop";
+        assertThatThrownBy(() -> service().refresh(current(), principal())).isInstanceOf(IllegalStateException.class);
+        assertThat(issuer.tokenRequestCount()).isEqualTo(1);
+    }
+
+    @Test void droppedUserInfoConnectionIsNeverRetriedAndSuccessorIsRevoked() {
+        issuer.fault = "userinfo-drop";
+        assertThatThrownBy(() -> service().refresh(current(), principal())).isInstanceOf(IllegalStateException.class);
+        assertThat(issuer.tokenRequestCount()).isEqualTo(1);
+        assertThat(issuer.userInfoRequestCount()).isEqualTo(1);
+        assertThat(issuer.revocationRequestCount()).isEqualTo(1);
+    }
+
     private OAuthSessionTokenService service() { var p = properties(); return new OAuthSessionTokenService(p, new OidcExternalIdentityMapper(), new OAuthTokenRevoker(p)); }
     private OAuthTokenLifecycleProperties properties() { return new OAuthTokenLifecycleProperties(Duration.ofMillis(200), Duration.ofMillis(500), Duration.ofSeconds(2), Duration.ofSeconds(1), Duration.ofSeconds(60), 1000, URI.create(issuer.origin()+"/revoke"), URI.create(issuer.origin()+"/logout")); }
     private ClientRegistration registration() { return ClientRegistration.withRegistrationId("reference-app").clientId(MockOidcIssuer.CLIENT_ID).clientSecret(MockOidcIssuer.CLIENT_SECRET).clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC).authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE).redirectUri("https://rp/callback").scope("openid", "profile", "email").authorizationUri(issuer.origin()+"/authorize").tokenUri(issuer.origin()+"/token").userInfoUri(issuer.origin()+"/userinfo").userNameAttributeName("sub").clientName("test").build(); }

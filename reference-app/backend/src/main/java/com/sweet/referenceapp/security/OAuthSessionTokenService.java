@@ -1,11 +1,16 @@
 package com.sweet.referenceapp.security;
 
 import com.sweet.referenceapp.user.application.ExternalIdentityProfile;
-import java.net.http.HttpClient;
 import java.util.Map;
 import java.util.Objects;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.config.ConnectionConfig;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.core5.util.Timeout;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.http.converter.FormHttpMessageConverter;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.endpoint.OAuth2RefreshTokenGrantRequest;
@@ -15,7 +20,8 @@ import org.springframework.security.oauth2.client.http.OAuth2ErrorResponseErrorH
 import org.springframework.security.oauth2.core.oidc.OidcUserInfo;
 import org.springframework.web.client.RestClient;
 
-public final class OAuthSessionTokenService {
+public final class OAuthSessionTokenService implements AutoCloseable {
+    private final CloseableHttpClient http;
     private final RestClientRefreshTokenTokenResponseClient refreshClient;
     private final RestClient userInfoClient;
     private final OidcExternalIdentityMapper mapper;
@@ -23,9 +29,15 @@ public final class OAuthSessionTokenService {
 
     public OAuthSessionTokenService(OAuthTokenLifecycleProperties properties, OidcExternalIdentityMapper mapper, OAuthTokenRevoker revoker) {
         this.mapper = mapper; this.revoker = revoker;
-        var http = HttpClient.newBuilder().connectTimeout(properties.connectTimeout()).followRedirects(HttpClient.Redirect.NEVER).build();
-        var factory = new JdkClientHttpRequestFactory(http);
-        factory.setReadTimeout(properties.readTimeout());
+        var readTimeout = Timeout.ofMilliseconds(properties.readTimeout().toMillis());
+        var connectionConfig = ConnectionConfig.custom()
+                .setConnectTimeout(Timeout.ofMilliseconds(properties.connectTimeout().toMillis()))
+                .setSocketTimeout(readTimeout).build();
+        var requestConfig = RequestConfig.custom().setResponseTimeout(readTimeout).build();
+        http = HttpClients.custom().setDefaultRequestConfig(requestConfig)
+                .setConnectionManager(PoolingHttpClientConnectionManagerBuilder.create().setDefaultConnectionConfig(connectionConfig).build())
+                .disableAutomaticRetries().disableRedirectHandling().build();
+        var factory = new HttpComponentsClientHttpRequestFactory(http);
         var tokenRestClient = RestClient.builder().requestFactory(factory)
                 .messageConverters(converters -> { converters.clear(); converters.add(new FormHttpMessageConverter()); converters.add(new OAuth2AccessTokenResponseHttpMessageConverter()); })
                 .defaultStatusHandler(new OAuth2ErrorResponseErrorHandler()).build();
@@ -33,6 +45,8 @@ public final class OAuthSessionTokenService {
         refreshClient.setRestClient(tokenRestClient);
         userInfoClient = RestClient.builder().requestFactory(factory).build();
     }
+
+    @Override public void close() throws Exception { http.close(); }
 
     public RefreshCandidate refresh(OAuth2AuthorizedClient current, AppOidcUser principal) {
         OAuth2AuthorizedClient successor = null;
