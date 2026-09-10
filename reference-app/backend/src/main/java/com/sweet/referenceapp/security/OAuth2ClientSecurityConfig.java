@@ -26,12 +26,33 @@ import org.springframework.security.web.savedrequest.NullRequestCache;
 @EnableConfigurationProperties(ReferenceSecurityProperties.class)
 public class OAuth2ClientSecurityConfig {
     @Bean
+    org.springframework.boot.web.servlet.ServletListenerRegistrationBean<org.springframework.web.util.HttpSessionMutexListener> sessionMutexListener() {
+        return new org.springframework.boot.web.servlet.ServletListenerRegistrationBean<>(new org.springframework.web.util.HttpSessionMutexListener());
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    java.util.concurrent.ExecutorService sessionRefreshWorkers() {
+        return new java.util.concurrent.ThreadPoolExecutor(0, 32, 60, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.SynchronousQueue<>(), Thread.ofPlatform().daemon().name("session-refresh-", 0).factory(),
+                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+    }
+
+    @Bean
+    OAuthSessionRefreshCoordinator sessionRefreshCoordinator(OAuth2AuthorizedClientRepository clients,
+            OAuthSessionTokenService tokens, com.sweet.referenceapp.user.application.AppExternalSnapshotService snapshots,
+            OAuthTokenRevoker revoker, java.util.concurrent.ExecutorService sessionRefreshWorkers, OAuthTokenLifecycleProperties properties) {
+        return new OAuthSessionRefreshCoordinator(clients, tokens, snapshots, revoker, sessionRefreshWorkers,
+                java.time.Clock.systemUTC(), properties.refreshTimeout());
+    }
+
+    @Bean
     OAuth2AuthorizedClientRepository authorizedClients() { return new HttpSessionOAuth2AuthorizedClientRepository(); }
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ReferenceSecurityProperties properties,
             ClientRegistrationRepository registrations, OAuth2AuthorizedClientRepository authorizedClients,
-            ServerProperties server, AppOidcUserService appOidcUserService, CurrentAppUserService currentUsers) throws Exception {
+            ServerProperties server, AppOidcUserService appOidcUserService, CurrentAppUserService currentUsers, OAuthSessionRefreshCoordinator coordinator) throws Exception {
+        var cleaner = new RpSessionCleaner(Boolean.TRUE.equals(server.getServlet().getSession().getCookie().getSecure()));
         var csrfTokens = new HttpSessionCsrfTokenRepository();
         csrfTokens.setHeaderName("X-CSRF-TOKEN");
         var requests = new SessionAuthorizationRequestRepository();
@@ -51,8 +72,8 @@ public class OAuth2ClientSecurityConfig {
                 .securityContext(context -> context.securityContextRepository(new HttpSessionSecurityContextRepository()))
                 .sessionManagement(session -> session.sessionFixation(fixation -> fixation.changeSessionId()))
                 .csrf(csrf -> csrf.csrfTokenRepository(csrfTokens).csrfTokenRequestHandler(new HeaderOnlyCsrfTokenRequestHandler()))
-                .addFilterBefore(new CurrentAppUserFilter(currentUsers,
-                        new RpSessionCleaner(Boolean.TRUE.equals(server.getServlet().getSession().getCookie().getSecure()))), AuthorizationFilter.class)
+                .addFilterBefore(new OAuthSessionLifecycleFilter(coordinator, currentUsers, cleaner), AuthorizationFilter.class)
+                .addFilterBefore(new CurrentAppUserFilter(currentUsers, cleaner), OAuthSessionLifecycleFilter.class)
                 .addFilterBefore(new BffOriginGuard(properties), CsrfFilter.class)
                 .addFilterBefore(new OidcCallbackGuard(properties, requests, failureHandler), CsrfFilter.class)
                 .oauth2Login(login -> login.authorizedClientRepository(authorizedClients)

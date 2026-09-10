@@ -152,6 +152,15 @@ class CurrentAppUserFilterTest {
         verifyNoInteractions(users);
     }
 
+    @Test void logoutAndContinuationSkipDatabaseEvenDuringOutage() throws Exception {
+        login();
+        for (var path : List.of("/bff/logout", "/bff/logout/identity-provider", "/bff/logout/continue/ticket")) {
+            var req = request(); req.setMethod("POST"); req.setServletPath(path);
+            filter.doFilter(req, response, (r, s) -> {});
+        }
+        verifyNoInteractions(users);
+    }
+
     private OAuth2AuthenticationToken login() {
         var principal = new AppOidcUser(oidc(), local());
         var authentication = new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "reference-app");

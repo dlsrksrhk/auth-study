@@ -13,8 +13,16 @@ final class RpSessionCleaner {
 
     void clear(HttpServletRequest request, HttpServletResponse response) {
         SecurityContextHolder.clearContext();
+        request.removeAttribute(CurrentAppUser.class.getName());
         var session = request.getSession(false);
-        if (session != null) session.invalidate();
+        if (session != null) {
+            try {
+                synchronized (org.springframework.web.util.WebUtils.getSessionMutex(session)) {
+                    OAuthSessionRefreshCoordinator.close(session);
+                    session.invalidate();
+                }
+            } catch (IllegalStateException alreadyInvalid) { /* Already closed. */ }
+        }
         if (response.isCommitted()) return;
         // A failed login may already have rotated the ID and queued its cookie.
         var otherCookies = response.getHeaders(HttpHeaders.SET_COOKIE).stream()

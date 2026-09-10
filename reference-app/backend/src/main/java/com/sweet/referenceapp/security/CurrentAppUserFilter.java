@@ -28,7 +28,10 @@ final class CurrentAppUserFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getServletPath().startsWith("/bff/")
+        return request.getServletPath().startsWith("/bff/logout/continue/")
+                || ("POST".equals(request.getMethod()) && ("/bff/logout".equals(request.getServletPath())
+                    || "/bff/logout/identity-provider".equals(request.getServletPath())))
+                || !request.getServletPath().startsWith("/bff/")
                 || request.getDispatcherType() == DispatcherType.ERROR
                 || request.getDispatcherType() == DispatcherType.ASYNC;
     }

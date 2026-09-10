@@ -306,6 +306,7 @@ abstract class HttpSecurityTestSupport {
     static class Application {
         @Bean(destroyMethod = "close") MockOidcIssuer issuer() { return ISSUER; }
         @Bean AppLocalLoginService localLogin() { return mock(AppLocalLoginService.class); }
+        @Bean com.sweet.referenceapp.user.application.AppExternalSnapshotService snapshots() { return mock(com.sweet.referenceapp.user.application.AppExternalSnapshotService.class); }
         @Bean CurrentAppUserService currentUser() { return mock(CurrentAppUserService.class); }
     }
 

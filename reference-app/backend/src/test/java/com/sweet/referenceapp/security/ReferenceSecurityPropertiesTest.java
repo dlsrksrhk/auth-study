@@ -85,8 +85,10 @@ class ReferenceSecurityPropertiesTest {
     @TestComponent
     @Configuration(proxyBeanMethods = false)
     @EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class, HibernateJpaAutoConfiguration.class, FlywayAutoConfiguration.class})
-    @Import({OAuth2ClientSecurityConfig.class, BffLoginController.class, CsrfController.class, AppOidcUserService.class, OidcExternalIdentityMapper.class})
+    @Import({OAuthTokenHttpConfiguration.class, OAuth2ClientSecurityConfig.class, BffLoginController.class, CsrfController.class, AppOidcUserService.class, OidcExternalIdentityMapper.class})
     static class CookieApplication {
+        @org.springframework.context.annotation.Bean
+        com.sweet.referenceapp.user.application.AppExternalSnapshotService snapshots() { return org.mockito.Mockito.mock(com.sweet.referenceapp.user.application.AppExternalSnapshotService.class); }
         @org.springframework.context.annotation.Bean
         com.sweet.referenceapp.user.application.CurrentAppUserService currentUsers() {
             return org.mockito.Mockito.mock(com.sweet.referenceapp.user.application.CurrentAppUserService.class);
