@@ -11,6 +11,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class TokenLifecycleHttpIntegrationTest extends LocalLoginHttpTestSupport {
+    @org.springframework.beans.factory.annotation.Autowired OAuthTokenLifecycleProperties lifecycle;
     @Test void concurrentProfilesShareOneRefreshAndCommittedSnapshot() throws Exception {
         String cookie = expiringLogin();
         var before = jdbc.queryForMap("select * from app_user");
@@ -43,22 +44,27 @@ class TokenLifecycleHttpIntegrationTest extends LocalLoginHttpTestSupport {
         assertThat(ISSUER.revocationRequestCount()).isZero();
     }
 
-    @Test void logoutDuringTokenExchangeRejectsAndRevokesSuccessor() throws Exception {
+    @Test void logoutDuringTokenExchangeRejectsAndRevokesSuccessorBeforeDeadline() throws Exception {
         String cookie = expiringLogin();
         blockRefresh();
         ISSUER.requestLatch = new CountDownLatch(2);
         try (var pool = Executors.newSingleThreadExecutor()) {
+            // This starts before the coordinator can create its deadline, so it is a conservative bound.
+            long started = System.nanoTime();
             var profile = pool.submit(() -> send("GET", "/bff/profile", cookie, ""));
             await(ISSUER.refreshEntered);
             var out = logout("/bff/logout", cookie);
+            // Let the successor arrive immediately after logout, without waiting for the owner request.
+            ISSUER.refreshRelease.countDown();
             assertThat(out.statusCode()).isEqualTo(204);
             assertDeletion(out);
             assertNoTokenLeak(out);
             assertThat(profile.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(401);
-            assertTerminated(cookie);
-            ISSUER.refreshRelease.countDown();
             await(ISSUER.requestLatch);
             assertRevokedPair();
+            // Both the owner failure and successor receipt/revocation must precede even this earlier bound.
+            assertThat(System.nanoTime() - started).isLessThan(lifecycle.refreshTimeout().toNanos());
+            assertTerminated(cookie);
         } finally { ISSUER.refreshRelease.countDown(); }
     }
 
@@ -110,6 +116,7 @@ class TokenLifecycleHttpIntegrationTest extends LocalLoginHttpTestSupport {
     void protocolFailureTerminatesSessionWithoutBusinessEntryOrRetry(String fault) throws Exception {
         String cookie = expiringLogin();
         String csrf = csrfToken(cookie);
+        int infos = ISSUER.userInfoRequestCount();
         ISSUER.fault = fault;
         ISSUER.requestLatch = new CountDownLatch(fault.equals("token-error") ? 1 : 2);
         var response = send("POST", "/bff/test-mutate", cookie, "", "Origin", SPA, "X-CSRF-TOKEN", csrf);
@@ -120,6 +127,7 @@ class TokenLifecycleHttpIntegrationTest extends LocalLoginHttpTestSupport {
         await(ISSUER.requestLatch);
         assertThat(ISSUER.refreshRequestCount()).isEqualTo(1);
         assertTerminated(cookie);
+        assertThat(ISSUER.userInfoRequestCount() - infos).isEqualTo(fault.equals("token-error") ? 0 : 1);
         if (!fault.equals("token-error")) assertRevokedPair();
     }
 

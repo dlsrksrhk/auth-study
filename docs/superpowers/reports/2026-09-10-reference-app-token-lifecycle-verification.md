@@ -12,12 +12,12 @@
 | --- | --- | --- | --- | --- |
 | `reference-app/backend` | `.\gradlew.bat test --tests '*ReferenceLogoutIntegrationTest.fullLogoutReturnsOpaqueOneUseContinuationAndFixedRedirect' --console=plain` | 1 | 1 / 1 / 0 / 0 | 절대 BFF origin 단언이 기존 상대 URL에서 실패, 수정 전 RED |
 | `reference-app/backend` | `.\gradlew.bat test --tests '*ReferenceLogoutIntegrationTest' --console=plain` | 0 | 5 / 0 / 0 / 0 | 설정 origin 수정 후 GREEN, Host·Forwarded·query 오염 검증 포함 |
-| `reference-app/backend` | `.\gradlew.bat test --tests '*TokenLifecycleHttpIntegrationTest' --console=plain` | 0 | 12 / 0 / 0 / 0 | 새 HTTP 경쟁·실패 통합 검증 |
-| `reference-app/backend` | `.\gradlew.bat clean test --console=plain` | 0 | 270 / 0 / 0 / 0 | 34 suites, 6 Gradle tasks 모두 실행, 46초 |
+| `reference-app/backend` | `.\gradlew.bat test --tests '*TokenLifecycleHttpIntegrationTest' --console=plain` | 0 | 12 / 0 / 0 / 0 | 검토 보강 후 재검증, 29초 |
+| `reference-app/backend` | `.\gradlew.bat clean test --console=plain` | 0 | 270 / 0 / 0 / 0 | 검토 보강 후 최종 34 suites, 6 Gradle tasks 모두 실행, 1분 7초 |
 | `backend` | `.\gradlew.bat test --console=plain` | 0 | 486 / 0 / 0 / 0 | 61 suites, 5 Gradle tasks 모두 UP-TO-DATE, 12초 |
 | 저장소 worktree 루트 | `git diff --check` | 0 | 해당 없음 | whitespace 오류 없음 |
 
-Reference App 최종 XML 작성 시각은 13:20:28 KST입니다. IdP XML은 앞선 Task 5 전체 실행의 13:10:31 KST 결과입니다. 최종 IdP 명령은 입력 변경이 없어서 재실행하지 않았으며, 486개를 이번 명령에서 새로 실행했다고 주장하지 않습니다. 이번 Task 6에서는 IdP 소스·테스트를 변경하지 않았습니다.
+Reference App 최종 XML 작성 시각은 검토 보강 후 13:31:23 KST입니다. 최초 전체 실행도 13:20:28 KST에 270개가 통과했습니다. IdP XML은 앞선 Task 5 전체 실행의 13:10:31 KST 결과입니다. 최종 IdP 명령은 입력 변경이 없어서 재실행하지 않았으며, 486개를 이번 명령에서 새로 실행했다고 주장하지 않습니다. 이번 Task 6에서는 IdP 소스·테스트를 변경하지 않았고 검토 보강 후에도 IdP 명령을 불필요하게 반복하지 않았습니다.
 
 Docker/PostgreSQL 환경 문제는 없었습니다. 초기 절대 URL 실패는 환경 문제가 아닌 assertion 실패였습니다. 전체 빌드에는 기존 CurrentAppUserFilterTest의 unchecked 컴파일 알림과 JVM class-sharing 경고가 있었으나 실패는 없었습니다.
 
@@ -28,15 +28,19 @@ Docker/PostgreSQL 환경 문제는 없었습니다. 초기 절대 URL 실패는 
 | 사례 | 제어 방법 | 확인한 결과 |
 | --- | --- | --- |
 | 동일 세션 8개 profile 요청 | 요청 시작 latch와 mock token 응답 latch | refresh 1회·UserInfo 증가 1회, 전부 200과 새 외부 이름, 로컬 roles/status/createdAt/lastLoginAt 보존, updatedAt 변경 |
-| token 교환 중 앱 logout | issuer가 요청을 수신한 뒤 응답을 보류 | logout 204·쿠키 삭제, 대기 profile 401, 원래/후속 Refresh Token 각각 1회 폐기, 이전 세션 복원 없음 |
+| token 교환 중 앱 logout | issuer가 요청을 수신한 뒤 보류하고 logout 응답 직후 즉시 응답 해제 | logout 204·쿠키 삭제, 대기 profile 401과 원래/후속 Refresh Token 각각 1회 폐기를 설정 deadline 이전에 관찰, 이전 세션 복원 없음 |
 | DB 커밋 후 게시 전 logout | 테스트 전용 외부 proxy가 실제 transactional service 반환 후 보류 | 활성 트랜잭션 없음 단언, 별도 JDBC 연결에서 변경값 조회 후 logout, 커밋된 사본 유지·세션 401·후속 토큰 폐기 |
 | 전체 작업 deadline 이후 token 도착 | token 응답 latch를 HTTP 실패 응답 확인까지 닫음 | 1500ms 테스트 작업 상한으로 401·쿠키 삭제, 이후 token 응답을 풀면 후속 토큰 폐기, 새 세션 없음 |
-| invalid_grant / UserInfo 오류 / numeric·missing·불일치 sub | 실제 mock endpoint의 오류·원본 JSON | 보호 POST 401, 업무 probe 진입 0, cookie 삭제, session 익명 200·profile 401, 재시도 없음 |
+| invalid_grant / UserInfo 오류 / numeric·missing·불일치 sub | 실제 mock endpoint의 오류·원본 JSON | 보호 POST 401, 업무 probe 진입 0, cookie 삭제, session 익명 200·profile 401, refresh 1회, UserInfo 증가량은 invalid_grant 0회·나머지 1회 |
 | session endpoint 갱신 실패 | token endpoint invalid_grant | 직접 익명 200·cookie 삭제, 후속 보호 API 401 |
 | 실제 DB 저장 실패 | 테스트 동안만 PostgreSQL CHECK constraint 추가 | 새 사본 UPDATE 실패·롤백, 기존 DB 전체 상태 보존, 원래/후속 token 폐기, 업무 진입 0 |
 | 갱신 제외 및 CSRF/Origin 거절 | 만료 임박 토큰으로 csrf/login/continuation/full logout 및 잘못된 POST | token·UserInfo 증가 없음, 업무 진입 0 |
 
 경쟁 테스트에는 임의 sleep을 넣지 않았습니다. latch와 제한된 Future 대기를 사용하며 실패 시에도 gate를 해제합니다. DB 커밋 이후 gate는 transaction 안의 repository 호출을 멈추는 방식이 아닙니다. 실제 Spring transaction proxy 바깥에 테스트 전용 decorator를 두고, transaction 종료와 다른 연결에서 보이는 커밋을 함께 검증합니다. production 클래스에는 테스트 hook이나 endpoint를 추가하지 않았습니다.
+
+검토 후 token 교환 중 logout 사례는 profile Future를 기다리기 전에 token 응답 gate를 즉시 해제하도록 보강했습니다. 요청 제출 이전의 monotonic 시각부터 profile 401과 후속 token 폐기까지 모두 관찰한 시간이 주입된 refresh-timeout보다 짧음을 단언합니다. 이 시작 시각은 coordinator의 deadline 설정보다 이르므로 deadline-only 통과를 배제하는 보수적인 상한입니다. 별도의 deadline 이후 도착 테스트는 유지합니다.
+
+최종 전체 실행에서 보강된 `logoutDuringTokenExchangeRejectsAndRevokesSuccessorBeforeDeadline`의 JUnit testcase 전체 소요 시간은 0.126초였습니다. 내부의 deadline 비교 단언은 실제 주입된 1500ms 설정을 사용하며, 이 JUnit 소요 시간과 혼동하지 않습니다. 프로토콜 오류 사례도 원래 로그인 UserInfo 횟수를 제외한 증가량을 검사하여 invalid_grant는 0회, UserInfo 오류·원본 sub 검증 실패는 각각 1회임을 확인합니다.
 
 공통 HTTP fixture의 작업 상한은 1500ms, read 상한은 5초로 override하여 deadline 뒤 token 도착을 실제 HTTP로 재현합니다. 기본 운영값 2초 연결·3초 응답·10초 갱신·3초 revocation은 변경하지 않았습니다. 같은 고정 포트의 하위 테스트마다 별도 Spring context를 만들지 않도록 설정과 decorator를 공통 fixture에 두었습니다.
 
