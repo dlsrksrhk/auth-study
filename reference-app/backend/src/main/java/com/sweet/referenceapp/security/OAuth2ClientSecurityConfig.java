@@ -26,6 +26,19 @@ import org.springframework.security.web.savedrequest.NullRequestCache;
 @EnableConfigurationProperties(ReferenceSecurityProperties.class)
 public class OAuth2ClientSecurityConfig {
     @Bean
+    ReferenceLogoutService referenceLogoutService(LogoutHandoffStore handoffs, OAuth2AuthorizedClientRepository clients,
+            OAuthTokenRevoker revoker, ServerProperties server) {
+        return new ReferenceLogoutService(handoffs, clients,
+                new RpSessionCleaner(Boolean.TRUE.equals(server.getServlet().getSession().getCookie().getSecure()), clients, revoker));
+    }
+
+    @Bean(destroyMethod = "close")
+    LogoutHandoffStore logoutHandoffStore(OAuthTokenLifecycleProperties lifecycle, ReferenceSecurityProperties security) {
+        return new LogoutHandoffStore(lifecycle.endSessionUri(), security.spaOrigin().resolve("/logged-out"),
+                java.time.Clock.systemUTC(), lifecycle.handoffTtl(), lifecycle.handoffCapacity());
+    }
+
+    @Bean
     org.springframework.boot.web.servlet.ServletListenerRegistrationBean<org.springframework.web.util.HttpSessionMutexListener> sessionMutexListener() {
         return new org.springframework.boot.web.servlet.ServletListenerRegistrationBean<>(new org.springframework.web.util.HttpSessionMutexListener());
     }
@@ -61,7 +74,7 @@ public class OAuth2ClientSecurityConfig {
                         .requestMatchers(HttpMethod.TRACE, "/**").denyAll()
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.GET, "/bff/login", "/bff/csrf", "/bff/session",
-                                "/oauth2/authorization/reference-app", "/login/oauth2/code/reference-app").permitAll()
+                                "/oauth2/authorization/reference-app", "/login/oauth2/code/reference-app", "/bff/logout/continue/*").permitAll()
                         .requestMatchers("/bff/**").authenticated()
                         .anyRequest().denyAll())
                 .formLogin(AbstractHttpConfigurer::disable)

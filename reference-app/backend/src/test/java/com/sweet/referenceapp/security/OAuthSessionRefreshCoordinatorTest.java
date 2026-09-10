@@ -92,6 +92,16 @@ class OAuthSessionRefreshCoordinatorTest {
     }
 
     @Test
+    void closeBeforeFirstRefreshPreventsAnyExchangeInLogoutCaptureCleanupGap() {
+        save(session, client(30, "old"));
+        OAuthSessionRefreshCoordinator.close(session);
+        assertThatThrownBy(() -> coordinator(Duration.ofSeconds(1)).ensureFresh(request(session), new MockHttpServletResponse(), auth))
+                .isInstanceOf(OAuthSessionRefreshCoordinator.SessionRefreshException.class);
+        verifyNoInteractions(tokens, snapshots, revoker);
+        assertThat(session.isInvalid()).isFalse();
+    }
+
+    @Test
     void eightRequestsShareOneExchangeAndPublishedResult() throws Exception {
         save(session, client(30, "old"));
         var entered = new CountDownLatch(1);

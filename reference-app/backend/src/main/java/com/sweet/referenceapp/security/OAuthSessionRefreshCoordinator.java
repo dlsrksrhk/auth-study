@@ -162,7 +162,11 @@ public final class OAuthSessionRefreshCoordinator {
         try {
             synchronized (WebUtils.getSessionMutex(session)) {
                 var state = (State) session.getAttribute(ATTRIBUTE);
-                if (state != null) state.close();
+                if (state == null) {
+                    state = new State(WebUtils.getSessionMutex(session));
+                    session.setAttribute(ATTRIBUTE, state);
+                }
+                state.close();
             }
         } catch (IllegalStateException invalid) {
             /* Already closed. */

@@ -96,6 +96,7 @@ abstract class LocalLoginHttpTestSupport {
         registry.add("server.port", () -> PORT);
         registry.add("reference.security.bff-origin", () -> BFF);
         registry.add("reference.security.spa-origin", () -> SPA);
+        registry.add("reference.token-lifecycle.revocation-uri", () -> ISSUER.origin() + "/revoke");
         String provider = "spring.security.oauth2.client.provider.reference-app.";
         registry.add(provider + "issuer-uri", ISSUER::origin);
         registry.add(provider + "authorization-uri", () -> ISSUER.origin() + "/authorize");
@@ -178,6 +179,14 @@ abstract class LocalLoginHttpTestSupport {
         var response = callback(pending, "code=valid-code&state=" + pending.state());
         assertThat(response.headers().firstValue("Location")).contains(SPA + "/");
         return cookie(response);
+    }
+
+    static String csrfToken(String cookie) throws Exception {
+        return JSON.readTree(send("GET", "/bff/csrf", cookie, "").body()).path("csrfToken").asText();
+    }
+
+    static HttpResponse<String> logout(String path, String cookie) throws Exception {
+        return send("POST", path, cookie, "", "Origin", SPA, "X-CSRF-TOKEN", csrfToken(cookie));
     }
 
     static void assertNoTokenLeak(HttpResponse<String> response) {
