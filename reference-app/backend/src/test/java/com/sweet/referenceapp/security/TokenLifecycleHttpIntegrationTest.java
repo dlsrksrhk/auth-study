@@ -14,6 +14,100 @@ class TokenLifecycleHttpIntegrationTest extends LocalLoginHttpTestSupport {
     @org.springframework.beans.factory.annotation.Autowired OAuthTokenLifecycleProperties lifecycle;
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
+    void protectedRequestDuringCallbackCannotRefreshOldClientOrCancelLogin(boolean callbackFails) throws Exception {
+        String oldCookie = expiringLogin();
+        var pending = begin(oldCookie);
+        blockRefresh();
+        ISSUER.codeEntered = new CountDownLatch(1);
+        ISSUER.codeRelease = new CountDownLatch(1);
+        ISSUER.initialAccessTokenLifetime = 300;
+        if (callbackFails) ISSUER.fault = "code-error";
+        ISSUER.requestLatch = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            try {
+                var old = pool.submit(() -> send("GET", "/bff/profile", oldCookie, ""));
+                await(ISSUER.refreshEntered);
+                var login = pool.submit(() -> callback(pending, "code=valid-code&state=" + pending.state()));
+                await(ISSUER.codeEntered);
+                var during = send("GET", "/bff/profile", oldCookie, "");
+                assertThat(ISSUER.refreshRequestCount()).isEqualTo(1);
+                assertThat(during.statusCode()).isEqualTo(401);
+                assertThat(during.headers().allValues("Set-Cookie")).noneMatch(c -> c.startsWith("RP_SESSION="));
+                var sessionDuring = send("GET", "/bff/session", oldCookie, "");
+                assertThat(sessionDuring.body()).isEqualTo("{\"authenticated\":false}");
+                assertThat(ISSUER.refreshRequestCount()).isEqualTo(1);
+                ISSUER.codeRelease.countDown();
+                var completed = login.get(5, TimeUnit.SECONDS);
+                assertThat(completed.statusCode()).isEqualTo(302);
+                String newCookie = callbackFails ? null : cookie(completed);
+                if (callbackFails) {
+                    assertThat(completed.headers().firstValue("Location")).contains(SPA + "/login-error?code=oidc_login_failed");
+                    assertDeletion(completed);
+                    assertTerminated(oldCookie);
+                } else {
+                    assertThat(completed.headers().firstValue("Location")).contains(SPA + "/");
+                    assertThat(newCookie).isNotEqualTo(oldCookie);
+                    assertThat(send("GET", "/bff/test-client?exchange=3", newCookie, "").body())
+                            .contains("\"matchesExpectedClient\":true");
+                }
+                ISSUER.refreshRelease.countDown();
+                var stale = old.get(5, TimeUnit.SECONDS);
+                assertThat(stale.statusCode()).isEqualTo(401);
+                assertThat(stale.headers().allValues("Set-Cookie")).noneMatch(c -> c.startsWith("RP_SESSION="));
+                await(ISSUER.requestLatch);
+                assertThat(ISSUER.revokedTokens).containsExactly("test-refresh-token-refreshed");
+                assertThat(ISSUER.refreshRequestCount()).isEqualTo(1);
+                if (!callbackFails)
+                    assertThat(send("GET", "/bff/test-client?exchange=3", newCookie, "").body())
+                            .contains("\"matchesExpectedClient\":true");
+            } finally {
+                ISSUER.codeRelease.countDown();
+                ISSUER.refreshRelease.countDown();
+            }
+        }
+    }
+
+    @Test void logoutDuringCallbackKeepsRetainedTokenOwnershipAndPreventsPublication() throws Exception {
+        String cookie = expiringLogin();
+        String csrf = csrfToken(cookie);
+        var pending = begin(cookie);
+        blockRefresh();
+        ISSUER.codeEntered = new CountDownLatch(1);
+        ISSUER.codeRelease = new CountDownLatch(1);
+        ISSUER.requestLatch = new CountDownLatch(2);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            try {
+                var old = pool.submit(() -> send("GET", "/bff/profile", cookie, ""));
+                await(ISSUER.refreshEntered);
+                var login = pool.submit(() -> callback(pending, "code=valid-code&state=" + pending.state()));
+                await(ISSUER.codeEntered);
+                var during = send("GET", "/bff/profile", cookie, "");
+                assertThat(ISSUER.refreshRequestCount()).isEqualTo(1);
+                assertThat(during.statusCode()).isEqualTo(401);
+                var logout = send("POST", "/bff/logout", cookie, "", "Origin", SPA, "X-CSRF-TOKEN", csrf);
+                assertThat(logout.statusCode()).isEqualTo(204);
+                assertDeletion(logout);
+                assertThat(ISSUER.revokedTokens).containsExactly("test-refresh-token");
+                ISSUER.codeRelease.countDown();
+                var failedLogin = login.get(5, TimeUnit.SECONDS);
+                assertThat(failedLogin.statusCode()).isEqualTo(302);
+                assertThat(failedLogin.headers().firstValue("Location")).contains(SPA + "/login-error?code=oidc_login_failed");
+                assertThat(failedLogin.headers().allValues("Set-Cookie")).noneMatch(c -> c.startsWith("RP_SESSION="));
+                ISSUER.refreshRelease.countDown();
+                assertThat(old.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(401);
+                await(ISSUER.requestLatch);
+                assertRevokedPair();
+                assertTerminated(cookie);
+                assertThat(ISSUER.refreshRequestCount()).isEqualTo(1);
+            } finally {
+                ISSUER.codeRelease.countDown();
+                ISSUER.refreshRelease.countDown();
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
     void sameSessionReloginSurvivesOldRefreshSuccessAndFailure(boolean failure) throws Exception {
         String oldCookie = expiringLogin();
         assertThat(createdSessions).hasSize(1);

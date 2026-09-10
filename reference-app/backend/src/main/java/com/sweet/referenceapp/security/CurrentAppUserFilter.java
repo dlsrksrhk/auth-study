@@ -39,6 +39,13 @@ final class CurrentAppUserFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
+        // Retain the session principal/client for logout, but pause protected work while
+        // a callback is replacing that login. A missing local user must not cancel the callback.
+        if (RpLoginGeneration.isLoginInProgress(request)) {
+            RpSessionCleaner.clearRequest(request);
+            chain.doFilter(request, response);
+            return;
+        }
         var authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || authentication instanceof AnonymousAuthenticationToken) {
             chain.doFilter(request, response);

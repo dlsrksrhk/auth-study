@@ -8,6 +8,7 @@ import org.springframework.web.util.WebUtils;
 final class RpLoginGeneration {
     private static final String KEY = RpLoginGeneration.class.getName();
     private static final String LOGIN = KEY + ".LOGIN";
+    private static final String IN_PROGRESS = KEY + ".IN_PROGRESS";
     private record Binding(HttpSession session, Object generation) {}
 
     static void capture(HttpServletRequest request) {
@@ -37,8 +38,21 @@ final class RpLoginGeneration {
     static void beginLogin(HttpServletRequest request) {
         withCurrent(request, () -> {
             advance(request);
+            request.getSession(false).setAttribute(IN_PROGRESS, Boolean.TRUE);
             request.setAttribute(LOGIN, Boolean.TRUE);
         });
+    }
+
+    static boolean isLoginInProgress(HttpServletRequest request) {
+        var session = request.getSession(false);
+        if (session == null) return false;
+        try {
+            synchronized (WebUtils.getSessionMutex(session)) {
+                return Boolean.TRUE.equals(session.getAttribute(IN_PROGRESS));
+            }
+        } catch (IllegalStateException invalid) {
+            return false;
+        }
     }
 
     static boolean isLogin(HttpServletRequest request) {
@@ -50,6 +64,7 @@ final class RpLoginGeneration {
             // Also fence requests that loaded the old authentication during callback network work.
             advance(request);
             publication.run();
+            request.getSession(false).removeAttribute(IN_PROGRESS);
             request.removeAttribute(LOGIN);
         });
     }

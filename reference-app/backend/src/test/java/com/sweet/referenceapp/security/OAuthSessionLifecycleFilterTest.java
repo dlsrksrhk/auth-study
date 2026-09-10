@@ -28,6 +28,25 @@ class OAuthSessionLifecycleFilterTest {
     }
 
     @Test
+    void pendingLoginAdmissionIsNotATerminalRefreshFailure() throws Exception {
+        var req = request("/bff/profile");
+        req.setSession(fixture.session);
+        fixture.save(fixture.session, fixture.client(30, "old"));
+        var callback = OAuthSessionRefreshCoordinatorTest.request(fixture.session);
+        RpLoginGeneration.beginLogin(callback);
+        var realFilter = new OAuthSessionLifecycleFilter(
+                fixture.coordinator(java.time.Duration.ofSeconds(2)), users,
+                new RpSessionCleaner(false, fixture.repository, fixture.revoker));
+        var response = new MockHttpServletResponse();
+        realFilter.doFilter(req, response, (r, s) -> { throw new AssertionError("must not enter business"); });
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(fixture.session.isInvalid()).isFalse();
+        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verifyNoInteractions(fixture.tokens, fixture.snapshots, fixture.revoker, users);
+    }
+
+    @Test
     void successRechecksLatestRoleAndUsesRequestLocalContext() throws Exception {
         var req = request("/bff/profile");
         var shared = SecurityContextHolder.getContext();

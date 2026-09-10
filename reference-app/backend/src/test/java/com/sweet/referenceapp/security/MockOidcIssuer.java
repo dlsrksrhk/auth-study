@@ -42,6 +42,8 @@ final class MockOidcIssuer implements AutoCloseable {
     volatile int initialAccessTokenLifetime = 300;
     volatile CountDownLatch refreshEntered = new CountDownLatch(0);
     volatile CountDownLatch refreshRelease = new CountDownLatch(0);
+    volatile CountDownLatch codeEntered = new CountDownLatch(0);
+    volatile CountDownLatch codeRelease = new CountDownLatch(0);
     private final ExecutorService executor = Executors.newCachedThreadPool();
     volatile Map<String, Object> userInfoClaims = defaultClaims();
     volatile int userInfoStatus = 200;
@@ -104,6 +106,8 @@ final class MockOidcIssuer implements AutoCloseable {
         initialAccessTokenLifetime = 300;
         refreshEntered = new CountDownLatch(0);
         refreshRelease = new CountDownLatch(0);
+        codeEntered = new CountDownLatch(0);
+        codeRelease = new CountDownLatch(0);
     }
 
     private void userInfo(HttpExchange exchange) throws IOException {
@@ -129,10 +133,11 @@ final class MockOidcIssuer implements AutoCloseable {
         respond(exchange, userInfoStatus, claims);
     }
     private void token(HttpExchange exchange) throws IOException {
-        tokenRequests.incrementAndGet();
-        tokenForm = parameters(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        int exchangeNumber = tokenRequests.incrementAndGet();
+        var form = parameters(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        tokenForm = form;
         clientAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
-        if ("refresh_token".equals(tokenForm.get("grant_type"))) {
+        if ("refresh_token".equals(form.get("grant_type"))) {
             refreshRequests.incrementAndGet();
             refreshEntered.countDown();
             try {
@@ -140,6 +145,19 @@ final class MockOidcIssuer implements AutoCloseable {
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 throw new IOException("Refresh gate interrupted");
+            }
+        }
+        if (!"refresh_token".equals(form.get("grant_type"))) {
+            codeEntered.countDown();
+            try {
+                if (!codeRelease.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new IOException("Code gate timed out");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Code gate interrupted");
+            }
+            if (fault.equals("code-error")) {
+                respond(exchange, 400, Map.of("error", "invalid_grant"));
+                return;
             }
         }
         if (fault.equals("token-drop")) {
@@ -157,7 +175,7 @@ final class MockOidcIssuer implements AutoCloseable {
             respondRaw(exchange, 200, "not-json");
             return;
         }
-        if ("refresh_token".equals(tokenForm.get("grant_type"))) {
+        if ("refresh_token".equals(form.get("grant_type"))) {
             if (fault.equals("refresh-missing-token")) {
                 respond(exchange, 200, Map.of("access_token", "test-access-token-refreshed", "token_type", "Bearer", "expires_in", 300));
                 return;
@@ -188,7 +206,7 @@ final class MockOidcIssuer implements AutoCloseable {
             var token = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256)
                     .keyID(fault.equals("unknown-kid") ? "unknown-key" : signingKey.getKeyID()).build(), claims.build());
             token.sign(new RSASSASigner(fault.equals("wrong-signature") ? wrongKey : signingKey));
-            respond(exchange, 200, Map.of("access_token", "test-access-token-" + tokenRequests.get(), "refresh_token", "test-refresh-token",
+            respond(exchange, 200, Map.of("access_token", "test-access-token-" + exchangeNumber, "refresh_token", "test-refresh-token",
                     "token_type", "Bearer", "expires_in", initialAccessTokenLifetime, "scope", "openid profile email",
                     "id_token", token.serialize()));
         } catch (JOSEException exception) {

@@ -89,6 +89,24 @@ class CurrentAppUserFilterTest {
         }
     }
 
+    @Test void callbackAdmissionSkipsLocalLookupAndPreservesRetainedAuthentication() throws Exception {
+        var original = login();
+        var session = new MockHttpSession();
+        session.setAttribute("SPRING_SECURITY_CONTEXT", SecurityContextHolder.getContext());
+        request.setSession(session);
+        var callback = request();
+        callback.setSession(session);
+        RpLoginGeneration.beginLogin(callback);
+        when(users.find(id)).thenReturn(Optional.empty());
+        filter.doFilter(request, response, (r, s) ->
+                assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull());
+        assertThat(session.isInvalid()).isFalse();
+        assertThat(((org.springframework.security.core.context.SecurityContext) session.getAttribute("SPRING_SECURITY_CONTEXT"))
+                .getAuthentication()).isSameAs(original);
+        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+        verifyNoInteractions(users);
+    }
+
     @Test void oldLocalLookupFailureCannotClearSameSessionNewLogin() throws Exception {
         login();
         var session = new MockHttpSession();

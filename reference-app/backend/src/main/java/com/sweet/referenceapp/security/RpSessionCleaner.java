@@ -67,7 +67,7 @@ final class RpSessionCleaner {
         }
     }
 
-    private static void clearRequest(HttpServletRequest request) {
+    static void clearRequest(HttpServletRequest request) {
         SecurityContextHolder.clearContext();
         request.removeAttribute(CurrentAppUser.class.getName());
     }

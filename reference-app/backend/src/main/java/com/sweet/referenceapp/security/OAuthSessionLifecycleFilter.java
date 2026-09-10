@@ -71,6 +71,13 @@ final class OAuthSessionLifecycleFilter extends OncePerRequestFilter {
                     SecurityContextHolder.setContext(context);
                     CurrentAppUser.set(request, current);
                 }
+            } catch (OAuthSessionRefreshCoordinator.LoginInProgressException pending) {
+                // Admission is paused, not failed: the callback still owns this live generation.
+                RpSessionCleaner.clearRequest(request);
+                if (!"/bff/session".equals(request.getServletPath())) {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    return;
+                }
             } catch (RuntimeException failure) {
                 cleaner.clear(request, response);
                 if (!"/bff/session".equals(request.getServletPath())) {

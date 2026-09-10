@@ -2,7 +2,7 @@
 
 작성일: 2026-09-10
 
-상태: 승인된 [구현 계획](../plans/2026-09-10-reference-app-token-lifecycle.md)의 Tasks 1–6 구현 및 HTTP·PostgreSQL 회귀 검증을 완료했습니다. Reference App 277개, IdP 486개 테스트 결과와 실제 브라우저 E2E 미실행 범위는 [검증 보고서](../reports/2026-09-10-reference-app-token-lifecycle-verification.md)에 기록했습니다.
+상태: 승인된 [구현 계획](../plans/2026-09-10-reference-app-token-lifecycle.md)의 Tasks 1–6 구현 및 HTTP·PostgreSQL 회귀 검증을 완료했습니다. Reference App 283개, IdP 486개 테스트 결과와 실제 브라우저 E2E 미실행 범위는 [검증 보고서](../reports/2026-09-10-reference-app-token-lifecycle-verification.md)에 기록했습니다.
 
 ## 목적과 범위
 

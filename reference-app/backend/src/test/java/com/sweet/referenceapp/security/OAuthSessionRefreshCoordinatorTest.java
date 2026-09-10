@@ -555,6 +555,21 @@ class OAuthSessionRefreshCoordinatorTest {
     }
 
     @Test
+    void callbackInProgressRejectsRefreshWithoutClosingCallbackGeneration() {
+        save(session, client(30, "old"));
+        var callback = request(session);
+        RpLoginGeneration.beginLogin(callback);
+        assertThatThrownBy(() -> coordinator(Duration.ofSeconds(2))
+                .ensureFresh(request(session), new MockHttpServletResponse(), auth))
+                .isInstanceOf(OAuthSessionRefreshCoordinator.LoginInProgressException.class);
+        verifyNoInteractions(tokens, snapshots, revoker);
+        new LoginGenerationAuthorizedClientRepository().saveAuthorizedClient(
+                successor, auth, callback, new MockHttpServletResponse());
+        assertThat(repository.<OAuth2AuthorizedClient>loadAuthorizedClient("reference-app", auth, request(session)))
+                .isSameAs(successor);
+    }
+
+    @Test
     void callbackReplacementClearsOldAuthenticationAndFencesRequestsEnteringDuringLogin() {
         var oldContext = org.springframework.security.core.context.SecurityContextHolder.createEmptyContext();
         oldContext.setAuthentication(auth);

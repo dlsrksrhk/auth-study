@@ -1,14 +1,30 @@
 # Reference App 토큰 수명·로그아웃 검증 기록
 
-> 최종 재검토 상태: **병합 보류 — Important 1건 미해결**. `28cf494`는 이전 로그인 요청이 새 로그인 토큰·세션·쿠키를 덮어쓰거나 정리하는 문제를 해결했습니다. 다만 callback 진입에서 이전 refresh State를 제거한 뒤 이전 인증/client를 유지하므로, callback 처리 중 들어온 보호 요청이 같은 Refresh Token으로 두 번째 갱신을 시작할 수 있습니다. 이 실패는 진행 중인 callback의 세션을 종료할 수도 있습니다. callback 진행 중 기존 client 갱신을 차단하고, 첫 refresh와 callback을 보류한 상태에서 추가 보호 요청을 보내 교환 횟수가 늘지 않는 회귀 검증이 필요합니다. 아래 277개 통과 결과는 이 미검증 경합의 안전성을 입증하지 않습니다. 병합·push는 수행하지 않았습니다.
+> 최종 재검토 상태: **남은 callback 진행 중 중복 갱신 경합의 구현 수정 완료 — 독립 재검토 대기**. callback과 이전 refresh를 함께 보류한 회귀에서 추가 보호 요청이 같은 토큰으로 갱신을 시작하지 않음을 확인했습니다. 아래 최신 283개 전체 테스트는 새로 실행한 결과이며, 독립 검토의 승인으로 해석하지 않습니다. 병합·push는 수행하지 않았습니다.
 
 검증일: 2026-09-10 (Asia/Seoul). 브랜치: `codex/reference-app-token-lifecycle`.
 
 승인된 [설계](../specs/2026-09-10-reference-app-token-lifecycle-design.md)와 [세부 계획](../plans/2026-09-10-reference-app-token-lifecycle.md)의 Tasks 1–6를 구현했습니다. 실제 내장 HTTP 서버와 PostgreSQL Testcontainers를 사용한 Reference App 전체 테스트가 통과했습니다. 병합·push와 실제 브라우저 E2E는 수행하지 않았습니다.
 
-## 최종 전체 검토 수정: 같은 세션 재로그인 경합
+## 추가 수정: callback 진행 중 기존 client 갱신 차단
 
-최종 수정 후 새로 실행한 Reference App 전체 결과는 **34 suites, 277 tests / 0 failures / 0 errors / 0 skipped**입니다. 아래 기존 270개 기록은 수정 이전 이력입니다. IdP는 이번 수정에서 변경하지 않아 재실행하지 않았습니다.
+콜백 진입 시 세대를 교체해도 이전 인증/client가 남아 있어 새 보호 요청이 같은 Refresh Token을 다시 교환할 수 있었습니다. 기존 refresh와 새 callback code 교환을 각각 latch로 보류하고 추가 `/bff/profile`을 호출한 수정 전 회귀 3개 모두 **refresh 횟수 기대 1, 실제 2**로 실패했습니다.
+
+세션에 토큰 없는 `IN_PROGRESS` 표식을 추가했습니다. 표식은 유효 callback 진입의 동일 mutex 안에서 설정하고, 새 client 게시가 끝나면 같은 mutex 안에서 제거합니다. 실패·로그아웃은 세션 무효화로 표식을 함께 제거합니다. `CurrentAppUserFilter`는 진행 중 보호 요청의 요청 context만 비워 로컬 사용자 조회와 갱신을 건너뜁니다. coordinator도 입구에서 `LoginInProgressException`으로 거절하며, lifecycle 필터는 이를 일반 갱신 실패와 구별하여 세션·토큰·쿠키 정리를 하지 않습니다.
+
+서버 세션의 이전 인증/client는 로그아웃의 토큰 확보를 위해 유지합니다. 두 로그아웃 POST는 기존 필터 제외 경로이고 CSRF·Origin 검사 순서도 바뀌지 않습니다. 콜백 진행 중 로그아웃 테스트에서 `204`, 쿠키 삭제, 보유 Refresh Token 폐기, 늦은 successor 폐기, callback 게시 거절과 세션 복원 없음이 확인됐습니다. 콜백 성공 시 B client가 유지되고 stale A 응답은 쿠키를 삭제하지 않습니다. 콜백 자체 실패는 기존 실패 redirect와 세션 종료 정책을 유지합니다.
+
+| 명령 (`reference-app/backend`) | Exit | tests / failures / errors / skipped | 결과 |
+| --- | --- | --- | --- |
+| `.\gradlew.bat test --tests '*TokenLifecycleHttpIntegrationTest.protectedRequestDuringCallbackCannotRefreshOldClientOrCancelLogin' --tests '*TokenLifecycleHttpIntegrationTest.logoutDuringCallbackKeepsRetainedTokenOwnershipAndPreventsPublication' --console=plain` | 1 | 3 / 3 / 0 / 0 | 수정 전 RED, 세 사례 모두 중복 refresh 횟수 단언 실패 |
+| `.\gradlew.bat test --tests '*OAuthSessionRefreshCoordinatorTest' --tests '*OAuthSessionLifecycleFilterTest' --tests '*CurrentAppUserFilterTest' --tests '*TokenLifecycleHttpIntegrationTest' --tests '*ReferenceLogoutIntegrationTest' --tests '*Oidc*Test' --tests '*LocalLogin*Test' --console=plain` | 0 | 115 / 0 / 0 / 0 | 최종 집중 검증, 11 suites, 20초 |
+| `.\gradlew.bat clean test --console=plain` | 0 | 283 / 0 / 0 / 0 | 최종 전체 검증, 34 suites, 31초, 6 tasks 모두 실행 |
+
+최신 전체 XML 작성 시각은 **2026-09-10 14:27:46 KST**입니다. coordinator의 진행 중 거절이 callback을 닫지 않는 단위 회귀, lifecycle 필터가 이를 종료 실패로 취급하지 않는 단위 회귀, 초기 로컬 사용자 누락 조회조차 수행하지 않으며 보유 세션 인증은 남기는 단위 회귀도 각각 RED를 확인한 뒤 통과했습니다. mock issuer는 동시 교환의 grant type과 응답 번호를 요청 로컬 변수로 유지하여 서로 다른 교환이 fixture 상태를 덮어쓰지 않도록 했습니다. 생산 코드에 테스트 hook·재시도·토큰을 담은 진행 상태를 추가하지 않았습니다. IdP는 변경하지 않아 재실행하지 않았습니다.
+
+## 이전 수정 기록: 같은 세션 재로그인 경합
+
+이전 수정 당시 실행한 Reference App 전체 결과는 **34 suites, 277 tests / 0 failures / 0 errors / 0 skipped**입니다. 아래 기존 270개 기록은 수정 이전 이력입니다. IdP는 이번 수정에서 변경하지 않아 재실행하지 않았습니다.
 
 | 명령 (`reference-app/backend`) | Exit | tests / failures / errors / skipped | 결과 |
 | --- | --- | --- | --- |

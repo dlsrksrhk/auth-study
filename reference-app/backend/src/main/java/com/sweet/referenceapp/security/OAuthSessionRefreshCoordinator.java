@@ -58,6 +58,7 @@ public final class OAuthSessionRefreshCoordinator {
             mutex = WebUtils.getSessionMutex(session);
             synchronized (mutex) {
                 if (!RpLoginGeneration.matches(request, session)) throw new SessionRefreshException();
+                if (RpLoginGeneration.isLoginInProgress(request)) throw new LoginInProgressException();
                 state = (State) session.getAttribute(ATTRIBUTE);
                 if (state == null) {
                     state = new State(mutex);
@@ -214,6 +215,12 @@ public final class OAuthSessionRefreshCoordinator {
             synchronized (mutex) {
                 close();
             }
+        }
+    }
+
+    public static final class LoginInProgressException extends RuntimeException {
+        public LoginInProgressException() {
+            super("Login in progress", null, false, false);
         }
     }
 
