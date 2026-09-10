@@ -430,6 +430,6 @@ Task 1→2→3→4→5 순서입니다. 각 작업에 RED/GREEN과 독립 검토
 
 자체 검토에서 승인 spec의 모든 요구를 위 표에 배정했고 작업 간 메서드·타입명을 대조했습니다. 기존 HTTP fixture의 csrfToken(cookie), userId(cookie), 빈 문자열 body 계약을 확인했습니다. actor 재조회도 UUID 잠금 최신화를 사용하도록 구체화해 기존 영속성 컨텍스트 값의 재사용을 피했습니다. 미정 항목은 없습니다.
 
-2026-09-10: Task 1–5 구현 및 실행 검증을 마쳤습니다. 체크는 구현·실행 완료를 뜻하며 최종 독립 검토 승인을 뜻하지 않습니다. Task 1–4는 작업별 검토를 마쳤고 Task 5 및 전체 변경 최종 검토는 대기 중입니다. 정확한 실행 결과와 한계는 [검증 보고서](../reports/2026-09-10-reference-app-user-admin-verification.md)에 기록합니다.
+2026-09-10: Task 1–5 구현 및 실행 검증을 마쳤습니다. 체크는 구현·실행 완료를 뜻하며 최종 독립 검토 승인을 뜻하지 않습니다. 전체 변경 검토에서 발견한 P2 트랜잭션 시작 실패 매핑과 P3 identity 조회 문서 오류를 수정했으며, 해당 범위 재검토는 대기 중입니다. 정확한 실행 결과와 한계는 [검증 보고서](../reports/2026-09-10-reference-app-user-admin-verification.md)에 기록합니다.
 
-실행 결과: HTTP focused 8/8, 전체 Reference App 383/383(41 suites), failures/errors/skipped 모두 0이며 exit 0입니다. 최종 전체 명령은 `.\gradlew.bat test --console=plain`이고 56초에 완료했습니다. IdP·실제 SPA 브라우저 E2E는 미실행입니다.
+최종 수정 검증 결과: controller·HTTP focused 24/24, 전체 Reference App 384/384(41 suites), failures/errors/skipped 모두 0이며 exit 0입니다. 최종 전체 명령은 `.\gradlew.bat test --console=plain`이고 55초에 완료했습니다. IdP·실제 SPA 브라우저 E2E는 미실행입니다.

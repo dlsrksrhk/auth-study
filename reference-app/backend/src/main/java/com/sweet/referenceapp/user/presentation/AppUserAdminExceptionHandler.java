@@ -9,6 +9,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.*;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.transaction.TransactionTimedOutException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -31,7 +32,7 @@ public class AppUserAdminExceptionHandler {
         return problem(Code.OPTIMISTIC_LOCK_CONFLICT,request);
     }
 
-    @ExceptionHandler({DataAccessException.class,TransactionTimedOutException.class})
+    @ExceptionHandler({DataAccessException.class,TransactionTimedOutException.class,CannotCreateTransactionException.class})
     public ResponseEntity<ProblemDetail> unavailable(Exception exception,HttpServletRequest request) {
         return problem(Code.SERVICE_UNAVAILABLE,request);
     }

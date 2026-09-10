@@ -15,6 +15,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.transaction.TransactionTimedOutException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.*;
 import org.springframework.test.web.servlet.MockMvc;
@@ -103,6 +104,12 @@ class AppUserAdminControllerTest {
         doThrow(new DataAccessResourceFailureException("secret SQL token")).when(queries).detail(target);
         problem(503,"SERVICE_UNAVAILABLE");
         doThrow(new TransactionTimedOutException("secret SQL token")).when(queries).detail(target);
+        problem(503,"SERVICE_UNAVAILABLE");
+    }
+
+    @Test void transactionCreationFailureReturnsSafeUnavailableProblem() throws Exception {
+        when(queries.detail(target)).thenThrow(new CannotCreateTransactionException(
+            "secret SQL token", new java.sql.SQLException("secret connection details")));
         problem(503,"SERVICE_UNAVAILABLE");
     }
 
