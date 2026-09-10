@@ -37,6 +37,11 @@ final class MockOidcIssuer implements AutoCloseable {
     private final AtomicInteger tokenRequests = new AtomicInteger();
     private final AtomicInteger userInfoRequests = new AtomicInteger();
     private final AtomicInteger revocationRequests = new AtomicInteger();
+    private final AtomicInteger refreshRequests = new AtomicInteger();
+    final java.util.concurrent.CopyOnWriteArrayList<String> revokedTokens = new java.util.concurrent.CopyOnWriteArrayList<>();
+    volatile int initialAccessTokenLifetime = 300;
+    volatile CountDownLatch refreshEntered = new CountDownLatch(0);
+    volatile CountDownLatch refreshRelease = new CountDownLatch(0);
     private final ExecutorService executor = Executors.newCachedThreadPool();
     volatile Map<String, Object> userInfoClaims = defaultClaims();
     volatile int userInfoStatus = 200;
@@ -79,6 +84,7 @@ final class MockOidcIssuer implements AutoCloseable {
     int tokenRequestCount() { return tokenRequests.get(); }
     int userInfoRequestCount() { return userInfoRequests.get(); }
     int revocationRequestCount() { return revocationRequests.get(); }
+    int refreshRequestCount() { return refreshRequests.get(); }
     void reset() {
         userInfoClaims = defaultClaims();
         userInfoStatus = 200;
@@ -93,6 +99,11 @@ final class MockOidcIssuer implements AutoCloseable {
         tokenRequests.set(0);
         userInfoRequests.set(0);
         revocationRequests.set(0);
+        refreshRequests.set(0);
+        revokedTokens.clear();
+        initialAccessTokenLifetime = 300;
+        refreshEntered = new CountDownLatch(0);
+        refreshRelease = new CountDownLatch(0);
     }
 
     private void userInfo(HttpExchange exchange) throws IOException {
@@ -121,6 +132,16 @@ final class MockOidcIssuer implements AutoCloseable {
         tokenRequests.incrementAndGet();
         tokenForm = parameters(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
         clientAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
+        if ("refresh_token".equals(tokenForm.get("grant_type"))) {
+            refreshRequests.incrementAndGet();
+            refreshEntered.countDown();
+            try {
+                if (!refreshRelease.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new IOException("Refresh gate timed out");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Refresh gate interrupted");
+            }
+        }
         if (fault.equals("token-drop")) {
             exchange.close();
             return;
@@ -168,7 +189,7 @@ final class MockOidcIssuer implements AutoCloseable {
                     .keyID(fault.equals("unknown-kid") ? "unknown-key" : signingKey.getKeyID()).build(), claims.build());
             token.sign(new RSASSASigner(fault.equals("wrong-signature") ? wrongKey : signingKey));
             respond(exchange, 200, Map.of("access_token", "test-access-token-" + tokenRequests.get(), "refresh_token", "test-refresh-token",
-                    "token_type", "Bearer", "expires_in", 300, "scope", "openid profile email",
+                    "token_type", "Bearer", "expires_in", initialAccessTokenLifetime, "scope", "openid profile email",
                     "id_token", token.serialize()));
         } catch (JOSEException exception) {
             throw new IOException(exception);
@@ -178,6 +199,7 @@ final class MockOidcIssuer implements AutoCloseable {
     private void revoke(HttpExchange exchange) throws IOException {
         revocationRequests.incrementAndGet();
         revocationForm = parameters(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        revokedTokens.add(revocationForm.get("token"));
         clientAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
         requestLatch.countDown();
         if (fault.equals("revoke-delay")) {

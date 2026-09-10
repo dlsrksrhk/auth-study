@@ -27,9 +27,9 @@ import org.springframework.security.web.savedrequest.NullRequestCache;
 public class OAuth2ClientSecurityConfig {
     @Bean
     ReferenceLogoutService referenceLogoutService(LogoutHandoffStore handoffs, OAuth2AuthorizedClientRepository clients,
-            OAuthTokenRevoker revoker, ServerProperties server) {
+            OAuthTokenRevoker revoker, ServerProperties server, ReferenceSecurityProperties security) {
         return new ReferenceLogoutService(handoffs, clients,
-                new RpSessionCleaner(Boolean.TRUE.equals(server.getServlet().getSession().getCookie().getSecure()), clients, revoker));
+                new RpSessionCleaner(Boolean.TRUE.equals(server.getServlet().getSession().getCookie().getSecure()), clients, revoker), security.bffOrigin());
     }
 
     @Bean(destroyMethod = "close")

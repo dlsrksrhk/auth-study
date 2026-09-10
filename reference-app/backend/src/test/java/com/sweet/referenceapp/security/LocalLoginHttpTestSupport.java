@@ -45,11 +45,35 @@ abstract class LocalLoginHttpTestSupport {
     static final String HR_ROLES = "https://auth-study.local/claims/roles";
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactions;
+    static volatile java.util.concurrent.CountDownLatch snapshotCommitted = new java.util.concurrent.CountDownLatch(0);
+    static volatile java.util.concurrent.CountDownLatch snapshotRelease = new java.util.concurrent.CountDownLatch(0);
+    static final java.util.concurrent.atomic.AtomicInteger businessCalls = new java.util.concurrent.atomic.AtomicInteger();
 
     @TestConfiguration(proxyBeanMethods = false)
     @EnableMethodSecurity
     @Import(ProbeController.class)
     static class ProbeConfiguration {
+        @Bean
+        static org.springframework.beans.factory.config.BeanPostProcessor committedSnapshotGate() {
+            return new org.springframework.beans.factory.config.BeanPostProcessor() {
+                @Override public Object postProcessAfterInitialization(Object bean, String name) {
+                    if (!(bean instanceof com.sweet.referenceapp.user.application.AppExternalSnapshotService)) return bean;
+                    var proxy = new org.springframework.aop.framework.ProxyFactory(bean);
+                    proxy.setProxyTargetClass(true);
+                    proxy.addAdvice((org.aopalliance.intercept.MethodInterceptor) invocation -> {
+                        Object result = invocation.proceed();
+                        if (invocation.getMethod().getName().equals("refresh")) {
+                            // This decorator invokes the transaction proxy first: its return means commit is complete.
+                            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                            snapshotCommitted.countDown();
+                            assertThat(snapshotRelease.await(15, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                        }
+                        return result;
+                    });
+                    return proxy.getProxy();
+                }
+            };
+        }
         @Bean(destroyMethod = "close")
         MockOidcIssuer localIssuer() {
             return ISSUER;
@@ -87,6 +111,7 @@ abstract class LocalLoginHttpTestSupport {
 
         @PostMapping("/bff/test-mutate")
         Map<String, Boolean> mutate() {
+            businessCalls.incrementAndGet();
             return Map.of("mutated", true);
         }
     }
@@ -97,6 +122,8 @@ abstract class LocalLoginHttpTestSupport {
         registry.add("reference.security.bff-origin", () -> BFF);
         registry.add("reference.security.spa-origin", () -> SPA);
         registry.add("reference.token-lifecycle.revocation-uri", () -> ISSUER.origin() + "/revoke");
+        registry.add("reference.token-lifecycle.refresh-timeout", () -> "1500ms");
+        registry.add("reference.token-lifecycle.read-timeout", () -> "5s");
         String provider = "spring.security.oauth2.client.provider.reference-app.";
         registry.add(provider + "issuer-uri", ISSUER::origin);
         registry.add(provider + "authorization-uri", () -> ISSUER.origin() + "/authorize");
@@ -117,6 +144,9 @@ abstract class LocalLoginHttpTestSupport {
     @BeforeEach
     void resetDatabaseAndIssuer() {
         ISSUER.reset();
+        snapshotCommitted = new java.util.concurrent.CountDownLatch(0);
+        snapshotRelease = new java.util.concurrent.CountDownLatch(0);
+        businessCalls.set(0);
         new TransactionTemplate(transactions)
                 .executeWithoutResult(
                         status -> {

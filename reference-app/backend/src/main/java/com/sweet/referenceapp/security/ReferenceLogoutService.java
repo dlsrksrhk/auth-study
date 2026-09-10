@@ -13,11 +13,13 @@ public final class ReferenceLogoutService {
     private final LogoutHandoffStore handoffs;
     private final OAuth2AuthorizedClientRepository clients;
     private final RpSessionCleaner cleaner;
+    private final URI bffOrigin;
 
-    ReferenceLogoutService(LogoutHandoffStore handoffs, OAuth2AuthorizedClientRepository clients, RpSessionCleaner cleaner) {
+    ReferenceLogoutService(LogoutHandoffStore handoffs, OAuth2AuthorizedClientRepository clients, RpSessionCleaner cleaner, URI bffOrigin) {
         this.handoffs = handoffs;
         this.clients = clients;
         this.cleaner = cleaner;
+        this.bffOrigin = bffOrigin;
     }
 
     public Optional<URI> logout(HttpServletRequest request, HttpServletResponse response,
@@ -34,7 +36,7 @@ public final class ReferenceLogoutService {
                 if (client == null || !(authentication.getPrincipal() instanceof OidcUser principal))
                     throw new ContinuationUnavailableException();
                 String ticket = handoffs.issue(principal.getIdToken().getTokenValue(), client.getClientRegistration().getClientId());
-                return Optional.of(URI.create("/bff/logout/continue/" + ticket));
+                return Optional.of(bffOrigin.resolve("/bff/logout/continue/" + ticket));
             }
         } catch (RuntimeException unavailable) {
             // Do not retain exceptions containing token-bearing payloads or URIs.

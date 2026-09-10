@@ -1,6 +1,6 @@
 # Reference App BFF
 
-독립 Spring Boot BFF의 Task 5 구현입니다. OIDC Authorization Code 로그인과 로컬 사용자 JIT·최초 관리자 지정을 연결하고, 현재 DB 상태와 권한을 반영하는 세션·프로필 API를 제공합니다. confidential client의 PKCE S256, 콜백 검증과 서버 세션 보안도 유지합니다. Java 21과 Docker Desktop이 필요합니다.
+독립 Spring Boot BFF의 Task 6 구현입니다. OIDC Authorization Code 로그인과 로컬 사용자 JIT·최초 관리자 지정, 현재 DB 상태와 권한을 반영하는 API, 요청 시 토큰 갱신 및 앱·IdP 로그아웃을 제공합니다. confidential client의 PKCE S256, 콜백 검증과 서버 세션 보안도 유지합니다. Java 21과 Docker Desktop이 필요합니다.
 
 ## 로컬 실행
 
@@ -27,6 +27,7 @@ IdP에는 활성 사용자와 아래 조건의 활성 OAuth client가 필요합�
 | 공개 client 여부 | `publicClient: false` |
 | 인증 / grant | `client_secret_basic` / `authorization_code` |
 | Redirect URI | `http://rp.localhost:8180/login/oauth2/code/reference-app` |
+| Post-logout redirect URI | `http://rp.localhost:3100/logged-out` |
 | Scope | `openid profile email hr.company hr.organization hr.roles` |
 | PKCE | S256 |
 
@@ -102,7 +103,44 @@ $headers = @{ Origin = 'http://rp.localhost:3100'; 'X-CSRF-TOKEN' = $csrf.csrfTo
 
 콜백에서 비활성 사용자가 확인되면 `/login-error?code=local_user_disabled`로 이동하고 외부 사본·로그인 시각 변경도 롤백합니다. 프로토콜·UserInfo·DB 오류는 `/login-error?code=oidc_login_failed`로 이동합니다. 두 주소는 고정 SPA origin을 사용하며 실패 시 기존 세션·쿠키를 정리합니다. 외부 오류 문자열로 오류 코드를 선택하지 않습니다.
 
-토큰 refresh·revocation·logout, 실제 관리자 API와 SPA는 아직 구현하지 않았습니다. 테스트의 권한·authorized client·상태 변경 확인용 endpoint는 테스트 소스에만 있습니다.
+실제 관리자 API와 SPA는 후속 작업입니다. 테스트의 권한·authorized client·상태 변경 확인용 endpoint는 테스트 소스에만 있습니다.
+
+## 토큰 갱신과 로그아웃
+
+인증된 BFF 요청은 Access Token 수명이 30초 이하일 때 세션별로 한 번만 갱신하며 동시 요청은 결과를 공유합니다. 새 UserInfo의 원본 sub와 외부 필드를 검증한 뒤 PostgreSQL 사본을 커밋하고, 세션이 계속 열려 있을 때만 새 토큰을 게시합니다. 로컬 권한·상태·생성 시각·마지막 로그인 시각은 보존합니다. 로그인·callback·CSRF·로그아웃·continuation 경로는 갱신에서 제외합니다.
+
+토큰·UserInfo 실패와 갱신 후 DB 실패는 세션을 종료합니다. `/bff/session`은 익명 200, 보호 API는 업무 진입 없이 401을 반환합니다. 갱신 전 로컬 사용자 조회의 DB 장애는 기존처럼 세션을 유지한 503입니다. 회전형 Refresh Token 교환과 폐기는 자동 재시도하지 않습니다. 원격 폐기 실패에도 로컬 종료는 유지하며, 진행 중인 작업이 늦게 얻은 후속 Refresh Token도 폐기를 시도합니다. DB 커밋 직후 로그아웃이 이기면 사본은 남을 수 있지만 세션은 복구하지 않습니다.
+
+| `reference.token-lifecycle` 설정 | 기본값 |
+| --- | --- |
+| `connect-timeout` | 2s |
+| `read-timeout` | 3s |
+| `refresh-timeout` | 10s, 네트워크와 DB 작업을 기다리는 상한 |
+| `revocation-timeout` | 폐기 호출당 전체 3s |
+| `handoff-ttl` / `handoff-capacity` | 60s / 1000, 상한을 넘는 설정은 시작 시 거절 |
+| `revocation-uri` | `http://idp.localhost:8080/oauth2/revoke` |
+| `end-session-uri` | `http://idp.localhost:8080/connect/logout` |
+
+IdP endpoint는 서버 설정으로 고정합니다. 배포 시 `REFERENCE_APP_REVOCATION_URI`, `REFERENCE_APP_END_SESSION_URI`를 설정할 수 있으며 요청 query·Host·Forwarded로 변경하지 않습니다. HTTP transport는 Apache HttpClient의 redirect·자동 재시도를 명시적으로 끕니다. 최대 32개 worker가 네트워크와 DB 작업을 수행하고 원래 요청 스레드가 결과를 게시합니다. 제한을 넘긴 작업은 세션을 복구할 수 없습니다.
+
+`POST /bff/logout`은 CSRF·Origin 검증 후 로컬 쿠키·세션을 정리하고 보유 Refresh Token 폐기를 시도한 뒤 204를 반환합니다. IdP 브라우저 세션은 유지합니다. 전체 로그아웃은 아래 두 단계입니다. 이 예시는 향후 SPA의 `/bff/**` proxy 경유를 전제로 하며 현재 SPA에 적용된 코드는 아닙니다.
+
+```javascript
+const response = await fetch('/bff/logout/identity-provider', {
+  method: 'POST', credentials: 'include', headers: { 'X-CSRF-TOKEN': csrfToken }
+});
+// 성공 여부와 관계없이 앱의 로컬 로그인 표시를 제거합니다.
+if (response.ok) {
+  const { continueUrl } = await response.json();
+  window.location.assign(continueUrl);
+}
+```
+
+성공 응답은 `200 {"continueUrl":"<설정된 BFF origin>/bff/logout/continue/<ticket>"}`입니다. URL은 반드시 설정된 BFF origin의 절대 주소이며 JSON에 OAuth 토큰은 없습니다. 최상위 GET은 ticket을 한 번 소비하고 고정 IdP endpoint로 303 이동합니다. IdP는 현재 브라우저 세션과 일치하는 ID Token이면 만료 경과만 예외로 허용하며 서명·issuer·client·sub·sid·auth_time·회사·등록 redirect 검증은 유지합니다. 일반 로그인/API JWT 만료 검증은 그대로입니다.
+
+전달 정보 확보 실패는 로컬 종료 후 `503 {"code":"logout_continuation_unavailable"}`입니다. ticket은 최대 60초이고 잘못된 값·만료·재사용·서버 재시작 후 소실은 모두 redirect 없는 410입니다. 오류가 나도 로컬 로그인 상태를 복원하지 않으며 사용자는 필요하면 다시 로그인합니다. IdP 장애나 거절 역시 종료된 RP 세션을 복구하지 않습니다.
+
+전체 로그아웃 303의 `id_token_hint`만 ID Token이 브라우저 URL에 노출되는 승인된 예외입니다. 일반 API·SPA 상태·스토리지에는 OAuth 토큰을 넣지 않습니다. 응답에 `no-store`·`Referrer-Policy: no-referrer`를 적용하며 배포 시 프록시·APM·접근 로그에서도 continuation ticket 경로와 IdP Location 쿼리의 토큰 값을 제거하거나 해당 로깅을 제외해야 합니다. 브라우저 기록에는 URL이 남을 수 있습니다. SPA 구현과 실제 최상위 브라우저 E2E는 Task 8–10의 후속 범위입니다.
 
 ## 검증
 
@@ -117,4 +155,4 @@ git diff --check
 
 HTTP suite는 임시 포트의 Discovery/JWKS/token/UserInfo 서버와 실제 RSA 서명 token을 사용하고 실제 내장 BFF에 redirect를 자동 추적하지 않는 HTTP client로 접속합니다. 일반 `test` 프로필은 고정 provider metadata를 사용하므로 기존 JIT/bootstrap 회귀 테스트도 로컬 IdP 없이 실행됩니다. 기존 프로토콜 HTTP suite는 persistence 자동 구성을 제외합니다. OidcLocalLoginIntegrationTest와 LocalSessionLifecycleIntegrationTest는 실제 ReferenceApplication·서비스·JPA·PostgreSQL Testcontainer를 연결하여 콜백, JIT/bootstrap rollback, 다음 요청의 상태·권한 변경, API와 CSRF를 검증합니다. 테스트 DB 변경은 HTTP 요청에서 관찰할 수 있도록 커밋하며 로컬 개발 DB는 사용하지 않습니다.
 
-실제 IdP와 브라우저를 연결한 E2E는 이번 Task 5에서 실행하지 않았습니다.
+TokenLifecycleHttpIntegrationTest는 같은 HTTP·PostgreSQL fixture에서 단일 갱신, 실제 커밋 후 게시 전 로그아웃, 토큰 교환 중 로그아웃, 전체 작업 제한 이후 후속 토큰 폐기, 프로토콜·DB 실패를 latch로 검증합니다. 테스트 전용 transaction proxy 외부 gate를 사용하며 production 테스트 endpoint는 추가하지 않습니다. 실제 IdP와 브라우저를 연결한 E2E는 이번 Task 6에서 실행하지 않았습니다. 정확한 실행 결과와 한계는 [검증 보고서](../../docs/superpowers/reports/2026-09-10-reference-app-token-lifecycle-verification.md)에 기록합니다.

@@ -23,7 +23,8 @@ class ReferenceLogoutIntegrationTest extends LocalLoginHttpTestSupport {
 
     @Test void fullLogoutReturnsOpaqueOneUseContinuationAndFixedRedirect() throws Exception {
         String cookie = login();
-        var response = logout("/bff/logout/identity-provider?post_logout_redirect_uri=https://evil.example&client_id=evil&id_token_hint=evil", cookie);
+        var response = send("POST", "/bff/logout/identity-provider?post_logout_redirect_uri=https://evil.example&client_id=evil&id_token_hint=evil&continueUrl=https://evil.example", cookie, "",
+                "Origin", SPA, "X-CSRF-TOKEN", csrfToken(cookie), "Host", "evil.example", "Forwarded", "host=evil.example;proto=https");
         assertThat(response.statusCode()).isEqualTo(200);
         assertDeletion(response);
         assertPrivate(response);
@@ -31,9 +32,10 @@ class ReferenceLogoutIntegrationTest extends LocalLoginHttpTestSupport {
         var json = JSON.readTree(response.body());
         assertThat(json.size()).isEqualTo(1);
         String continuation = json.path("continueUrl").asText();
-        assertThat(continuation).matches("/bff/logout/continue/[A-Za-z0-9_-]{43}");
+        assertThat(continuation).startsWith(BFF + "/bff/logout/continue/");
+        assertThat(URI.create(continuation).getPath()).matches("/bff/logout/continue/[A-Za-z0-9_-]{43}");
         assertThat(send("GET", "/bff/profile", cookie, "").statusCode()).isEqualTo(401);
-        var redirect = send("GET", continuation, null, "");
+        var redirect = send("GET", URI.create(continuation).getPath(), null, "");
         assertThat(redirect.statusCode()).isEqualTo(303);
         assertPrivate(redirect);
         var location = URI.create(redirect.headers().firstValue("Location").orElseThrow());
@@ -45,7 +47,7 @@ class ReferenceLogoutIntegrationTest extends LocalLoginHttpTestSupport {
         assertThat(params.get("id_token_hint")).startsWith("eyJ");
         assertThat(params.get("client_id")).isEqualTo(MockOidcIssuer.CLIENT_ID);
         assertThat(params.get("post_logout_redirect_uri")).isEqualTo(SPA + "/logged-out");
-        var reused = send("GET", continuation, null, "");
+        var reused = send("GET", URI.create(continuation).getPath(), null, "");
         assertThat(reused.statusCode()).isEqualTo(410);
         assertPrivate(reused);
         assertNoTokenLeak(reused);
