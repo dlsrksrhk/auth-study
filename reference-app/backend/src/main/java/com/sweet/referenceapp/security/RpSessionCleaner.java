@@ -27,9 +27,17 @@ final class RpSessionCleaner {
         var authentication = SecurityContextHolder.getContext().getAuthentication();
         OAuth2AuthorizedClient retained = null;
         var session = request.getSession(false);
+        if (session == null && !RpLoginGeneration.matches(request, null)) {
+            clearRequest(request);
+            return;
+        }
         if (session != null) {
             try {
                 synchronized (WebUtils.getSessionMutex(session)) {
+                    if (!RpLoginGeneration.matches(request, session)) {
+                        clearRequest(request);
+                        return;
+                    }
                     OAuthSessionRefreshCoordinator.close(session);
                     try {
                         if (clients != null && authentication instanceof OAuth2AuthenticationToken oauth) {
@@ -43,8 +51,7 @@ final class RpSessionCleaner {
                 }
             } catch (IllegalStateException alreadyInvalid) { /* Already closed. */ }
         }
-        SecurityContextHolder.clearContext();
-        request.removeAttribute(CurrentAppUser.class.getName());
+        clearRequest(request);
         if (!response.isCommitted()) {
             // A failed login may already have rotated the ID and queued its cookie.
             var otherCookies = response.getHeaders(HttpHeaders.SET_COOKIE).stream()
@@ -58,5 +65,10 @@ final class RpSessionCleaner {
         if (retained != null && revoker != null) {
             revoker.revoke(retained.getClientRegistration(), retained.getRefreshToken());
         }
+    }
+
+    private static void clearRequest(HttpServletRequest request) {
+        SecurityContextHolder.clearContext();
+        request.removeAttribute(CurrentAppUser.class.getName());
     }
 }

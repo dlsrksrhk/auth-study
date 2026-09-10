@@ -89,6 +89,27 @@ class CurrentAppUserFilterTest {
         }
     }
 
+    @Test void oldLocalLookupFailureCannotClearSameSessionNewLogin() throws Exception {
+        login();
+        var session = new MockHttpSession();
+        request.setSession(session);
+        session.setAttribute("SPRING_SECURITY_CONTEXT", SecurityContextHolder.getContext());
+        new LoginGenerationSecurityContextRepository().loadDeferredContext(request).get();
+        when(users.find(id)).thenAnswer(call -> {
+            var callback = request();
+            callback.setSession(session);
+            RpLoginGeneration.beginLogin(callback);
+            callback.changeSessionId();
+            session.setAttribute("new-login", true);
+            return Optional.empty();
+        });
+        filter.doFilter(request, response, (r, s) ->
+                assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull());
+        assertThat(session.isInvalid()).isFalse();
+        assertThat(session.getAttribute("new-login")).isEqualTo(true);
+        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+    }
+
     @Test void legacyAuthenticationIsClearedWithoutDatabaseLookup() throws Exception {
         for (var auth : List.of(UsernamePasswordAuthenticationToken.authenticated("old", "", List.of()),
                 new OAuth2AuthenticationToken(oidc(), oidc().getAuthorities(), "reference-app"))) {

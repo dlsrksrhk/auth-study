@@ -41,6 +41,8 @@ final class OidcCallbackGuard extends OncePerRequestFilter {
             return;
         }
         try {
+            // A validated callback takes ownership before remote work; old requests are now stale.
+            RpLoginGeneration.beginLogin(request);
             chain.doFilter(request, response);
         } catch (IOException exception) {
             failureHandler.clearSession(request, response);

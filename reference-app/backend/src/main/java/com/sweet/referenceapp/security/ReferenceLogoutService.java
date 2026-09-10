@@ -31,6 +31,7 @@ public final class ReferenceLogoutService {
             synchronized (WebUtils.getSessionMutex(session)) {
                 // Block publication before releasing the shared termination mutex. The cleaner
                 // then captures the retained refresh token and revokes it outside this lock.
+                if (!RpLoginGeneration.matches(request, session)) throw new ContinuationUnavailableException();
                 OAuthSessionRefreshCoordinator.close(session);
                 var client = clients.loadAuthorizedClient(authentication.getAuthorizedClientRegistrationId(), authentication, request);
                 if (client == null || !(authentication.getPrincipal() instanceof OidcUser principal))

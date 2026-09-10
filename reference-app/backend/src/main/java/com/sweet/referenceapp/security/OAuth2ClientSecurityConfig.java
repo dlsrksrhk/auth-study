@@ -11,12 +11,10 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
-import org.springframework.security.oauth2.client.web.HttpSessionOAuth2AuthorizedClientRepository;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizedClientRepository;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
@@ -59,7 +57,7 @@ public class OAuth2ClientSecurityConfig {
     }
 
     @Bean
-    OAuth2AuthorizedClientRepository authorizedClients() { return new HttpSessionOAuth2AuthorizedClientRepository(); }
+    OAuth2AuthorizedClientRepository authorizedClients() { return new LoginGenerationAuthorizedClientRepository(); }
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ReferenceSecurityProperties properties,
@@ -82,8 +80,11 @@ public class OAuth2ClientSecurityConfig {
                 .logout(AbstractHttpConfigurer::disable)
                 .requestCache(cache -> cache.requestCache(new NullRequestCache()))
                 .exceptionHandling(errors -> errors.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
-                .securityContext(context -> context.securityContextRepository(new HttpSessionSecurityContextRepository()))
-                .sessionManagement(session -> session.sessionFixation(fixation -> fixation.changeSessionId()))
+                .securityContext(context -> context.securityContextRepository(new LoginGenerationSecurityContextRepository()))
+                .sessionManagement(session -> session.sessionAuthenticationStrategy((authentication, request, response) ->
+                        RpLoginGeneration.withCurrent(request, () ->
+                                new org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy()
+                                        .onAuthentication(authentication, request, response))))
                 .csrf(csrf -> csrf.csrfTokenRepository(csrfTokens).csrfTokenRequestHandler(new HeaderOnlyCsrfTokenRequestHandler()))
                 .addFilterBefore(new OAuthSessionLifecycleFilter(coordinator, currentUsers, cleaner), AuthorizationFilter.class)
                 .addFilterBefore(new CurrentAppUserFilter(currentUsers, cleaner), OAuthSessionLifecycleFilter.class)

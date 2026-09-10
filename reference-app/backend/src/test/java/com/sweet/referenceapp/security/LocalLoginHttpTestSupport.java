@@ -47,12 +47,22 @@ abstract class LocalLoginHttpTestSupport {
     @Autowired PlatformTransactionManager transactions;
     static volatile java.util.concurrent.CountDownLatch snapshotCommitted = new java.util.concurrent.CountDownLatch(0);
     static volatile java.util.concurrent.CountDownLatch snapshotRelease = new java.util.concurrent.CountDownLatch(0);
+    static volatile boolean snapshotFailure;
+    static final java.util.List<jakarta.servlet.http.HttpSession> createdSessions = new java.util.concurrent.CopyOnWriteArrayList<>();
     static final java.util.concurrent.atomic.AtomicInteger businessCalls = new java.util.concurrent.atomic.AtomicInteger();
 
     @TestConfiguration(proxyBeanMethods = false)
     @EnableMethodSecurity
     @Import(ProbeController.class)
     static class ProbeConfiguration {
+        @Bean
+        org.springframework.boot.web.servlet.ServletListenerRegistrationBean<jakarta.servlet.http.HttpSessionListener> sessionObserver() {
+            return new org.springframework.boot.web.servlet.ServletListenerRegistrationBean<>(new jakarta.servlet.http.HttpSessionListener() {
+                @Override public void sessionCreated(jakarta.servlet.http.HttpSessionEvent event) {
+                    createdSessions.add(event.getSession());
+                }
+            });
+        }
         @Bean
         static org.springframework.beans.factory.config.BeanPostProcessor committedSnapshotGate() {
             return new org.springframework.beans.factory.config.BeanPostProcessor() {
@@ -67,6 +77,7 @@ abstract class LocalLoginHttpTestSupport {
                             assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
                             snapshotCommitted.countDown();
                             assertThat(snapshotRelease.await(15, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                            if (snapshotFailure) throw new IllegalStateException("snapshot failure");
                         }
                         return result;
                     });
@@ -144,6 +155,8 @@ abstract class LocalLoginHttpTestSupport {
     @BeforeEach
     void resetDatabaseAndIssuer() {
         ISSUER.reset();
+        snapshotFailure = false;
+        createdSessions.clear();
         snapshotCommitted = new java.util.concurrent.CountDownLatch(0);
         snapshotRelease = new java.util.concurrent.CountDownLatch(0);
         businessCalls.set(0);

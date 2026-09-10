@@ -554,6 +554,86 @@ class OAuthSessionRefreshCoordinatorTest {
         verifyNoInteractions(tokens, snapshots);
     }
 
+    @Test
+    void callbackReplacementClearsOldAuthenticationAndFencesRequestsEnteringDuringLogin() {
+        var oldContext = org.springframework.security.core.context.SecurityContextHolder.createEmptyContext();
+        oldContext.setAuthentication(auth);
+        session.setAttribute("SPRING_SECURITY_CONTEXT", oldContext);
+        var callback = request(session);
+        RpLoginGeneration.beginLogin(callback);
+        var duringLogin = request(session);
+        new LoginGenerationSecurityContextRepository().loadDeferredContext(duringLogin).get();
+        var clients = new LoginGenerationAuthorizedClientRepository();
+        var response = new MockHttpServletResponse();
+        clients.saveAuthorizedClient(successor, auth, callback, response);
+        assertThatThrownBy(() -> clients.saveAuthorizedClient(client(30, "old"), auth, duringLogin, response))
+                .isInstanceOf(OAuthSessionRefreshCoordinator.SessionRefreshException.class);
+        var published = new LoginGenerationSecurityContextRepository().loadDeferredContext(request(session)).get();
+        assertThat(published.getAuthentication()).isNull();
+        var authenticated = org.springframework.security.core.context.SecurityContextHolder.createEmptyContext();
+        authenticated.setAuthentication(auth);
+        new LoginGenerationSecurityContextRepository().saveContext(authenticated, callback, response);
+        assertThat(new LoginGenerationSecurityContextRepository().loadDeferredContext(request(session)).get().getAuthentication()).isSameAs(auth);
+        assertThat(clients.<OAuth2AuthorizedClient>loadAuthorizedClient("reference-app", auth, callback)).isSameAs(successor);
+    }
+
+    @Test
+    void staleCleanupAfterInvalidationDoesNotExpireAnotherLoginCookie() {
+        var old = request(session);
+        RpLoginGeneration.capture(old);
+        session.invalidate();
+        var response = new MockHttpServletResponse();
+        new RpSessionCleaner(false, repository, revoker).clear(old, response);
+        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+        verifyNoInteractions(revoker);
+    }
+
+    @Test
+    void callbackPublicationAndContextCannotResurrectSessionAfterLogout() {
+        var callback = request(session);
+        RpLoginGeneration.beginLogin(callback);
+        OAuthSessionRefreshCoordinator.close(session);
+        var clients = new LoginGenerationAuthorizedClientRepository();
+        var response = new MockHttpServletResponse();
+        assertThatThrownBy(() -> clients.saveAuthorizedClient(successor, auth, callback, response))
+                .isInstanceOf(OAuthSessionRefreshCoordinator.SessionRefreshException.class);
+        session.invalidate();
+        var context = org.springframework.security.core.context.SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(auth);
+        assertThatThrownBy(() -> new LoginGenerationSecurityContextRepository().saveContext(context, callback, response))
+                .isInstanceOf(OAuthSessionRefreshCoordinator.SessionRefreshException.class);
+        assertThat(callback.getSession(false)).isNull();
+        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+    }
+
+    @Test
+    void sameSessionNewGenerationRejectsStaleClientAndContextAndCleanup() {
+        var old = request(session);
+        var contexts = new LoginGenerationSecurityContextRepository();
+        contexts.loadDeferredContext(old).get();
+        var callback = request(session);
+        RpLoginGeneration.beginLogin(callback);
+        String oldId = session.getId();
+        callback.changeSessionId();
+        assertThat(callback.getSession(false)).isSameAs(old.getSession(false));
+        assertThat(session.getId()).isNotEqualTo(oldId);
+        var clients = new LoginGenerationAuthorizedClientRepository();
+        var response = new MockHttpServletResponse();
+        clients.saveAuthorizedClient(successor, auth, callback, response);
+        var context = org.springframework.security.core.context.SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(auth);
+        contexts.saveContext(context, callback, response);
+        assertThatThrownBy(() -> clients.saveAuthorizedClient(client(30, "old"), auth, old, response))
+                .isInstanceOf(OAuthSessionRefreshCoordinator.SessionRefreshException.class);
+        assertThatThrownBy(() -> contexts.saveContext(context, old, response))
+                .isInstanceOf(OAuthSessionRefreshCoordinator.SessionRefreshException.class);
+        new RpSessionCleaner(false, clients, revoker).clear(old, response);
+        assertThat(session.isInvalid()).isFalse();
+        assertThat(clients.<OAuth2AuthorizedClient>loadAuthorizedClient("reference-app", auth, callback)).isSameAs(successor);
+        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+        verifyNoInteractions(revoker);
+    }
+
     OAuth2AuthorizedClient client(long seconds, String refresh) {
         return new OAuth2AuthorizedClient(
                 registration,

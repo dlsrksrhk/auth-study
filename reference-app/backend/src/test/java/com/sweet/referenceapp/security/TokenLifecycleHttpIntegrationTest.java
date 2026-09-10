@@ -12,6 +12,40 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class TokenLifecycleHttpIntegrationTest extends LocalLoginHttpTestSupport {
     @org.springframework.beans.factory.annotation.Autowired OAuthTokenLifecycleProperties lifecycle;
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void sameSessionReloginSurvivesOldRefreshSuccessAndFailure(boolean failure) throws Exception {
+        String oldCookie = expiringLogin();
+        assertThat(createdSessions).hasSize(1);
+        var sameSession = createdSessions.getFirst();
+        String oldId = sameSession.getId();
+        var pending = begin(oldCookie);
+        snapshotCommitted = new CountDownLatch(1);
+        snapshotRelease = new CountDownLatch(1);
+        snapshotFailure = failure;
+        ISSUER.requestLatch = new CountDownLatch(1);
+        try (var pool = Executors.newSingleThreadExecutor()) {
+            var old = pool.submit(() -> send("GET", "/bff/profile", oldCookie, ""));
+            await(snapshotCommitted);
+            ISSUER.initialAccessTokenLifetime = 300;
+            var callback = callback(pending, "code=valid-code&state=" + pending.state());
+            assertThat(callback.statusCode()).isEqualTo(302);
+            String newCookie = cookie(callback);
+            assertThat(newCookie).isNotEqualTo(oldCookie);
+            assertThat(createdSessions).containsExactly(sameSession);
+            assertThat(sameSession.getId()).isNotEqualTo(oldId);
+            snapshotRelease.countDown();
+            var stale = old.get(5, TimeUnit.SECONDS);
+            assertThat(send("GET", "/bff/test-client?exchange=3", newCookie, "").body())
+                    .contains("\"matchesExpectedClient\":true");
+            assertThat(stale.statusCode()).isEqualTo(401);
+            assertThat(stale.headers().allValues("Set-Cookie")).noneMatch(c -> c.startsWith("RP_SESSION="));
+            await(ISSUER.requestLatch);
+            assertThat(ISSUER.revokedTokens).containsExactly("test-refresh-token-refreshed");
+            assertThat(ISSUER.refreshRequestCount()).isEqualTo(1);
+        } finally { snapshotRelease.countDown(); }
+    }
+
     @Test void concurrentProfilesShareOneRefreshAndCommittedSnapshot() throws Exception {
         String cookie = expiringLogin();
         var before = jdbc.queryForMap("select * from app_user");

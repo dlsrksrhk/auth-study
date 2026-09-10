@@ -57,6 +57,7 @@ public final class OAuthSessionRefreshCoordinator {
         try {
             mutex = WebUtils.getSessionMutex(session);
             synchronized (mutex) {
+                if (!RpLoginGeneration.matches(request, session)) throw new SessionRefreshException();
                 state = (State) session.getAttribute(ATTRIBUTE);
                 if (state == null) {
                     state = new State(mutex);
@@ -100,7 +101,8 @@ public final class OAuthSessionRefreshCoordinator {
             await(CompletableFuture.anyOf(work.ready, shared), state);
             var view = work.ready.join();
             synchronized (mutex) {
-                if (state.closing
+                if (!RpLoginGeneration.matches(request, session)
+                        || state.closing
                         || System.nanoTime() >= state.deadline
                         || request.getSession(false) != session) {
                     state.close();
@@ -155,6 +157,17 @@ public final class OAuthSessionRefreshCoordinator {
                         candidate.client().getClientRegistration(),
                         candidate.client().getRefreshToken());
         }
+    }
+
+    // Both methods are called while holding the session mutex.
+    static boolean isClosing(HttpSession session) {
+        var state = (State) session.getAttribute(ATTRIBUTE);
+        return state != null && state.closing;
+    }
+
+    static void resetForLogin(HttpSession session) {
+        close(session);
+        session.removeAttribute(ATTRIBUTE);
     }
 
     public static void close(HttpSession session) {

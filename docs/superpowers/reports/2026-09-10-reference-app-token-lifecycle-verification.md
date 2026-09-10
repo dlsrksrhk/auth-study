@@ -4,6 +4,23 @@
 
 승인된 [설계](../specs/2026-09-10-reference-app-token-lifecycle-design.md)와 [세부 계획](../plans/2026-09-10-reference-app-token-lifecycle.md)의 Tasks 1–6를 구현했습니다. 실제 내장 HTTP 서버와 PostgreSQL Testcontainers를 사용한 Reference App 전체 테스트가 통과했습니다. 병합·push와 실제 브라우저 E2E는 수행하지 않았습니다.
 
+## 최종 전체 검토 수정: 같은 세션 재로그인 경합
+
+최종 수정 후 새로 실행한 Reference App 전체 결과는 **34 suites, 277 tests / 0 failures / 0 errors / 0 skipped**입니다. 아래 기존 270개 기록은 수정 이전 이력입니다. IdP는 이번 수정에서 변경하지 않아 재실행하지 않았습니다.
+
+| 명령 (`reference-app/backend`) | Exit | tests / failures / errors / skipped | 결과 |
+| --- | --- | --- | --- |
+| `.\gradlew.bat test --tests '*TokenLifecycleHttpIntegrationTest.sameSessionReloginSurvivesOldRefreshSuccessAndFailure' --console=plain` | 1 | 2 / 2 / 0 / 0 | 수정 전 RED: 이전 갱신 성공은 새 client를 덮어쓰고 실패는 새 로그인 접근을 종료 |
+| 동일 HTTP 회귀 명령 | 0 | 2 / 0 / 0 / 0 | 초기 수정 GREEN, 22초 |
+| `.\gradlew.bat test --tests '*OAuthSessionRefreshCoordinatorTest' --tests '*CurrentAppUserFilterTest' --tests '*OAuthSessionLifecycleFilterTest' --tests '*Oidc*Test' --tests '*LocalLogin*Test' --tests '*TokenLifecycleHttpIntegrationTest' --tests '*ReferenceLogoutIntegrationTest' --console=plain` | 0 | 109 / 0 / 0 / 0 | 최종 집중 검증, 11 suites, 38초 |
+| `.\gradlew.bat clean test --console=plain` | 0 | 277 / 0 / 0 / 0 | 최종 전체 검증 57초, 6 tasks 모두 실행, 최신 XML 2026-09-10 13:52:52 KST |
+
+`changeSessionId()`가 같은 HttpSession 객체를 유지하므로 객체 비교만으로 로그인 수명을 구별할 수 없었습니다. 요청의 SecurityContext를 읽는 동일 mutex 안에서 토큰 없는 세대 표식을 한 번 캡처하고, 갱신 게시와 실패 정리에 이 표식을 사용합니다. stale 요청은 자신의 context만 비우며 새 세션·새 토큰·RP_SESSION 쿠키를 정리하지 않습니다. 이미 원래 세션이 무효화된 stale 응답의 쿠키 삭제도 별도 RED를 확인해 수정했습니다.
+
+콜백은 기존 GET·고정 주소·단일 code/error·일치하는 pending state 검증을 통과한 뒤 새 세대를 시작합니다. 잘못된 콜백은 세대를 교체하지 않고 기존 실패 정책을 유지합니다. 검증 후 콜백 실패는 현재 세대만 종료합니다. 콜백 네트워크 처리 중 이전 인증을 읽은 요청도 있을 수 있어, 실제 authorized-client 교체 시 세대를 다시 바꾸고 이전 coordinator를 닫습니다. Spring의 기존 세션 저장소에 새 client를 저장하면서 이전 SecurityContext를 같은 mutex 안에서 제거합니다. 이후 Spring의 세션 ID 회전과 새 context 저장에도 세대 검사를 적용합니다. 그 짧은 간격의 요청은 익명이며, 이전 인증과 새 client가 결합되지 않습니다. 종료 이후 context 저장은 새 세션을 만들 수 없습니다.
+
+실제 HTTP 회귀는 동일 사용자 재로그인으로 principal 이름 비교에 의존하지 않으며, 테스트 listener로 **동일한 HttpSession 한 개의 ID가 회전했음**을 확인합니다. 이전 갱신 성공·실패를 보류한 채 새 callback을 완료한 뒤, 이전 요청 401·쿠키 삭제 없음·새 client 보존·이전 successor만 폐기를 확인합니다. 추가 경계 검증은 콜백 처리 중 들어온 stale 요청, 종료 뒤 client/context 저장 차단, 초기 로컬 사용자 조회 실패의 stale 정리를 포함합니다. 기존 logout 경쟁 테스트도 모두 통과했습니다. 네트워크 중 mutex 점유·토큰을 포함한 세대 상태·재시도는 추가하지 않았습니다.
+
 ## 실행 명령과 측정 결과
 
 명령은 표의 작업 디렉터리에서 PowerShell로 실행했습니다. 수치는 Gradle의 추정치나 이전 Task 5 수치가 아닌 `build/test-results/test/TEST-*.xml`의 tests/failures/errors/skipped 속성을 합산했습니다.
