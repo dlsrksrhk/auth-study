@@ -68,13 +68,20 @@ class AppUserAdminQueryIntegrationTest extends BootstrapIntegrationSupport {
 
     @Test
     void returnsEmptyItemsForEmptyAndOutOfRangePagesWithoutLosingTotals() {
-        var none = queries.list(new AppUserAdminQuery(0, 10, null, AppRole.APP_ADMIN));
-        assertThat(none.totalElements()).isEqualTo(1);
         var outside = queries.list(new AppUserAdminQuery(10, 2, null, null));
         assertThat(outside.items()).isEmpty();
         assertThat(outside.totalElements()).isEqualTo(3);
         assertThat(outside.totalPages()).isEqualTo(2);
         assertThat(queries.list(new AppUserAdminQuery(Integer.MAX_VALUE, 100, null, null)).items()).isEmpty();
+    }
+
+    @Test
+    void returnsZeroTotalsWhenNoUserMatchesTheCombinedFilters() {
+        var none = queries.list(new AppUserAdminQuery(
+                0, 10, AppUserStatus.DISABLED, AppRole.APP_ADMIN));
+        assertThat(none.items()).isEmpty();
+        assertThat(none.totalElements()).isZero();
+        assertThat(none.totalPages()).isZero();
     }
 
     @Test
